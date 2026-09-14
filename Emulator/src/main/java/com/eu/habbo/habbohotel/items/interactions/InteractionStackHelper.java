@@ -33,9 +33,7 @@ public class InteractionStackHelper extends HabboItem {
     @Override
     public void serializeExtradata(ServerMessage serverMessage) {
         serverMessage.appendInt((this.isLimited() ? 256 : 0));
-        // Only the height reaches the client: the multi-walk flag lives behind a
-        // suffix the official stuff data never carries.
-        serverMessage.appendString(StackHelperExtradata.legacy(this.getExtradata()));
+        serverMessage.appendString(this.getExtradata());
 
         super.serializeExtradata(serverMessage);
     }

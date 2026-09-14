@@ -1,6 +1,5 @@
 package com.eu.habbo.messages.outgoing.users;
 
-import com.eu.habbo.Emulator;
 import com.eu.habbo.habbohotel.users.Habbo;
 import com.eu.habbo.messages.ServerMessage;
 import com.eu.habbo.messages.outgoing.MessageComposer;
@@ -29,15 +28,8 @@ public class UserDataComposer extends MessageComposer {
         this.response.appendInt(this.habbo.getHabboStats().petRespectPointsToGive);
         this.response.appendBoolean(false);
         this.response.appendString("01-01-1970 00:00:00");
-        this.response.appendBoolean(this.habbo.getHabboStats().allowNameChange); // can change name.
-        this.response.appendBoolean(this.habbo.getHabboStats().safetyLocked); // accountSafetyLocked
-
-        // Official class_1757.parse reads two more optional blocks when bytes remain:
-        // (accountTradeLocked, nameColor) and (respectReplenishesLeft, maxRespectPerDay).
-        this.response.appendBoolean(!this.habbo.getHabboStats().allowTrade());
-        this.response.appendString("");
-        this.response.appendInt(this.habbo.getHabboStats().respectReplenishesLeft);
-        this.response.appendInt(Emulator.getConfig().getInt("hotel.daily.respect"));
+        this.response.appendBoolean(this.habbo.getHabboStats().allowNameChange); //can change name.
+        this.response.appendBoolean(false); //safatey locked
 
         return this.response;
     }

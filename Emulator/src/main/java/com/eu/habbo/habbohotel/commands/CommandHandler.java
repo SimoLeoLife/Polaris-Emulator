@@ -301,7 +301,6 @@ public class CommandHandler {
         addCommand(new RoomCreditsCommand());
         addCommand(new RoomDanceCommand());
         addCommand(new RoomEffectCommand());
-        addCommand(new RoomSpecialEffectCommand());
         addCommand(new RoomItemCommand());
         addCommand(new RoomKickCommand());
         addCommand(new RoomMuteCommand());

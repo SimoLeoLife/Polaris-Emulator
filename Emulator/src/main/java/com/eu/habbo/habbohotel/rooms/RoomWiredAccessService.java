@@ -17,7 +17,6 @@ final class RoomWiredAccessService {
     private volatile boolean loaded;
     private int inspectMask = Room.WIRED_ACCESS_DEFAULT_INSPECT_MASK;
     private int modifyMask = Room.WIRED_ACCESS_DEFAULT_MODIFY_MASK;
-    private String timezone = "";
 
     RoomWiredAccessService(Room room, RoomRepository repository) {
         this.room = room;
@@ -32,11 +31,6 @@ final class RoomWiredAccessService {
     int modifyMask() {
         this.ensureLoaded();
         return this.modifyMask;
-    }
-
-    String timezone() {
-        this.ensureLoaded();
-        return this.timezone;
     }
 
     boolean canInspect(Habbo habbo) {
@@ -68,32 +62,20 @@ final class RoomWiredAccessService {
     }
 
     boolean save(int requestedInspectMask, int requestedModifyMask) {
-        return this.save(requestedInspectMask, requestedModifyMask, this.timezone());
-    }
-
-    boolean save(int requestedInspectMask, int requestedModifyMask, String requestedTimezone) {
         int sanitizedModifyMask = sanitizeModifyMask(requestedModifyMask);
         int sanitizedInspectMask = sanitizeInspectMask(requestedInspectMask) | sanitizedModifyMask;
-        String sanitizedTimezone = sanitizeTimezone(requestedTimezone);
 
         synchronized (this.lock) {
             int previousInspectMask = this.inspectMask;
             int previousModifyMask = this.modifyMask;
-            String previousTimezone = this.timezone;
             this.inspectMask = sanitizedInspectMask;
             this.modifyMask = sanitizedModifyMask;
-            this.timezone = sanitizedTimezone;
             this.loaded = true;
 
             this.room
                     .threading()
                     .run(() -> this.persist(
-                            sanitizedInspectMask,
-                            sanitizedModifyMask,
-                            sanitizedTimezone,
-                            previousInspectMask,
-                            previousModifyMask,
-                            previousTimezone));
+                            sanitizedInspectMask, sanitizedModifyMask, previousInspectMask, previousModifyMask));
             this.publish();
             return true;
         }
@@ -119,12 +101,10 @@ final class RoomWiredAccessService {
 
             this.inspectMask = Room.WIRED_ACCESS_DEFAULT_INSPECT_MASK;
             this.modifyMask = Room.WIRED_ACCESS_DEFAULT_MODIFY_MASK;
-            this.timezone = "";
             try {
                 RoomRepository.WiredSettings settings = this.repository.findWiredSettings(this.room.getId());
                 this.inspectMask = sanitizeInspectMask(settings.inspectMask());
                 this.modifyMask = sanitizeModifyMask(settings.modifyMask());
-                this.timezone = sanitizeTimezone(settings.timezone());
             } catch (SQLException exception) {
                 LOGGER.error("Caught SQL exception while loading wired room settings", exception);
             }
@@ -132,35 +112,18 @@ final class RoomWiredAccessService {
         }
     }
 
-    private void persist(
-            int savedInspectMask,
-            int savedModifyMask,
-            String savedTimezone,
-            int previousInspectMask,
-            int previousModifyMask,
-            String previousTimezone) {
+    private void persist(int savedInspectMask, int savedModifyMask, int previousInspectMask, int previousModifyMask) {
         try {
-            this.repository.saveWiredSettings(this.room.getId(), savedInspectMask, savedModifyMask, savedTimezone);
+            this.repository.saveWiredSettings(this.room.getId(), savedInspectMask, savedModifyMask);
         } catch (SQLException exception) {
             synchronized (this.lock) {
                 if (this.inspectMask == savedInspectMask && this.modifyMask == savedModifyMask) {
                     this.inspectMask = previousInspectMask;
                     this.modifyMask = previousModifyMask;
-                    this.timezone = previousTimezone;
                 }
             }
             LOGGER.error("Caught SQL exception while saving wired room settings", exception);
         }
-    }
-
-    /** The timezone is a free-text picker value; keep it short and never null. */
-    private static String sanitizeTimezone(String timezone) {
-        if (timezone == null) {
-            return "";
-        }
-
-        String trimmed = timezone.trim();
-        return (trimmed.length() > 64) ? trimmed.substring(0, 64) : trimmed;
     }
 
     private boolean matches(Habbo habbo, int mask, boolean allowEveryone) {

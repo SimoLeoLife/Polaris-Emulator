@@ -63,7 +63,6 @@ import com.eu.habbo.habbohotel.modtool.ScripterManager;
 import com.eu.habbo.habbohotel.permissions.Permission;
 import com.eu.habbo.habbohotel.pets.Pet;
 import com.eu.habbo.habbohotel.pets.PetManager;
-import com.eu.habbo.habbohotel.users.ChatStyleRepository;
 import com.eu.habbo.habbohotel.users.Habbo;
 import com.eu.habbo.habbohotel.users.HabboBadge;
 import com.eu.habbo.habbohotel.users.HabboGender;
@@ -2030,7 +2029,6 @@ public class CatalogManager {
                 habbo.getClient().sendResponse(new AddHabboItemComposer(unseenItems));
 
                 habbo.getClient().sendResponse(new PurchaseOKComposer(purchasedEvent.catalogItem));
-                ChatStyleRepository.grantForPurchase(habbo, purchasedEvent.catalogItem);
                 habbo.getClient().sendResponse(new InventoryRefreshComposer());
 
                 Set<String> itemIds = new HashSet<>();
@@ -2237,7 +2235,6 @@ public class CatalogManager {
         }
         habbo.getClient().sendResponse(new AddHabboItemComposer(unseenItems));
         habbo.getClient().sendResponse(new PurchaseOKComposer(purchase.event().catalogItem));
-        ChatStyleRepository.grantForPurchase(habbo, purchase.event().catalogItem);
         habbo.getClient().sendResponse(new InventoryRefreshComposer());
     }
 
@@ -2324,7 +2321,6 @@ public class CatalogManager {
         }
         habbo.getClient().sendResponse(new AddHabboItemComposer(unseenItems));
         habbo.getClient().sendResponse(new PurchaseOKComposer(purchase.event().catalogItem));
-        ChatStyleRepository.grantForPurchase(habbo, purchase.event().catalogItem);
         habbo.getClient().sendResponse(new InventoryRefreshComposer());
     }
 
@@ -2493,12 +2489,7 @@ public class CatalogManager {
         }
     }
 
-    /**
-     * Builds the extra data a trophy or a badge display carries: the owner, the date and the filtered
-     * text, in the layout the client reads. Engraving a mystery trophy in a room goes through here too,
-     * so a trophy bought in the catalog and one engraved in a room are written the same way.
-     */
-    public String prepareFurnitureExtraData(Habbo habbo, Item baseItem, String extraData) {
+    private String prepareFurnitureExtraData(Habbo habbo, Item baseItem, String extraData) {
         if (baseItem.getInteractionType().getType() != InteractionTrophy.class
                 && baseItem.getInteractionType().getType() != InteractionBadgeDisplay.class) return extraData;
 
@@ -2600,7 +2591,6 @@ public class CatalogManager {
         }
         habbo.getClient().sendResponse(new AddHabboItemComposer(unseenItems));
         habbo.getClient().sendResponse(new PurchaseOKComposer(purchase.event().catalogItem));
-        ChatStyleRepository.grantForPurchase(habbo, purchase.event().catalogItem);
         habbo.getClient().sendResponse(new InventoryRefreshComposer());
     }
 

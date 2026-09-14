@@ -10,6 +10,7 @@ import com.eu.habbo.habbohotel.users.HabboManager;
 import com.eu.habbo.messages.incoming.MessageHandler;
 import com.eu.habbo.messages.outgoing.modtool.HelperRequestDisabledComposer;
 import com.eu.habbo.threading.runnables.InsertModToolIssue;
+
 import java.util.ArrayList;
 
 public class ReportFriendPrivateChatEvent extends MessageHandler {
@@ -26,11 +27,11 @@ public class ReportFriendPrivateChatEvent extends MessageHandler {
         int count = this.packet.readInt();
         ArrayList<ModToolChatLog> chatLogs = new ArrayList<>();
 
-        if (!ModToolReportInputGuard.isValidReportMessage(message)
-                || category <= 0
-                || !ModToolReportInputGuard.isPositiveId(userId)
-                || userId == this.client.getHabbo().getHabboInfo().getId()
-                || !ModToolReportInputGuard.isValidPrivateChatLogCount(count)) {
+        if (!ModToolReportInputGuard.isValidReportMessage(message) ||
+                category <= 0 ||
+                !ModToolReportInputGuard.isPositiveId(userId) ||
+                userId == this.client.getHabbo().getHabboInfo().getId() ||
+                !ModToolReportInputGuard.isValidPrivateChatLogCount(count)) {
             return;
         }
 
@@ -61,29 +62,7 @@ public class ReportFriendPrivateChatEvent extends MessageHandler {
             chatLogs.add(new ModToolChatLog(0, chatUserId, username, chatMessage));
         }
 
-        // Official class_2390 and friends end with the unlawful-activity reporter name and
-        // e-mail; older clients stop before them, so they are read only while bytes remain.
-        String reporterName = "";
-        String reporterEmail = "";
-
-        if (this.packet.bytesAvailable() > 0) {
-            reporterName = this.packet.readString();
-        }
-
-        if (this.packet.bytesAvailable() > 0) {
-            reporterEmail = this.packet.readString();
-        }
-
-        message = ModToolReportInputGuard.withReporterContact(message, reporterName, reporterEmail);
-
-        ModToolIssue issue = new ModToolIssue(
-                this.client.getHabbo().getHabboInfo().getId(),
-                this.client.getHabbo().getHabboInfo().getUsername(),
-                userId,
-                info.getUsername(),
-                0,
-                message,
-                ModToolTicketType.IM);
+        ModToolIssue issue = new ModToolIssue(this.client.getHabbo().getHabboInfo().getId(), this.client.getHabbo().getHabboInfo().getUsername(), userId, info.getUsername(), 0, message, ModToolTicketType.IM);
         issue.category = category;
         issue.chatLogs = chatLogs;
         new InsertModToolIssue(issue).run();

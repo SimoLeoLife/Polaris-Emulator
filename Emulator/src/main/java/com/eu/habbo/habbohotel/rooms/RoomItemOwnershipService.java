@@ -13,17 +13,12 @@ import com.eu.habbo.messages.outgoing.inventory.AddHabboItemComposer;
 import com.eu.habbo.messages.outgoing.inventory.InventoryRefreshComposer;
 import com.eu.habbo.messages.outgoing.rooms.UpdateStackHeightComposer;
 import com.eu.habbo.messages.outgoing.rooms.items.RemoveFloorItemComposer;
-import com.eu.habbo.messages.outgoing.rooms.items.RemoveFloorItemsComposer;
 import com.eu.habbo.messages.outgoing.rooms.items.RemoveWallItemComposer;
-import com.eu.habbo.messages.outgoing.rooms.items.RemoveWallItemsComposer;
 import com.eu.habbo.plugin.Event;
 import com.eu.habbo.plugin.events.furniture.FurniturePickedUpEvent;
 import java.awt.Rectangle;
-import java.util.ArrayList;
-import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import org.slf4j.Logger;
@@ -119,57 +114,8 @@ final class RoomItemOwnershipService {
     }
 
     void pickUp(HabboItem item, Habbo picker) {
-        this.pickUp(item, picker, true);
-    }
-
-    /**
-     * Picks a whole set up with the AIR 13 batched removals: one
-     * {@code ObjectRemoveMultiple} (1451) for the floor items and one
-     * {@code ItemRemoveMultiple} (2204) for the wall items, instead of one
-     * {@code ObjectRemove} / {@code ItemRemove} per item. The client disposes
-     * the batch and refreshes the tile object map once.
-     */
-    void pickUpAll(Collection<HabboItem> items, Habbo picker) {
-        if (items == null || items.isEmpty()) {
-            return;
-        }
-
-        List<Integer> floorItemIds = new ArrayList<>();
-        List<Integer> wallItemIds = new ArrayList<>();
-
-        for (HabboItem item : items) {
-            if (item == null) {
-                continue;
-            }
-            FurnitureType type = item.getBaseItem().getType();
-            if (!this.pickUp(item, picker, false)) {
-                continue;
-            }
-            if (type == FurnitureType.FLOOR) {
-                floorItemIds.add(item.getId());
-            } else if (type == FurnitureType.WALL) {
-                wallItemIds.add(item.getId());
-            }
-        }
-
-        int pickerId = picker != null ? picker.getHabboInfo().getId() : 0;
-
-        if (!floorItemIds.isEmpty()) {
-            this.room.sendComposer(new RemoveFloorItemsComposer(floorItemIds, pickerId).compose());
-        }
-        if (!wallItemIds.isEmpty()) {
-            this.room.sendComposer(new RemoveWallItemsComposer(wallItemIds, pickerId).compose());
-        }
-    }
-
-    /**
-     * @param sendRemoveComposer when false the caller sends the batched removal
-     *     composer itself; the room-side state changes are identical.
-     * @return whether the item was actually picked up (a plugin can cancel it).
-     */
-    private boolean pickUp(HabboItem item, Habbo picker, boolean sendRemoveComposer) {
         if (item == null) {
-            return false;
+            return;
         }
 
         boolean trackedBuildersClubItem = BuildersClubRoomSupport.isTrackedItem(item.getId());
@@ -179,7 +125,7 @@ final class RoomItemOwnershipService {
             Event furniturePickedUpEvent = new FurniturePickedUpEvent(item, picker);
             Emulator.getPluginManager().fireEvent(furniturePickedUpEvent);
             if (furniturePickedUpEvent.isCancelled()) {
-                return false;
+                return;
             }
         }
 
@@ -189,22 +135,20 @@ final class RoomItemOwnershipService {
         item.needsUpdate(true);
 
         if (item.getBaseItem().getType() == FurnitureType.FLOOR) {
-            if (sendRemoveComposer) {
-                this.room.sendComposer(new RemoveFloorItemComposer(item).compose());
-            }
+            this.room.sendComposer(new RemoveFloorItemComposer(item).compose());
             this.refreshRemovedFloorArea(item);
-        } else if (item.getBaseItem().getType() == FurnitureType.WALL && sendRemoveComposer) {
+        } else if (item.getBaseItem().getType() == FurnitureType.WALL) {
             this.room.sendComposer(new RemoveWallItemComposer(item).compose());
         }
 
         if (trackedBuildersClubItem) {
             Emulator.getGameEnvironment().getItemManager().deleteItem(item);
-            return true;
+            return;
         }
 
         if (destroyOnPickup) {
             Emulator.getGameEnvironment().getItemManager().deleteItem(item);
-            return true;
+            return;
         }
 
         Habbo owner = picker != null && picker.getHabboInfo().getId() == item.getUserId()
@@ -216,8 +160,6 @@ final class RoomItemOwnershipService {
             owner.getClient().sendResponse(new InventoryRefreshComposer());
         }
         Emulator.getThreading().run(item);
-
-        return true;
     }
 
     void ejectUserFurniture(int userId) {
@@ -239,7 +181,9 @@ final class RoomItemOwnershipService {
         if (owner != null && !inventoryItems.isEmpty()) {
             addInventoryItems(owner, inventoryItems);
         }
-        this.pickUpAll(items, null);
+        for (HabboItem item : items) {
+            this.pickUp(item, null);
+        }
     }
 
     void ejectAll(Habbo exemptOwner) {
@@ -266,7 +210,9 @@ final class RoomItemOwnershipService {
                     inventoryItems.add(item);
                 }
             }
-            this.pickUpAll(entry.getValue(), null);
+            for (HabboItem item : entry.getValue()) {
+                this.pickUp(item, null);
+            }
 
             Habbo owner = Emulator.getGameEnvironment().getHabboManager().getHabbo(entry.getKey());
             if (owner != null && !inventoryItems.isEmpty()) {

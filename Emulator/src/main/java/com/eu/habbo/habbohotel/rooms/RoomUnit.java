@@ -72,9 +72,6 @@ public class RoomUnit {
     /** Build tool mode: furniture this user places or moves is marked to allow walking underneath. Reset per room visit. */
     private boolean buildUnderpass = false;
 
-    private boolean buildHeightEnabled = false;
-    private double buildHeight = 0.0D;
-
     private boolean statusUpdate = false;
     private boolean invisible = false;
     private boolean canLeaveRoomByDoor = true;
@@ -531,20 +528,6 @@ public class RoomUnit {
 
     public void setBuildUnderpass(boolean buildUnderpass) {
         this.buildUnderpass = buildUnderpass;
-    }
-
-    public boolean isBuildHeightEnabled() {
-        return this.buildHeightEnabled;
-    }
-
-    public double getBuildHeight() {
-        return this.buildHeight;
-    }
-
-    /** The build height the user picked, in tiles above the floor of the square the item lands on. */
-    public void setBuildHeight(boolean enabled, double height) {
-        this.buildHeightEnabled = enabled;
-        this.buildHeight = enabled ? height : 0.0D;
     }
 
     public void setFastWalk(boolean fastWalk) {

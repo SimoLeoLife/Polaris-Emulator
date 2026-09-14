@@ -5,7 +5,6 @@ import com.eu.habbo.habbohotel.items.interactions.InteractionBuildArea;
 import com.eu.habbo.habbohotel.items.interactions.InteractionStackHelper;
 import com.eu.habbo.habbohotel.items.interactions.InteractionStackWalkHelper;
 import com.eu.habbo.habbohotel.items.interactions.InteractionTileWalkMagic;
-import com.eu.habbo.habbohotel.items.interactions.StackHelperExtradata;
 import com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectSendSignal;
 import com.eu.habbo.habbohotel.items.interactions.wired.triggers.WiredTriggerReceiveSignal;
 import com.eu.habbo.habbohotel.permissions.Permission;
@@ -169,8 +168,6 @@ final class RoomItemPlacementService {
             height = Math.max(height, occupiedTile.getStackHeight());
         }
 
-        height = RoomBuildHeight.apply(owner, layout, tile, height);
-
         if (Emulator.getPluginManager().isRegistered(FurnitureBuildheightEvent.class, true)) {
             FurnitureBuildheightEvent event =
                     Emulator.getPluginManager().fireEvent(new FurnitureBuildheightEvent(item, owner, 0.00, height));
@@ -258,8 +255,14 @@ final class RoomItemPlacementService {
             return Math.max(helper.getZ(), this.getMinimumTileHeight(occupiedTiles));
         }
 
-        // Malformed helper data keeps the default height.
-        double height = StackHelperExtradata.height(item.getExtradata());
+        double height = 0.0D;
+        try {
+            if (item.getExtradata() != null && !item.getExtradata().isEmpty()) {
+                height = Double.parseDouble(item.getExtradata()) / 100.0D;
+            }
+        } catch (NumberFormatException ignored) {
+            // Preserve the default height for malformed helper data.
+        }
         return Math.max(height, this.getMinimumTileHeight(occupiedTiles));
     }
 

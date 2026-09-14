@@ -1,25 +1,38 @@
 package com.eu.habbo.messages.outgoing.unknown;
 
-import com.eu.habbo.messages.outgoing.rooms.pets.PetSupplementedNotificationComposer;
+import com.eu.habbo.messages.ServerMessage;
+import com.eu.habbo.messages.outgoing.MessageComposer;
+import com.eu.habbo.messages.outgoing.Outgoing;
 
-/**
- * @deprecated the packet was identified as the official
- *     {@code PetSupplementedNotification}; use
- *     {@link PetSupplementedNotificationComposer}. Kept as a delegate so plugins
- *     built against the old name keep working.
- */
-@Deprecated
-public class UnknownComposer8 extends PetSupplementedNotificationComposer {
+public class UnknownComposer8 extends MessageComposer {
+    private final int unknownInt1;
+    private final int userId;
+    private final int unknownInt2;
 
     public UnknownComposer8(int unknownInt1, int userId, int unknownInt2) {
-        super(unknownInt1, userId, unknownInt2);
+        this.unknownInt1 = unknownInt1;
+        this.userId = userId;
+        this.unknownInt2 = unknownInt2;
+    }
+
+    @Override
+    protected ServerMessage composeInternal() {
+        this.response.init(Outgoing.UnknownComposer8);
+        this.response.appendInt(this.unknownInt1);
+        this.response.appendInt(this.userId);
+        this.response.appendInt(this.unknownInt2);
+        return this.response;
     }
 
     public int getUnknownInt1() {
-        return this.getPetId();
+        return unknownInt1;
+    }
+
+    public int getUserId() {
+        return userId;
     }
 
     public int getUnknownInt2() {
-        return this.getSupplementType();
+        return unknownInt2;
     }
 }
