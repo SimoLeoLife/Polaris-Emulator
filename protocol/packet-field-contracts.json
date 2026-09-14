@@ -21197,6 +21197,102 @@
       "symbol": "PetSupplementOfficialEvent",
       "path": "Emulator/src/main/java/com/eu/habbo/messages/incoming/rooms/pets/PetSupplementEvent.java",
       "reason": "Header is registered only by the Polaris Emulator packet registry"
+    },
+    {
+      "direction": "client_to_server",
+      "side": "typescript",
+      "header": 9460,
+      "symbol": "GET_HABBICON_SHOP_DATA",
+      "path": "packages/communication/src/messages/outgoing/habbicons/GetHabbiconShopDataComposer.ts",
+      "reason": "Header is registered only by the Octane Renderer packet registry"
+    },
+    {
+      "direction": "client_to_server",
+      "side": "typescript",
+      "header": 9461,
+      "symbol": "GET_HABBICON_INFO",
+      "path": "packages/communication/src/messages/outgoing/habbicons/GetHabbiconInfoComposer.ts",
+      "reason": "Header is registered only by the Octane Renderer packet registry"
+    },
+    {
+      "direction": "client_to_server",
+      "side": "typescript",
+      "header": 9462,
+      "symbol": "BUY_HABBICON",
+      "path": "packages/communication/src/messages/outgoing/habbicons/BuyHabbiconComposer.ts",
+      "reason": "Header is registered only by the Octane Renderer packet registry"
+    },
+    {
+      "direction": "client_to_server",
+      "side": "typescript",
+      "header": 9463,
+      "symbol": "BUY_HABBICON_COLLECTION",
+      "path": "packages/communication/src/messages/outgoing/habbicons/BuyHabbiconCollectionComposer.ts",
+      "reason": "Header is registered only by the Octane Renderer packet registry"
+    },
+    {
+      "direction": "client_to_server",
+      "side": "typescript",
+      "header": 9464,
+      "symbol": "CLAIM_HABBICON",
+      "path": "packages/communication/src/messages/outgoing/habbicons/ClaimHabbiconComposer.ts",
+      "reason": "Header is registered only by the Octane Renderer packet registry"
+    },
+    {
+      "direction": "client_to_server",
+      "side": "typescript",
+      "header": 9465,
+      "symbol": "FAVORITE_HABBICON",
+      "path": "packages/communication/src/messages/outgoing/habbicons/FavoriteHabbiconComposer.ts",
+      "reason": "Header is registered only by the Octane Renderer packet registry"
+    },
+    {
+      "direction": "client_to_server",
+      "side": "typescript",
+      "header": 9466,
+      "symbol": "UNFAVORITE_HABBICON",
+      "path": "packages/communication/src/messages/outgoing/habbicons/UnfavoriteHabbiconComposer.ts",
+      "reason": "Header is registered only by the Octane Renderer packet registry"
+    },
+    {
+      "direction": "server_to_client",
+      "side": "typescript",
+      "header": 9463,
+      "symbol": "HABBICON_INFO",
+      "path": "packages/communication/src/messages/parser/habbicons/HabbiconInfoParser.ts",
+      "reason": "Header is registered only by the Octane Renderer packet registry"
+    },
+    {
+      "direction": "server_to_client",
+      "side": "typescript",
+      "header": 9464,
+      "symbol": "HABBICON_ACTION_RESULT",
+      "path": "packages/communication/src/messages/parser/habbicons/HabbiconActionResultParser.ts",
+      "reason": "Header is registered only by the Octane Renderer packet registry"
+    },
+    {
+      "direction": "server_to_client",
+      "side": "typescript",
+      "header": 9465,
+      "symbol": "USER_HABBICONS",
+      "path": "packages/communication/src/messages/parser/habbicons/UserHabbiconsParser.ts",
+      "reason": "Header is registered only by the Octane Renderer packet registry"
+    },
+    {
+      "direction": "server_to_client",
+      "side": "typescript",
+      "header": 9466,
+      "symbol": "USER_HABBICON_STATUS_CHANGED",
+      "path": "packages/communication/src/messages/parser/habbicons/UserHabbiconStatusChangedParser.ts",
+      "reason": "Header is registered only by the Octane Renderer packet registry"
+    },
+    {
+      "direction": "server_to_client",
+      "side": "typescript",
+      "header": 9467,
+      "symbol": "HABBICON_SHOP_DATA",
+      "path": "packages/communication/src/messages/parser/habbicons/HabbiconShopDataParser.ts",
+      "reason": "Header is registered only by the Octane Renderer packet registry"
     }
   ],
   "exemptions": [
@@ -21598,7 +21694,7 @@
         "className": "RoomUnitChatWhisperComposer",
         "path": "packages/communication/src/messages/outgoing/room/unit/chat/RoomUnitChatWhisperComposer.ts"
       },
-      "reason": "Java analyzer: Packet fields delegated to external constructor RoomChatMessage inside handle; TypeScript analyzer: Outgoing value recipientName + \u0027 \u0027 + message has no statically resolvable wire type"
+      "reason": "Java analyzer: Packet fields delegated to external constructor RoomChatMessage inside handle; TypeScript analyzer: Outgoing value recipientName + ' ' + message has no statically resolvable wire type"
     },
     {
       "name": "RELEASE_ISSUES",
