@@ -194,7 +194,6 @@ import com.eu.habbo.messages.incoming.guilds.forums.GuildForumThreadsEvent;
 import com.eu.habbo.messages.incoming.guilds.forums.GuildForumThreadsMessagesEvent;
 import com.eu.habbo.messages.incoming.guilds.forums.GuildForumUpdateSettingsEvent;
 import com.eu.habbo.messages.incoming.habbicons.HabbiconRequestEvent;
-import com.eu.habbo.messages.incoming.habbicons.ResetHabbiconUnseenEvent;
 import com.eu.habbo.messages.incoming.habboway.GetQuizQuestionsEvent;
 import com.eu.habbo.messages.incoming.habboway.PostQuizAnswersEvent;
 import com.eu.habbo.messages.incoming.handshake.CompleteDiffieHandshakeEvent;
@@ -1113,8 +1112,6 @@ public class PacketManager {
         this.registerHandler(Incoming.ClaimHabbiconEvent, HabbiconRequestEvent.class);
         this.registerHandler(Incoming.FavoriteHabbiconEvent, HabbiconRequestEvent.class);
         this.registerHandler(Incoming.UnfavoriteHabbiconEvent, HabbiconRequestEvent.class);
-        this.registerHandler(Incoming.UnseenResetCategoryEvent, ResetHabbiconUnseenEvent.class);
-        this.registerHandler(Incoming.UnseenResetItemsEvent, ResetHabbiconUnseenEvent.class);
         this.registerHandler(Incoming.RoomUserSitEvent, RoomUserSitEvent.class);
         this.registerHandler(Incoming.RoomUserDanceEvent, RoomUserDanceEvent.class);
         this.registerHandler(Incoming.RoomUserSignEvent, RoomUserSignEvent.class);

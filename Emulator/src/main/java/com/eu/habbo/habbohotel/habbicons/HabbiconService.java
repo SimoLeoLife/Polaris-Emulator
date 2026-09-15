@@ -23,6 +23,9 @@ import javax.sql.DataSource;
 public final class HabbiconService {
     public static final int NOT_OWNED = 0, CLAIMABLE = 1, OWNED = 2, FAVORITE = 3, UNAVAILABLE = 4, REWARD = 5;
 
+    /** Unseen-item category the client uses for habbicons (after furni 1-2, pets 3, badges 4, bots 5). */
+    public static final int UNSEEN_CATEGORY = 8;
+
     public enum Action {
         BUY,
         BUY_COLLECTION,

@@ -23,7 +23,8 @@ import com.eu.habbo.habbohotel.users.HabboManager;
 import com.eu.habbo.habbohotel.users.HabboStats;
 import com.eu.habbo.messages.incoming.friends.SendMessengerMessageEvent;
 import com.eu.habbo.messages.incoming.habbicons.HabbiconRequestEvent;
-import com.eu.habbo.messages.incoming.habbicons.ResetHabbiconUnseenEvent;
+import com.eu.habbo.messages.incoming.inventory.UnseenResetCategoryEvent;
+import com.eu.habbo.messages.incoming.inventory.UnseenResetItemsEvent;
 import com.eu.habbo.messages.incoming.rooms.users.RoomUserHabbiconEvent;
 import com.eu.habbo.messages.outgoing.MessageComposer;
 import com.eu.habbo.messages.outgoing.friends.MessengerMessageAckComposer;
@@ -91,17 +92,20 @@ class HabbiconRequestTest {
         verify(service).load(1);
         var buffer = Unpooled.buffer().writeInt(8).writeInt(2).writeInt(61).writeInt(62);
         try {
-            ResetHabbiconUnseenEvent reset = new ResetHabbiconUnseenEvent();
-            reset.client = client;
-            reset.packet = new ClientMessage(2343, buffer);
-            reset.handle();
+            UnseenResetItemsEvent resetItems = new UnseenResetItemsEvent();
+            resetItems.client = client;
+            resetItems.packet = new ClientMessage(2343, buffer);
+            resetItems.handle();
             verify(service).clearUnseen(1, List.of(61, 62));
             buffer.clear().writeInt(8).writeInt(2).writeInt(71);
-            reset.handle();
+            resetItems.packet = new ClientMessage(2343, buffer);
+            resetItems.handle();
             verify(service, never()).clearUnseen(1, List.of(71));
             buffer.clear().writeInt(8);
-            reset.packet = new ClientMessage(3493, buffer);
-            reset.handle();
+            UnseenResetCategoryEvent resetCategory = new UnseenResetCategoryEvent();
+            resetCategory.client = client;
+            resetCategory.packet = new ClientMessage(3493, buffer);
+            resetCategory.handle();
             verify(service).clearUnseen(1, List.of());
         } finally {
             buffer.release();

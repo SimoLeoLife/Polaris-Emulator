@@ -776,9 +776,9 @@ public class Outgoing {
     public static final int RewardTrackClaimResultComposer = 9451;
     public static final int RewardTrackProgressComposer = 9452;
     public static final int RewardTrackPremiumPurchaseResultComposer = 2248;
-    public static final int UserHabbiconsComposer = 9460;
-    public static final int HabbiconStatusComposer = 9461;
-    public static final int HabbiconShopComposer = 9462;
+    public static final int UserHabbiconsComposer = 9465; // Octane USER_HABBICONS
+    public static final int HabbiconStatusComposer = 9466; // Octane USER_HABBICON_STATUS_CHANGED
+    public static final int HabbiconShopComposer = 9467; // Octane HABBICON_SHOP_DATA
     public static final int HabbiconInfoComposer = 9463;
     public static final int HabbiconResultComposer = 9464;
     // AIR 13 official rooms view, room flags and batched removals (official ids, free in both repos)

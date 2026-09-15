@@ -328,10 +328,14 @@ public class SecureLoginEvent extends MessageHandler {
                                         .values())
                         .compose());
                 messages.add(new UserClothesComposer(this.client.getHabbo()).compose());
-                HabbiconService.Snapshot habbicons =
-                        habbo.getHabbiconService().load(habbo.getHabboInfo().getId());
-                messages.add(new UserHabbiconsComposer(habbicons).compose());
-                if (!habbicons.unseen().isEmpty()) {
+                HabbiconService habbiconService = habbo.getHabbiconService();
+                HabbiconService.Snapshot habbicons = habbiconService == null
+                        ? null
+                        : habbiconService.load(habbo.getHabboInfo().getId());
+                if (habbicons != null) {
+                    messages.add(new UserHabbiconsComposer(habbicons).compose());
+                }
+                if (habbicons != null && !habbicons.unseen().isEmpty()) {
                     messages.add(new AddHabboItemComposer(
                                     habbicons.unseen().stream()
                                             .mapToInt(Integer::intValue)

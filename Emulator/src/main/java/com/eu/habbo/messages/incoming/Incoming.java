@@ -697,8 +697,6 @@ public class Incoming {
     public static final int ClaimHabbiconEvent = 9464;
     public static final int FavoriteHabbiconEvent = 9465;
     public static final int UnfavoriteHabbiconEvent = 9466;
-    public static final int UnseenResetCategoryEvent = 3493;
-    public static final int UnseenResetItemsEvent = 2343;
     // AIR 13 room queue and room hopper network (ids of the renderer composers)
     public static final int ChangeQueueEvent = 3093;
     public static final int RoomNetworkOpenConnectionEvent = 3736;

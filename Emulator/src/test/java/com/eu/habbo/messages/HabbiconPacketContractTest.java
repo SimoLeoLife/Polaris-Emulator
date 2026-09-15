@@ -36,7 +36,7 @@ class HabbiconPacketContractTest {
         ByteBuf packet = new UserHabbiconsComposer(snapshot()).compose().get();
         try {
             packet.skipBytes(4);
-            assertEquals(9460, packet.readShort());
+            assertEquals(9465, packet.readShort());
             assertEquals(3, packet.readInt());
             for (HabbiconService.Item item : List.of(first, second, reward)) {
                 assertEquals(item.id(), packet.readInt());
@@ -56,7 +56,7 @@ class HabbiconPacketContractTest {
         ByteBuf packet = new HabbiconShopComposer(snapshot()).compose().get();
         try {
             packet.skipBytes(4);
-            assertEquals(9462, packet.readShort());
+            assertEquals(9467, packet.readShort());
             assertEquals(2, packet.readInt());
             for (HabbiconService.Collection collection : snapshot().collections()) {
                 assertEquals(collection.id(), packet.readInt());
@@ -89,7 +89,7 @@ class HabbiconPacketContractTest {
             assertItem(info, second);
             assertFalse(info.isReadable());
             status.skipBytes(4);
-            assertEquals(9461, status.readShort());
+            assertEquals(9466, status.readShort());
             assertEquals(62, status.readInt());
             assertEquals(3, status.readInt());
             assertFalse(status.isReadable());
