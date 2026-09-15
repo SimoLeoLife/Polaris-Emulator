@@ -6517,6 +6517,11 @@ METHOD public com.eu.habbo.habbohotel.wired.tick.WiredTickable#onUnregistered(co
 METHOD public abstract com.eu.habbo.habbohotel.wired.tick.WiredTickable#onWiredTick(com.eu.habbo.habbohotel.rooms.Room,long,int):void throws -
 METHOD public abstract com.eu.habbo.habbohotel.wired.tick.WiredTickable#resetTimer(-):void throws -
 
+TYPE public com.eu.habbo.messages.incoming.wired.WiredAllVariablesRequestEvent extends com.eu.habbo.messages.incoming.MessageHandler
+CONSTRUCTOR public com.eu.habbo.messages.incoming.wired.WiredAllVariablesRequestEvent(-) throws -
+METHOD public com.eu.habbo.messages.incoming.wired.WiredAllVariablesRequestEvent#getRatelimit(-):int throws -
+METHOD public com.eu.habbo.messages.incoming.wired.WiredAllVariablesRequestEvent#handle(-):void throws java.lang.Exception
+
 TYPE public com.eu.habbo.messages.incoming.wired.WiredApplySetConditionsEvent extends com.eu.habbo.messages.incoming.MessageHandler
 CONSTRUCTOR public com.eu.habbo.messages.incoming.wired.WiredApplySetConditionsEvent(-) throws -
 METHOD public com.eu.habbo.messages.incoming.wired.WiredApplySetConditionsEvent#getRatelimit(-):int throws -
@@ -6540,10 +6545,25 @@ CONSTRUCTOR public com.eu.habbo.messages.incoming.wired.WiredFurniRuntimeStateRe
 METHOD public com.eu.habbo.messages.incoming.wired.WiredFurniRuntimeStateRequestEvent#getRatelimit(-):int throws -
 METHOD public com.eu.habbo.messages.incoming.wired.WiredFurniRuntimeStateRequestEvent#handle(-):void throws java.lang.Exception
 
+TYPE public com.eu.habbo.messages.incoming.wired.WiredMenuPermissionsSaveEvent extends com.eu.habbo.messages.incoming.MessageHandler
+CONSTRUCTOR public com.eu.habbo.messages.incoming.wired.WiredMenuPermissionsSaveEvent(-) throws -
+METHOD public com.eu.habbo.messages.incoming.wired.WiredMenuPermissionsSaveEvent#getRatelimit(-):int throws -
+METHOD public com.eu.habbo.messages.incoming.wired.WiredMenuPermissionsSaveEvent#handle(-):void throws java.lang.Exception
+
 TYPE public com.eu.habbo.messages.incoming.wired.WiredMonitorRequestEvent extends com.eu.habbo.messages.incoming.MessageHandler
 CONSTRUCTOR public com.eu.habbo.messages.incoming.wired.WiredMonitorRequestEvent(-) throws -
 METHOD public com.eu.habbo.messages.incoming.wired.WiredMonitorRequestEvent#getRatelimit(-):int throws -
 METHOD public com.eu.habbo.messages.incoming.wired.WiredMonitorRequestEvent#handle(-):void throws java.lang.Exception
+
+TYPE public com.eu.habbo.messages.incoming.wired.WiredOpenEvent extends com.eu.habbo.messages.incoming.MessageHandler
+CONSTRUCTOR public com.eu.habbo.messages.incoming.wired.WiredOpenEvent(-) throws -
+METHOD public com.eu.habbo.messages.incoming.wired.WiredOpenEvent#getRatelimit(-):int throws -
+METHOD public com.eu.habbo.messages.incoming.wired.WiredOpenEvent#handle(-):void throws java.lang.Exception
+
+TYPE public com.eu.habbo.messages.incoming.wired.WiredRoomLogsPageEvent extends com.eu.habbo.messages.incoming.MessageHandler
+CONSTRUCTOR public com.eu.habbo.messages.incoming.wired.WiredRoomLogsPageEvent(-) throws -
+METHOD public com.eu.habbo.messages.incoming.wired.WiredRoomLogsPageEvent#getRatelimit(-):int throws -
+METHOD public com.eu.habbo.messages.incoming.wired.WiredRoomLogsPageEvent#handle(-):void throws java.lang.Exception
 
 TYPE public com.eu.habbo.messages.incoming.wired.WiredRoomSettingsRequestEvent extends com.eu.habbo.messages.incoming.MessageHandler
 CONSTRUCTOR public com.eu.habbo.messages.incoming.wired.WiredRoomSettingsRequestEvent(-) throws -
@@ -6554,6 +6574,11 @@ TYPE public com.eu.habbo.messages.incoming.wired.WiredRoomSettingsSaveEvent exte
 CONSTRUCTOR public com.eu.habbo.messages.incoming.wired.WiredRoomSettingsSaveEvent(-) throws -
 METHOD public com.eu.habbo.messages.incoming.wired.WiredRoomSettingsSaveEvent#getRatelimit(-):int throws -
 METHOD public com.eu.habbo.messages.incoming.wired.WiredRoomSettingsSaveEvent#handle(-):void throws java.lang.Exception
+
+TYPE public com.eu.habbo.messages.incoming.wired.WiredRoomStateActionEvent extends com.eu.habbo.messages.incoming.MessageHandler
+CONSTRUCTOR public com.eu.habbo.messages.incoming.wired.WiredRoomStateActionEvent(-) throws -
+METHOD public com.eu.habbo.messages.incoming.wired.WiredRoomStateActionEvent#getRatelimit(-):int throws -
+METHOD public com.eu.habbo.messages.incoming.wired.WiredRoomStateActionEvent#handle(-):void throws java.lang.Exception
 
 TYPE public com.eu.habbo.messages.incoming.wired.WiredSaveException extends java.lang.Exception
 CONSTRUCTOR public com.eu.habbo.messages.incoming.wired.WiredSaveException(java.lang.String) throws -
@@ -6571,6 +6596,11 @@ CONSTRUCTOR public com.eu.habbo.messages.incoming.wired.WiredUserInspectMoveEven
 METHOD public com.eu.habbo.messages.incoming.wired.WiredUserInspectMoveEvent#getRatelimit(-):int throws -
 METHOD public com.eu.habbo.messages.incoming.wired.WiredUserInspectMoveEvent#handle(-):void throws java.lang.Exception
 
+TYPE public com.eu.habbo.messages.incoming.wired.WiredUserSelectedEvent extends com.eu.habbo.messages.incoming.MessageHandler
+CONSTRUCTOR public com.eu.habbo.messages.incoming.wired.WiredUserSelectedEvent(-) throws -
+METHOD public com.eu.habbo.messages.incoming.wired.WiredUserSelectedEvent#getRatelimit(-):int throws -
+METHOD public com.eu.habbo.messages.incoming.wired.WiredUserSelectedEvent#handle(-):void throws java.lang.Exception
+
 TYPE public com.eu.habbo.messages.incoming.wired.WiredUserVariableManageEvent extends com.eu.habbo.messages.incoming.MessageHandler
 CONSTRUCTOR public com.eu.habbo.messages.incoming.wired.WiredUserVariableManageEvent(-) throws -
 METHOD public com.eu.habbo.messages.incoming.wired.WiredUserVariableManageEvent#getRatelimit(-):int throws -
@@ -6585,6 +6615,21 @@ TYPE public com.eu.habbo.messages.incoming.wired.WiredUserVariablesRequestEvent 
 CONSTRUCTOR public com.eu.habbo.messages.incoming.wired.WiredUserVariablesRequestEvent(-) throws -
 METHOD public com.eu.habbo.messages.incoming.wired.WiredUserVariablesRequestEvent#getRatelimit(-):int throws -
 METHOD public com.eu.habbo.messages.incoming.wired.WiredUserVariablesRequestEvent#handle(-):void throws java.lang.Exception
+
+TYPE public com.eu.habbo.messages.incoming.wired.WiredVariableHashesEvent extends com.eu.habbo.messages.incoming.MessageHandler
+CONSTRUCTOR public com.eu.habbo.messages.incoming.wired.WiredVariableHashesEvent(-) throws -
+METHOD public com.eu.habbo.messages.incoming.wired.WiredVariableHashesEvent#getRatelimit(-):int throws -
+METHOD public com.eu.habbo.messages.incoming.wired.WiredVariableHashesEvent#handle(-):void throws java.lang.Exception
+
+TYPE public com.eu.habbo.messages.incoming.wired.WiredVariableHoldersPageEvent extends com.eu.habbo.messages.incoming.MessageHandler
+CONSTRUCTOR public com.eu.habbo.messages.incoming.wired.WiredVariableHoldersPageEvent(-) throws -
+METHOD public com.eu.habbo.messages.incoming.wired.WiredVariableHoldersPageEvent#getRatelimit(-):int throws -
+METHOD public com.eu.habbo.messages.incoming.wired.WiredVariableHoldersPageEvent#handle(-):void throws java.lang.Exception
+
+TYPE public com.eu.habbo.messages.incoming.wired.WiredVariableHoldersRequestEvent extends com.eu.habbo.messages.incoming.MessageHandler
+CONSTRUCTOR public com.eu.habbo.messages.incoming.wired.WiredVariableHoldersRequestEvent(-) throws -
+METHOD public com.eu.habbo.messages.incoming.wired.WiredVariableHoldersRequestEvent#getRatelimit(-):int throws -
+METHOD public com.eu.habbo.messages.incoming.wired.WiredVariableHoldersRequestEvent#handle(-):void throws java.lang.Exception
 
 TYPE public com.eu.habbo.messages.outgoing.rooms.WiredFurniOpacityComposer extends com.eu.habbo.messages.outgoing.MessageComposer
 FIELD public static final com.eu.habbo.messages.outgoing.rooms.WiredFurniOpacityComposer#PROTOCOL_VERSION:int
@@ -6612,6 +6657,27 @@ METHOD public static com.eu.habbo.messages.outgoing.rooms.WiredMovementsComposer
 METHOD public static com.eu.habbo.messages.outgoing.rooms.WiredMovementsComposer#userSlideMovement(int,int,int,int,int,double,double,int,int,int):com.eu.habbo.messages.outgoing.rooms.WiredMovementsComposer$MovementData throws -
 METHOD public static com.eu.habbo.messages.outgoing.rooms.WiredMovementsComposer#userWalkMovement(int,int,int,int,int,double,double,int,int,int):com.eu.habbo.messages.outgoing.rooms.WiredMovementsComposer$MovementData throws -
 METHOD public static com.eu.habbo.messages.outgoing.rooms.WiredMovementsComposer#wallItemMovement(int,boolean,int[]):com.eu.habbo.messages.outgoing.rooms.WiredMovementsComposer$MovementData throws -
+
+TYPE public com.eu.habbo.messages.outgoing.wired.WiredAllVariablesDiffComposer extends com.eu.habbo.messages.outgoing.MessageComposer
+CONSTRUCTOR public com.eu.habbo.messages.outgoing.wired.WiredAllVariablesDiffComposer(int,boolean,java.util.List<java.lang.String>,java.util.List<com.eu.habbo.habbohotel.rooms.RoomWiredVariableCatalog$Variable>) throws -
+METHOD protected com.eu.habbo.messages.outgoing.wired.WiredAllVariablesDiffComposer#composeInternal(-):com.eu.habbo.messages.ServerMessage throws -
+
+TYPE public com.eu.habbo.messages.outgoing.wired.WiredAllVariablesHashComposer extends com.eu.habbo.messages.outgoing.MessageComposer
+CONSTRUCTOR public com.eu.habbo.messages.outgoing.wired.WiredAllVariablesHashComposer(int) throws -
+METHOD protected com.eu.habbo.messages.outgoing.wired.WiredAllVariablesHashComposer#composeInternal(-):com.eu.habbo.messages.ServerMessage throws -
+
+TYPE public com.eu.habbo.messages.outgoing.wired.WiredClickSettingsComposer extends com.eu.habbo.messages.outgoing.MessageComposer
+FIELD public static final com.eu.habbo.messages.outgoing.wired.WiredClickSettingsComposer#CLICK_FURNI_DEFAULT:int
+FIELD public static final com.eu.habbo.messages.outgoing.wired.WiredClickSettingsComposer#CLICK_FURNI_PASS_THROUGH:int
+FIELD public static final com.eu.habbo.messages.outgoing.wired.WiredClickSettingsComposer#CLICK_USER_CLICK_WALK_BEHIND:int
+FIELD public static final com.eu.habbo.messages.outgoing.wired.WiredClickSettingsComposer#CLICK_USER_DEFAULT:int
+FIELD public static final com.eu.habbo.messages.outgoing.wired.WiredClickSettingsComposer#CLICK_USER_PASS_THROUGH:int
+CONSTRUCTOR public com.eu.habbo.messages.outgoing.wired.WiredClickSettingsComposer(int,int) throws -
+METHOD protected com.eu.habbo.messages.outgoing.wired.WiredClickSettingsComposer#composeInternal(-):com.eu.habbo.messages.ServerMessage throws -
+
+TYPE public com.eu.habbo.messages.outgoing.wired.WiredClickUserResponseComposer extends com.eu.habbo.messages.outgoing.MessageComposer
+CONSTRUCTOR public com.eu.habbo.messages.outgoing.wired.WiredClickUserResponseComposer(int,boolean) throws -
+METHOD protected com.eu.habbo.messages.outgoing.wired.WiredClickUserResponseComposer#composeInternal(-):com.eu.habbo.messages.ServerMessage throws -
 
 TYPE public com.eu.habbo.messages.outgoing.wired.WiredConditionDataComposer extends com.eu.habbo.messages.outgoing.MessageComposer
 CONSTRUCTOR public com.eu.habbo.messages.outgoing.wired.WiredConditionDataComposer(com.eu.habbo.habbohotel.items.interactions.InteractionWiredCondition,com.eu.habbo.habbohotel.rooms.Room) throws -
@@ -6660,6 +6726,18 @@ CONSTRUCTOR public com.eu.habbo.messages.outgoing.wired.WiredRewardAlertComposer
 METHOD protected com.eu.habbo.messages.outgoing.wired.WiredRewardAlertComposer#composeInternal(-):com.eu.habbo.messages.ServerMessage throws -
 METHOD public com.eu.habbo.messages.outgoing.wired.WiredRewardAlertComposer#getCode(-):int throws -
 
+TYPE public com.eu.habbo.messages.outgoing.wired.WiredRoomLogPageComposer extends com.eu.habbo.messages.outgoing.MessageComposer
+CONSTRUCTOR public com.eu.habbo.messages.outgoing.wired.WiredRoomLogPageComposer(int,int,int,java.util.List<com.eu.habbo.messages.outgoing.wired.WiredRoomLogPageComposer$Entry>,int,int,java.lang.String) throws -
+METHOD protected com.eu.habbo.messages.outgoing.wired.WiredRoomLogPageComposer#composeInternal(-):com.eu.habbo.messages.ServerMessage throws -
+
+TYPE public static final com.eu.habbo.messages.outgoing.wired.WiredRoomLogPageComposer$Entry extends java.lang.Object
+CONSTRUCTOR public com.eu.habbo.messages.outgoing.wired.WiredRoomLogPageComposer$Entry(long,int,int,java.lang.String,long) throws -
+METHOD public com.eu.habbo.messages.outgoing.wired.WiredRoomLogPageComposer$Entry#getId(-):long throws -
+METHOD public com.eu.habbo.messages.outgoing.wired.WiredRoomLogPageComposer$Entry#getLogLevel(-):int throws -
+METHOD public com.eu.habbo.messages.outgoing.wired.WiredRoomLogPageComposer$Entry#getLogMessage(-):java.lang.String throws -
+METHOD public com.eu.habbo.messages.outgoing.wired.WiredRoomLogPageComposer$Entry#getLogSource(-):int throws -
+METHOD public com.eu.habbo.messages.outgoing.wired.WiredRoomLogPageComposer$Entry#getTimestamp(-):long throws -
+
 TYPE public com.eu.habbo.messages.outgoing.wired.WiredRoomSettingsDataComposer extends com.eu.habbo.messages.outgoing.MessageComposer
 CONSTRUCTOR public com.eu.habbo.messages.outgoing.wired.WiredRoomSettingsDataComposer(com.eu.habbo.habbohotel.rooms.Room,com.eu.habbo.habbohotel.users.Habbo) throws -
 METHOD protected com.eu.habbo.messages.outgoing.wired.WiredRoomSettingsDataComposer#composeInternal(-):com.eu.habbo.messages.ServerMessage throws -
@@ -6678,6 +6756,14 @@ TYPE public com.eu.habbo.messages.outgoing.wired.WiredUserVariablesDataComposer 
 CONSTRUCTOR public com.eu.habbo.messages.outgoing.wired.WiredUserVariablesDataComposer(com.eu.habbo.habbohotel.rooms.RoomUserVariableManager$Snapshot,com.eu.habbo.habbohotel.rooms.RoomFurniVariableManager$Snapshot,com.eu.habbo.habbohotel.rooms.RoomVariableManager$Snapshot) throws -
 CONSTRUCTOR public com.eu.habbo.messages.outgoing.wired.WiredUserVariablesDataComposer(com.eu.habbo.habbohotel.rooms.RoomUserVariableManager$Snapshot,com.eu.habbo.habbohotel.rooms.RoomFurniVariableManager$Snapshot,com.eu.habbo.habbohotel.rooms.RoomVariableManager$Snapshot,java.util.List<com.eu.habbo.habbohotel.rooms.WiredVariableDefinitionInfo>) throws -
 METHOD protected com.eu.habbo.messages.outgoing.wired.WiredUserVariablesDataComposer#composeInternal(-):com.eu.habbo.messages.ServerMessage throws -
+
+TYPE public com.eu.habbo.messages.outgoing.wired.WiredVariableHoldersComposer extends com.eu.habbo.messages.outgoing.MessageComposer
+CONSTRUCTOR public com.eu.habbo.messages.outgoing.wired.WiredVariableHoldersComposer(int,com.eu.habbo.habbohotel.rooms.RoomWiredVariableCatalog$Variable,java.util.List<com.eu.habbo.habbohotel.rooms.RoomWiredVariableCatalog$Holder>) throws -
+METHOD protected com.eu.habbo.messages.outgoing.wired.WiredVariableHoldersComposer#composeInternal(-):com.eu.habbo.messages.ServerMessage throws -
+
+TYPE public com.eu.habbo.messages.outgoing.wired.WiredVariableHoldersPageComposer extends com.eu.habbo.messages.outgoing.MessageComposer
+CONSTRUCTOR public com.eu.habbo.messages.outgoing.wired.WiredVariableHoldersPageComposer(java.lang.String,int,int,int,java.util.List<com.eu.habbo.habbohotel.rooms.RoomWiredVariableCatalog$Holder>,int,int) throws -
+METHOD protected com.eu.habbo.messages.outgoing.wired.WiredVariableHoldersPageComposer#composeInternal(-):com.eu.habbo.messages.ServerMessage throws -
 
 TYPE public com.eu.habbo.plugin.events.furniture.wired.WiredConditionFailedEvent extends com.eu.habbo.plugin.events.roomunit.RoomUnitEvent
 FIELD public final com.eu.habbo.plugin.events.furniture.wired.WiredConditionFailedEvent#condition:com.eu.habbo.habbohotel.items.interactions.InteractionWiredCondition

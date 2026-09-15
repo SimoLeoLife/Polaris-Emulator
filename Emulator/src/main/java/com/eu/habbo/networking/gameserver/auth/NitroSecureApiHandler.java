@@ -8,18 +8,25 @@ import io.netty.channel.ChannelDuplexHandler;
 import io.netty.channel.ChannelFutureListener;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelPromise;
-import io.netty.handler.codec.http.*;
+import io.netty.handler.codec.http.DefaultFullHttpResponse;
+import io.netty.handler.codec.http.FullHttpRequest;
+import io.netty.handler.codec.http.FullHttpResponse;
+import io.netty.handler.codec.http.HttpHeaderNames;
+import io.netty.handler.codec.http.HttpHeaderValues;
+import io.netty.handler.codec.http.HttpMethod;
+import io.netty.handler.codec.http.HttpResponseStatus;
+import io.netty.handler.codec.http.HttpVersion;
+import io.netty.handler.codec.http.QueryStringDecoder;
 import io.netty.util.AttributeKey;
 import io.netty.util.ReferenceCountUtil;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
+import javax.crypto.SecretKey;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class NitroSecureApiHandler extends ChannelDuplexHandler {
     private static final Logger LOGGER = LoggerFactory.getLogger(NitroSecureApiHandler.class);
@@ -70,12 +77,12 @@ public class NitroSecureApiHandler extends ChannelDuplexHandler {
                 return;
             }
 
-            SecretKey sessionKey = NitroSecureAssetHandler.deriveSessionKey(java.util.Base64.getDecoder().decode(clientKey));
+            SecretKey sessionKey = NitroSecureAssetHandler.deriveSessionKey(
+                    java.util.Base64.getDecoder().decode(clientKey));
             SecureApiContext secureContext = new SecureApiContext(
                     NitroSecureAssetHandler.getServerKeyFingerprint(),
                     NitroSecureAssetHandler.fingerprint(sessionKey.getEncoded()),
-                    sessionKey
-            );
+                    sessionKey);
 
             if (!req.content().isReadable()) {
                 enqueueContext(ctx, secureContext);
@@ -92,17 +99,14 @@ public class NitroSecureApiHandler extends ChannelDuplexHandler {
 
             byte[] encrypted = new byte[readableBytes];
             req.content().getBytes(req.content().readerIndex(), encrypted);
-            byte[] clear = NitroSecureAssetHandler.decrypt(sessionKey, NitroSecureAssetHandler.fromHex(new String(encrypted, StandardCharsets.UTF_8)));
+            byte[] clear = NitroSecureAssetHandler.decrypt(
+                    sessionKey, NitroSecureAssetHandler.fromHex(new String(encrypted, StandardCharsets.UTF_8)));
             clear = unwrapEnvelope(clear, req, secureContext);
 
-            FullHttpRequest decryptedReq = new DefaultFullHttpRequest(
-                    req.protocolVersion(),
-                    req.method(),
-                    req.uri(),
-                    Unpooled.wrappedBuffer(clear)
-            );
+            // Same request line and headers, decrypted body: this is the inbound
+            // request continuing down our own pipeline, not an outbound call.
+            FullHttpRequest decryptedReq = req.replace(Unpooled.wrappedBuffer(clear));
 
-            decryptedReq.headers().setAll(req.headers());
             decryptedReq.headers().set(HttpHeaderNames.CONTENT_TYPE, "application/json; charset=utf-8");
             decryptedReq.headers().setInt(HttpHeaderNames.CONTENT_LENGTH, clear.length);
 
@@ -139,10 +143,7 @@ public class NitroSecureApiHandler extends ChannelDuplexHandler {
             byte[] hex = NitroSecureAssetHandler.toHex(encrypted).getBytes(StandardCharsets.UTF_8);
 
             FullHttpResponse encryptedResponse = new DefaultFullHttpResponse(
-                    response.protocolVersion(),
-                    response.status(),
-                    Unpooled.wrappedBuffer(hex)
-            );
+                    response.protocolVersion(), response.status(), Unpooled.wrappedBuffer(hex));
 
             encryptedResponse.headers().setAll(response.headers());
             encryptedResponse.headers().set(HttpHeaderNames.CONTENT_TYPE, "text/plain; charset=utf-8");
@@ -150,7 +151,9 @@ public class NitroSecureApiHandler extends ChannelDuplexHandler {
             encryptedResponse.headers().set("X-Nitro-Sec", "1");
             encryptedResponse.headers().set("X-Nitro-Key-Fp", secureContext.serverKeyFingerprint());
             encryptedResponse.headers().set("X-Nitro-Derive-Fp", secureContext.derivedFingerprint());
-            encryptedResponse.headers().set("Access-Control-Expose-Headers", "X-Nitro-Sec, X-Nitro-Key-Fp, X-Nitro-Derive-Fp");
+            encryptedResponse
+                    .headers()
+                    .set("Access-Control-Expose-Headers", "X-Nitro-Sec, X-Nitro-Key-Fp, X-Nitro-Derive-Fp");
 
             ReferenceCountUtil.release(response);
             super.write(ctx, encryptedResponse, promise);
@@ -194,7 +197,8 @@ public class NitroSecureApiHandler extends ChannelDuplexHandler {
     private static byte[] unwrapEnvelope(byte[] clear, FullHttpRequest req, SecureApiContext secureContext) {
         if (!requiresReplayEnvelope(req.method())) return clear;
 
-        JsonObject envelope = JsonParser.parseString(new String(clear, StandardCharsets.UTF_8)).getAsJsonObject();
+        JsonObject envelope = JsonParser.parseString(new String(clear, StandardCharsets.UTF_8))
+                .getAsJsonObject();
         long ts = envelope.has("ts") ? envelope.get("ts").getAsLong() : 0L;
         String nonce = envelope.has("nonce") ? envelope.get("nonce").getAsString() : "";
         String method = envelope.has("method") ? envelope.get("method").getAsString() : "";
@@ -269,9 +273,11 @@ public class NitroSecureApiHandler extends ChannelDuplexHandler {
         ctx.writeAndFlush(response).addListener(ChannelFutureListener.CLOSE);
     }
 
-    private static void sendText(ChannelHandlerContext ctx, FullHttpRequest req, HttpResponseStatus status, String text) {
+    private static void sendText(
+            ChannelHandlerContext ctx, FullHttpRequest req, HttpResponseStatus status, String text) {
         byte[] bytes = text.getBytes(StandardCharsets.UTF_8);
-        FullHttpResponse response = new DefaultFullHttpResponse(HttpVersion.HTTP_1_1, status, Unpooled.wrappedBuffer(bytes));
+        FullHttpResponse response =
+                new DefaultFullHttpResponse(HttpVersion.HTTP_1_1, status, Unpooled.wrappedBuffer(bytes));
         response.headers().set(HttpHeaderNames.CONTENT_TYPE, "text/plain; charset=utf-8");
         response.headers().setInt(HttpHeaderNames.CONTENT_LENGTH, bytes.length);
         applyCors(req, response);
@@ -294,8 +300,10 @@ public class NitroSecureApiHandler extends ChannelDuplexHandler {
         if (requestedHeaders != null && !requestedHeaders.isEmpty()) {
             response.headers().set("Access-Control-Allow-Headers", requestedHeaders);
         } else {
-            response.headers().set("Access-Control-Allow-Headers",
-                    "Authorization, Content-Type, X-Requested-With, X-Nitro-Key, X-Nitro-Api");
+            response.headers()
+                    .set(
+                            "Access-Control-Allow-Headers",
+                            "Authorization, Content-Type, X-Requested-With, X-Nitro-Key, X-Nitro-Api");
         }
 
         response.headers().set("Vary", "Origin, Access-Control-Request-Headers, Access-Control-Request-Method");

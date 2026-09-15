@@ -16,23 +16,21 @@ import com.eu.habbo.messages.outgoing.rooms.users.RoomUsersComposer;
 import com.eu.habbo.plugin.events.bots.BotSavedChatEvent;
 import com.eu.habbo.plugin.events.bots.BotSavedLookEvent;
 import com.eu.habbo.plugin.events.bots.BotSavedNameEvent;
-import org.jsoup.Jsoup;
-
 import java.util.ArrayList;
+import org.jsoup.Jsoup;
 
 public class BotSaveSettingsEvent extends MessageHandler {
     @Override
     public void handle() throws Exception {
         Room room = this.client.getHabbo().getHabboInfo().getCurrentRoom();
 
-        if (room == null)
-            return;
+        if (room == null) return;
 
-        if (room.getOwnerId() == this.client.getHabbo().getHabboInfo().getId() || this.client.getHabbo().hasPermission(Permission.ACC_ANYROOMOWNER)) {
+        if (room.getOwnerId() == this.client.getHabbo().getHabboInfo().getId()
+                || this.client.getHabbo().hasPermission(Permission.ACC_ANYROOMOWNER)) {
             int botId = this.packet.readInt();
             Bot bot = room.getBot(Math.abs(botId));
-            if (bot == null)
-                return;
+            if (bot == null) return;
             int settingId = this.packet.readInt();
             boolean allowed = false;
             for (short a : bot.getOwnerActionIds()) {
@@ -47,14 +45,14 @@ public class BotSaveSettingsEvent extends MessageHandler {
 
             switch (settingId) {
                 case 1:
-                    BotSavedLookEvent lookEvent = new BotSavedLookEvent(bot,
+                    BotSavedLookEvent lookEvent = new BotSavedLookEvent(
+                            bot,
                             this.client.getHabbo().getHabboInfo().getGender(),
                             this.client.getHabbo().getHabboInfo().getLook(),
                             this.client.getHabbo().getRoomUnit().getEffectId());
                     Emulator.getPluginManager().fireEvent(lookEvent);
 
-                    if (lookEvent.isCancelled())
-                        break;
+                    if (lookEvent.isCancelled()) break;
 
                     bot.setFigure(lookEvent.newLook);
                     bot.setGender(lookEvent.gender);
@@ -65,8 +63,7 @@ public class BotSaveSettingsEvent extends MessageHandler {
                 case 2:
                     String messageString = this.packet.readString();
 
-                    if (messageString.length() > 5112)
-                        break;
+                    if (messageString.length() > 5112) break;
 
                     String[] data = messageString.split(";#;");
 
@@ -86,14 +83,19 @@ public class BotSaveSettingsEvent extends MessageHandler {
                                 count++;
                             }
 
-                            String result = Emulator.getGameEnvironment().getWordFilter().filter(s, null);
+                            String result = Emulator.getGameEnvironment()
+                                    .getWordFilter()
+                                    .filter(s, null);
 
                             if (!result.isEmpty()) {
                                 if (!this.client.getHabbo().hasPermission(Permission.ACC_CHAT_NO_FILTER)) {
-                                    result = Emulator.getGameEnvironment().getWordFilter().filter(result, this.client.getHabbo());
+                                    result = Emulator.getGameEnvironment()
+                                            .getWordFilter()
+                                            .filter(result, this.client.getHabbo());
                                 }
 
-                                result = result.substring(0, Math.min(BotManager.MAXIMUM_CHAT_LENGTH - totalChatLength, result.length()));
+                                result = result.substring(
+                                        0, Math.min(BotManager.MAXIMUM_CHAT_LENGTH - totalChatLength, result.length()));
                                 chat.add(result);
                                 totalChatLength += result.length();
                             }
@@ -103,23 +105,25 @@ public class BotSaveSettingsEvent extends MessageHandler {
                     int chatSpeed = 7;
 
                     try {
-                        chatSpeed = Integer.parseInt(data[data.length - 2]);
-                        if (chatSpeed < BotManager.MINIMUM_CHAT_SPEED) {
-                            chatSpeed = BotManager.MINIMUM_CHAT_SPEED;
-                        }
+                        chatSpeed = clampChatSpeed(Integer.parseInt(data[data.length - 2]));
                     } catch (Exception e) {
-                        //Invalid chatspeed. Use 7.
+                        // Invalid chatspeed. Use 7.
                     }
 
-                    BotSavedChatEvent chatEvent = new BotSavedChatEvent(bot, Boolean.parseBoolean(data[data.length - 3]), Boolean.parseBoolean(data[data.length - 1]), chatSpeed, chat);
+                    BotSavedChatEvent chatEvent = new BotSavedChatEvent(
+                            bot,
+                            Boolean.parseBoolean(data[data.length - 3]),
+                            Boolean.parseBoolean(data[data.length - 1]),
+                            chatSpeed,
+                            chat);
                     Emulator.getPluginManager().fireEvent(chatEvent);
 
-                    if (chatEvent.isCancelled())
-                        break;
+                    if (chatEvent.isCancelled()) break;
 
                     bot.setChatAuto(chatEvent.autoChat);
                     bot.setChatRandom(chatEvent.randomChat);
-                    bot.setChatDelay((short) chatEvent.chatDelay);
+                    // Plugins may rewrite the delay; clamp again so the cast cannot wrap.
+                    bot.setChatDelay((short) clampChatSpeed(chatEvent.chatDelay));
                     bot.clearChat();
                     bot.addChatLines(chat);
                     bot.needsUpdate(true);
@@ -131,39 +135,49 @@ public class BotSaveSettingsEvent extends MessageHandler {
                     break;
 
                 case 4:
-                    bot.getRoomUnit().setDanceType(DanceType.values()[(bot.getRoomUnit().getDanceType().getType() + 1) % DanceType.values().length]);
+                    bot.getRoomUnit()
+                            .setDanceType(
+                                    DanceType.values()[
+                                            (bot.getRoomUnit().getDanceType().getType() + 1)
+                                                    % DanceType.values().length]);
                     room.sendComposer(new RoomUserDanceComposer(bot.getRoomUnit()).compose());
                     bot.needsUpdate(true);
                     break;
 
                 case 5:
                     String name = this.packet.readString();
-                    boolean invalidName = name.length() > BotManager.MAXIMUM_NAME_LENGTH || name.contains("<") || name.contains(">");
+                    boolean invalidName =
+                            name.length() > BotManager.MAXIMUM_NAME_LENGTH || name.contains("<") || name.contains(">");
                     if (!invalidName) {
-                        String filteredName = Emulator.getGameEnvironment().getWordFilter().filter(name, null);
+                        String filteredName =
+                                Emulator.getGameEnvironment().getWordFilter().filter(name, null);
                         invalidName = !name.equalsIgnoreCase(filteredName);
                         if (!invalidName) {
                             BotSavedNameEvent nameEvent = new BotSavedNameEvent(bot, name);
 
                             Emulator.getPluginManager().fireEvent(nameEvent);
 
-                            if (nameEvent.isCancelled())
-                                break;
+                            if (nameEvent.isCancelled()) break;
 
                             bot.setName(nameEvent.name);
                             bot.needsUpdate(true);
-                            room.sendComposer(new RoomUserNameChangedComposer(bot.getRoomUnit().getId(), bot.getRoomUnit().getId(), nameEvent.name).compose());
+                            room.sendComposer(new RoomUserNameChangedComposer(
+                                            bot.getRoomUnit().getId(),
+                                            bot.getRoomUnit().getId(),
+                                            nameEvent.name)
+                                    .compose());
                         }
                     }
 
                     if (invalidName) {
-                        this.client.sendResponse(new BotErrorComposer(BotErrorComposer.ROOM_ERROR_BOTS_NAME_NOT_ACCEPT));
+                        this.client.sendResponse(
+                                new BotErrorComposer(BotErrorComposer.ROOM_ERROR_BOTS_NAME_NOT_ACCEPT));
                     }
                     break;
                 case 9:
                     String motto = this.packet.readString();
 
-                    if(motto.length() > Emulator.getConfig().getInt("motto.max_length", 38)) break;
+                    if (motto.length() > Emulator.getConfig().getInt("motto.max_length", 38)) break;
 
                     bot.setMotto(motto);
                     bot.needsUpdate(true);
@@ -185,5 +199,17 @@ public class BotSaveSettingsEvent extends MessageHandler {
                 Emulator.getThreading().run(bot);
             }
         }
+    }
+
+    /**
+     * Keeps a client-supplied chat delay within the configured bounds and
+     * within what the bot's short-typed delay can hold, so the narrowing cast
+     * never wraps a huge value into a negative or tiny one.
+     */
+    static int clampChatSpeed(int chatSpeed) {
+        int max = Math.min(BotManager.MAXIMUM_CHAT_SPEED, Short.MAX_VALUE);
+        if (chatSpeed < BotManager.MINIMUM_CHAT_SPEED) return BotManager.MINIMUM_CHAT_SPEED;
+        if (chatSpeed > max) return max;
+        return chatSpeed;
     }
 }

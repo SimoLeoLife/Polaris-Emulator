@@ -3,7 +3,6 @@ package com.eu.habbo.habbohotel.catalog;
 import com.eu.habbo.Emulator;
 import com.eu.habbo.messages.ISerialize;
 import com.eu.habbo.messages.ServerMessage;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.Calendar;
@@ -37,26 +36,19 @@ public class ClubOffer implements ISerialize {
 
     private final int id;
 
-
     private final String name;
-
 
     private final int days;
 
-
     private final int credits;
 
-
     private final int points;
-
 
     private final int pointsType;
 
     private final OfferType type;
 
-
     private final boolean vip;
-
 
     private final boolean deal;
 
@@ -75,7 +67,8 @@ public class ClubOffer implements ISerialize {
         boolean giftable = false;
         try {
             giftable = "1".equals(set.getString("giftable"));
-        } catch (SQLException ignored) {}
+        } catch (SQLException ignored) {
+        }
         this.giftable = giftable;
     }
 
@@ -160,7 +153,7 @@ public class ClubOffer implements ISerialize {
         expireTimestamp = Math.max(Emulator.getIntUnixTimestamp(), expireTimestamp);
         message.appendInt(this.id);
         message.appendString(this.name);
-        message.appendBoolean(false); //unused
+        message.appendBoolean(false); // unused
         message.appendInt(this.credits);
         message.appendInt(this.points);
         message.appendInt(this.pointsType);
@@ -184,13 +177,15 @@ public class ClubOffer implements ISerialize {
         message.appendBoolean(this.giftable);
         message.appendInt(totalDays);
 
+        long expiresAt = expireTimestamp;
+
         if (this.isSubscriptionOffer()) {
-            expireTimestamp += secondsTotal;
+            expiresAt += secondsTotal;
         }
 
         Calendar cal = Calendar.getInstance();
         cal.setTimeZone(TimeZone.getTimeZone("UTC"));
-        cal.setTimeInMillis(expireTimestamp * 1000L);
+        cal.setTimeInMillis(expiresAt * 1000L);
         message.appendInt(cal.get(Calendar.YEAR));
         message.appendInt(cal.get(Calendar.MONTH) + 1);
         message.appendInt(cal.get(Calendar.DAY_OF_MONTH));
