@@ -20466,6 +20466,55 @@
           "name": ""
         }
       ]
+    },
+    {
+      "name": "GROUP_MEMBERS_REFRESH",
+      "direction": "server_to_client",
+      "header": 2445,
+      "java": {
+        "symbol": "GuildRefreshMembersListComposer",
+        "className": "GuildRefreshMembersListComposer",
+        "path": "Emulator/src/main/java/com/eu/habbo/messages/outgoing/guilds/GuildRefreshMembersListComposer.java"
+      },
+      "typescript": {
+        "symbol": "GROUP_MEMBERS_REFRESH",
+        "className": "GroupMembersRefreshParser",
+        "path": "packages/communication/src/messages/parser/group/GroupMembersRefreshParser.ts"
+      },
+      "fields": [
+        {
+          "kind": "scalar",
+          "type": "int",
+          "name": ""
+        },
+        {
+          "kind": "scalar",
+          "type": "int",
+          "name": ""
+        }
+      ]
+    },
+    {
+      "name": "PET_GO_TO_BREEDING_NEST_FAILURE",
+      "direction": "server_to_client",
+      "header": 2621,
+      "java": {
+        "symbol": "PetBreedingStartFailedComposer",
+        "className": "PetBreedingStartFailedComposer",
+        "path": "Emulator/src/main/java/com/eu/habbo/messages/outgoing/rooms/pets/breeding/PetBreedingStartFailedComposer.java"
+      },
+      "typescript": {
+        "symbol": "PET_GO_TO_BREEDING_NEST_FAILURE",
+        "className": "GoToBreedingNestFailureParser",
+        "path": "packages/communication/src/messages/parser/inventory/pets/GoToBreedingNestFailureParser.ts"
+      },
+      "fields": [
+        {
+          "kind": "scalar",
+          "type": "int",
+          "name": ""
+        }
+      ]
     }
   ],
   "unpaired": [
@@ -20504,14 +20553,6 @@
     {
       "direction": "server_to_client",
       "side": "java",
-      "header": 265,
-      "symbol": "GuildMemberUpdateComposer",
-      "path": "Emulator/src/main/java/com/eu/habbo/messages/outgoing/guilds/GuildMemberUpdateComposer.java",
-      "reason": "Header is registered only by the Polaris Emulator packet registry"
-    },
-    {
-      "direction": "server_to_client",
-      "side": "java",
       "header": 690,
       "symbol": "HotelViewCatalogPageExpiringComposer",
       "path": "Emulator/src/main/java/com/eu/habbo/messages/outgoing/hotelview/HotelViewCatalogPageExpiringComposer.java",
@@ -20544,14 +20585,6 @@
     {
       "direction": "server_to_client",
       "side": "java",
-      "header": 2445,
-      "symbol": "GuildRefreshMembersListComposer",
-      "path": "Emulator/src/main/java/com/eu/habbo/messages/outgoing/guilds/GuildRefreshMembersListComposer.java",
-      "reason": "Header is registered only by the Polaris Emulator packet registry"
-    },
-    {
-      "direction": "server_to_client",
-      "side": "java",
       "header": 2527,
       "symbol": "PetBreedingCompleted",
       "path": "Emulator/src/main/java/com/eu/habbo/messages/outgoing/rooms/pets/breeding/PetBreedingCompleted.java",
@@ -20564,14 +20597,6 @@
       "symbol": "GAME2_TOTAL_LEADERBOARD",
       "path": "packages/communication/src/messages/parser/game/score/Game2LeaderboardParser.ts",
       "reason": "Header is registered only by the Octane Renderer packet registry"
-    },
-    {
-      "direction": "server_to_client",
-      "side": "java",
-      "header": 2621,
-      "symbol": "PetBreedingStartFailedComposer",
-      "path": "Emulator/src/main/java/com/eu/habbo/messages/outgoing/rooms/pets/breeding/PetBreedingStartFailedComposer.java",
-      "reason": "Header is registered only by the Polaris Emulator packet registry"
     },
     {
       "direction": "server_to_client",
@@ -27838,6 +27863,22 @@
         "path": "packages/communication/src/messages/parser/habbicons/HabbiconInfoParser.ts"
       },
       "reason": "Shared Habbicon item serializers are outside both static extractors. HabbiconPacketContractTest verifies the complete id, name, collection, state and three price fields."
+    },
+    {
+      "name": "GROUP_MEMBER",
+      "direction": "server_to_client",
+      "header": 265,
+      "java": {
+        "symbol": "GuildMemberUpdateComposer",
+        "className": "GuildMemberUpdateComposer",
+        "path": "Emulator/src/main/java/com/eu/habbo/messages/outgoing/guilds/GuildMemberUpdateComposer.java"
+      },
+      "typescript": {
+        "symbol": "GROUP_MEMBER",
+        "className": "GroupMemberUpdateParser",
+        "path": "packages/communication/src/messages/parser/group/GroupMemberUpdateParser.ts"
+      },
+      "reason": "TypeScript parser delegates the member record to GroupMemberParser: groupId:int, rank:int, userId:int, name:string, figure:string, joinedAt:string. PacketReceiverCompatibilityTest verifies the server payload; the packet correction audit exercises the renderer parser."
     }
   ]
 }
