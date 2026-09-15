@@ -127,11 +127,15 @@ class AchievementPacketsTest {
     }
 
     @Test
-    void wiredAvailabilityUsesTheAirCodeWhileKeepingTheConfiguredLookupName() {
+    void wiredAvailabilityListsTheConfiguredAchievementOfEveryGiveAchievementBox() {
         var wired = mock(com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectGiveAchievement.class);
+        when(wired.getAchievement()).thenReturn("WF_MyGame");
         when(wired.getAchievementCode()).thenReturn("WF_MyGame");
+        var specialTypes = mock(com.eu.habbo.habbohotel.rooms.RoomSpecialTypes.class);
+        when(specialTypes.getEffects()).thenReturn(Set.of(wired));
+        when(specialTypes.getTriggers()).thenReturn(Set.of());
         var room = mock(com.eu.habbo.habbohotel.rooms.Room.class);
-        when(room.getFloorItems()).thenReturn(Set.of(wired));
+        when(room.getRoomSpecialTypes()).thenReturn(specialTypes);
         ByteBuf packet = new com.eu.habbo.messages.outgoing.wired.WiredEnvironmentComposer(room)
                 .compose()
                 .get();
@@ -139,7 +143,7 @@ class AchievementPacketsTest {
             packet.skipBytes(6);
             assertFalse(packet.readBoolean());
             assertEquals(1, packet.readInt());
-            assertEquals("MyGame", string(packet));
+            assertEquals("WF_MyGame", string(packet));
             assertFalse(packet.isReadable());
             assertEquals("WF_MyGame", wired.getAchievementCode());
         } finally {

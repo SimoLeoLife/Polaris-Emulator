@@ -19,6 +19,7 @@ import com.eu.habbo.messages.outgoing.rooms.users.RoomUserDataComposer;
 import com.eu.habbo.messages.outgoing.users.AddUserBadgeComposer;
 import com.eu.habbo.messages.outgoing.users.UserAchievementScoreComposer;
 import com.eu.habbo.messages.outgoing.users.UserBadgesComposer;
+import com.eu.habbo.messages.outgoing.users.UserCitizinShipComposer;
 import com.eu.habbo.messages.outgoing.users.UserCreditsComposer;
 import com.eu.habbo.messages.outgoing.users.UserCurrencyComposer;
 import com.eu.habbo.messages.outgoing.users.UserPointsComposer;
@@ -555,6 +556,10 @@ public class AchievementManager {
                     }
                     for (TalentTrackLevel level : earnedLevels)
                         habbo.getClient().sendResponse(new TalentLevelUpdateComposer(type, level));
+
+                    // Official TalentTrackLevel (1203): the toolbar / hotel-view promo tracks the pair
+                    // (level, maxLevel), so refresh it whenever the level moves.
+                    habbo.getClient().sendResponse(UserCitizinShipComposer.forHabbo(habbo, type));
                 }
                 return null;
             });
