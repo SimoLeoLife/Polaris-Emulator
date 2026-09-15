@@ -2260,7 +2260,6 @@ public class CatalogManager {
                     habbo, item, new HashSet<>(), totalCredits, totalPoints, new ArrayList<>());
             this.fireCatalogPurchaseEvent(event);
             ResolvedCatalogCharges charges = this.resolveCatalogCharges(habbo, item, free, event);
-            // Lock the wallet before reading ownership, just as Book purchases do.
             try (PreparedStatement statement =
                     connection.prepareStatement("SELECT id FROM users WHERE id = ? FOR UPDATE")) {
                 statement.setInt(1, habbo.getHabboInfo().getId());

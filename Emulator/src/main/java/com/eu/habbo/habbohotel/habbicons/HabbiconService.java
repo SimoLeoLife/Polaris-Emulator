@@ -20,7 +20,6 @@ import java.util.List;
 import java.util.Map;
 import javax.sql.DataSource;
 
-/** Owns Habbicon entitlement, purchase and collection transitions in one wallet transaction. */
 public final class HabbiconService {
     public static final int NOT_OWNED = 0, CLAIMABLE = 1, OWNED = 2, FAVORITE = 3, UNAVAILABLE = 4, REWARD = 5;
 
