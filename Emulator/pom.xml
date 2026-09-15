@@ -6,7 +6,7 @@
 
     <groupId>com.eu.habbo</groupId>
     <artifactId>Polaris</artifactId>
-    <version>4.2.88</version>
+    <version>4.2.91</version>
     <name>Polaris</name>
     <licenses>
         <license>
@@ -18,7 +18,7 @@
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <project.build.outputTimestamp>2026-09-11T15:05:45Z</project.build.outputTimestamp>
+        <project.build.outputTimestamp>2026-09-15T11:26:06Z</project.build.outputTimestamp>
         <maven.compiler.release>25</maven.compiler.release>
         <maven.build.java.version>[25,27)</maven.build.java.version>
 
@@ -58,7 +58,7 @@
         <maven-shade-plugin.version>3.6.2</maven-shade-plugin.version>
         <maven-site-plugin.version>3.22.0</maven-site-plugin.version>
         <maven-surefire-plugin.version>3.6.0</maven-surefire-plugin.version>
-        <versions-maven-plugin.version>2.21.0</versions-maven-plugin.version>
+        <versions-maven-plugin.version>2.22.0</versions-maven-plugin.version>
         <cyclonedx-maven-plugin.version>2.9.3</cyclonedx-maven-plugin.version>
         <jacoco-plugin.version>0.8.15</jacoco-plugin.version>
         <jacoco.minimum.instruction.coveredratio>0.07</jacoco.minimum.instruction.coveredratio>
