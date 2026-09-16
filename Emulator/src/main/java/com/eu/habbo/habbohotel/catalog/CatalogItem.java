@@ -320,7 +320,7 @@ public class CatalogItem implements ISerialize, Runnable, Comparable<CatalogItem
         if (this.habbiconId > 0) {
             message.appendString("habbicon");
             message.appendInt(this.habbiconId);
-            message.appendString("");
+            message.appendString(Integer.toString(this.habbiconId));
             message.appendInt(1);
             message.appendBoolean(false);
         }
