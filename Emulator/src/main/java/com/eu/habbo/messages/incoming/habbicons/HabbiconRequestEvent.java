@@ -30,7 +30,8 @@ public final class HabbiconRequestEvent extends MessageHandler {
                     client.sendResponse(new PurchaseOKComposer());
                 }
             } else if (packet.getMessageId() == Incoming.GetHabbiconInfoEvent) {
-                client.sendResponse(new HabbiconInfoComposer(service.load(userId).requireItem(id)));
+                client.sendResponse(
+                        new HabbiconInfoComposer(service.load(userId).requireItem(id)));
             } else {
                 HabbiconService.Snapshot snapshot = service.load(userId);
                 client.sendResponse(new UserHabbiconsComposer(snapshot));
