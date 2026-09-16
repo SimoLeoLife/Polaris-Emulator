@@ -5,16 +5,16 @@ import com.eu.habbo.messages.ServerMessage;
 import com.eu.habbo.messages.outgoing.MessageComposer;
 import com.eu.habbo.messages.outgoing.Outgoing;
 
-public final class HabbiconShopComposer extends MessageComposer {
+public final class HabbiconShopDataComposer extends MessageComposer {
     private final HabbiconService.Snapshot snapshot;
 
-    public HabbiconShopComposer(HabbiconService.Snapshot snapshot) {
+    public HabbiconShopDataComposer(HabbiconService.Snapshot snapshot) {
         this.snapshot = snapshot;
     }
 
     @Override
     protected ServerMessage composeInternal() {
-        this.response.init(Outgoing.HabbiconShopComposer);
+        this.response.init(Outgoing.HabbiconShopDataComposer);
         this.response.appendInt(snapshot.collections().size());
         for (HabbiconService.Collection collection : snapshot.collections()) {
             this.response.appendInt(collection.id());

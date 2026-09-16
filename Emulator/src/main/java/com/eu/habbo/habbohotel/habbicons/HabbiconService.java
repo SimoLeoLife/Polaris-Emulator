@@ -5,7 +5,7 @@ import com.eu.habbo.habbohotel.economy.EconomyOperation;
 import com.eu.habbo.habbohotel.economy.EconomyOperationId;
 import com.eu.habbo.habbohotel.users.Habbo;
 import com.eu.habbo.habbohotel.users.LedgerWalletMutation;
-import com.eu.habbo.messages.outgoing.habbicons.HabbiconStatusComposer;
+import com.eu.habbo.messages.outgoing.habbicons.UserHabbiconStatusChangedComposer;
 import com.eu.habbo.messages.outgoing.habbicons.UserHabbiconsComposer;
 import com.eu.habbo.messages.outgoing.inventory.AddHabboItemComposer;
 import com.eu.habbo.messages.outgoing.users.UserCreditsComposer;
@@ -418,7 +418,7 @@ public final class HabbiconService {
 
     public static void publish(Habbo habbo, Change change) {
         for (Item item : change.changed()) {
-            habbo.getClient().sendResponse(new HabbiconStatusComposer(item.id(), item.state()));
+            habbo.getClient().sendResponse(new UserHabbiconStatusChangedComposer(item.id(), item.state()));
         }
         habbo.getClient().sendResponse(new UserHabbiconsComposer(change.snapshot()));
         int[] unseen =

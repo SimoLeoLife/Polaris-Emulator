@@ -658,7 +658,7 @@ public class Incoming {
     public static final int SaveOnlineIndicatorPreferenceEvent = 818;
     public static final int SaveWiredMenuSettingsEvent = 1226;
     // 6010 (used by the original PR) is reserved by UNKNOWN_SNOWSTORM_6010, so habbicon uses 9417
-    public static final int RoomUserHabbiconEvent = 9417;
+    public static final int TriggerHabbiconEvent = 9417;
     public static final int DisconnectEvent = 2445;
     public static final int RequestMentionsEvent = 4803;
     public static final int MarkMentionsReadEvent = 4804;

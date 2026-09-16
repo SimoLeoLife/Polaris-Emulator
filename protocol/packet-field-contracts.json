@@ -9630,18 +9630,18 @@
       "fields": []
     },
     {
-      "name": "USE_HABBICON",
+      "name": "TRIGGER_HABBICON",
       "direction": "client_to_server",
       "header": 9417,
       "java": {
-        "symbol": "RoomUserHabbiconEvent",
-        "className": "RoomUserHabbiconEvent",
-        "path": "Emulator/src/main/java/com/eu/habbo/messages/incoming/rooms/users/RoomUserHabbiconEvent.java"
+        "symbol": "TriggerHabbiconEvent",
+        "className": "TriggerHabbiconEvent",
+        "path": "Emulator/src/main/java/com/eu/habbo/messages/incoming/habbicons/TriggerHabbiconEvent.java"
       },
       "typescript": {
-        "symbol": "USE_HABBICON",
-        "className": "UseHabbiconComposer",
-        "path": "packages/communication/src/messages/outgoing/room/unit/UseHabbiconComposer.ts"
+        "symbol": "TRIGGER_HABBICON",
+        "className": "TriggerHabbiconComposer",
+        "path": "packages/communication/src/messages/outgoing/habbicons/TriggerHabbiconComposer.ts"
       },
       "fields": [
         {
@@ -17668,18 +17668,18 @@
       ]
     },
     {
-      "name": "UNIT_HABBICON",
+      "name": "ROOM_USE_HABBICON",
       "direction": "server_to_client",
       "header": 9410,
       "java": {
-        "symbol": "RoomUserHabbiconComposer",
-        "className": "RoomUserHabbiconComposer",
-        "path": "Emulator/src/main/java/com/eu/habbo/messages/outgoing/rooms/users/RoomUserHabbiconComposer.java"
+        "symbol": "RoomUseHabbiconComposer",
+        "className": "RoomUseHabbiconComposer",
+        "path": "Emulator/src/main/java/com/eu/habbo/messages/outgoing/rooms/users/RoomUseHabbiconComposer.java"
       },
       "typescript": {
-        "symbol": "UNIT_HABBICON",
-        "className": "RoomUnitHabbiconParser",
-        "path": "packages/communication/src/messages/parser/room/unit/RoomUnitHabbiconParser.ts"
+        "symbol": "ROOM_USE_HABBICON",
+        "className": "RoomUseHabbiconParser",
+        "path": "packages/communication/src/messages/parser/room/unit/RoomUseHabbiconParser.ts"
       },
       "fields": [
         {
@@ -20413,9 +20413,9 @@
       "direction": "server_to_client",
       "header": 9466,
       "java": {
-        "symbol": "HabbiconStatusComposer",
-        "className": "HabbiconStatusComposer",
-        "path": "Emulator/src/main/java/com/eu/habbo/messages/outgoing/habbicons/HabbiconStatusComposer.java"
+        "symbol": "UserHabbiconStatusChangedComposer",
+        "className": "UserHabbiconStatusChangedComposer",
+        "path": "Emulator/src/main/java/com/eu/habbo/messages/outgoing/habbicons/UserHabbiconStatusChangedComposer.java"
       },
       "typescript": {
         "symbol": "USER_HABBICON_STATUS_CHANGED",
@@ -20423,38 +20423,6 @@
         "path": "packages/communication/src/messages/parser/habbicons/UserHabbiconStatusChangedParser.ts"
       },
       "fields": [
-        {
-          "kind": "scalar",
-          "type": "int",
-          "name": ""
-        },
-        {
-          "kind": "scalar",
-          "type": "int",
-          "name": ""
-        }
-      ]
-    },
-    {
-      "name": "HABBICON_ACTION_RESULT",
-      "direction": "server_to_client",
-      "header": 9464,
-      "java": {
-        "symbol": "HabbiconResultComposer",
-        "className": "HabbiconResultComposer",
-        "path": "Emulator/src/main/java/com/eu/habbo/messages/outgoing/habbicons/HabbiconResultComposer.java"
-      },
-      "typescript": {
-        "symbol": "HABBICON_ACTION_RESULT",
-        "className": "HabbiconActionResultParser",
-        "path": "packages/communication/src/messages/parser/habbicons/HabbiconActionResultParser.ts"
-      },
-      "fields": [
-        {
-          "kind": "scalar",
-          "type": "int",
-          "name": ""
-        },
         {
           "kind": "scalar",
           "type": "int",
@@ -27837,9 +27805,9 @@
       "direction": "server_to_client",
       "header": 9467,
       "java": {
-        "symbol": "HabbiconShopComposer",
-        "className": "HabbiconShopComposer",
-        "path": "Emulator/src/main/java/com/eu/habbo/messages/outgoing/habbicons/HabbiconShopComposer.java"
+        "symbol": "HabbiconShopDataComposer",
+        "className": "HabbiconShopDataComposer",
+        "path": "Emulator/src/main/java/com/eu/habbo/messages/outgoing/habbicons/HabbiconShopDataComposer.java"
       },
       "typescript": {
         "symbol": "HABBICON_SHOP_DATA",
