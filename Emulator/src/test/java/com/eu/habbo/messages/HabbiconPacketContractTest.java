@@ -134,7 +134,7 @@ class HabbiconPacketContractTest {
             assertEquals(1, packet.readInt());
             assertEquals("habbicon", readString(packet));
             assertEquals(61, packet.readInt());
-            assertEquals("", readString(packet));
+            assertEquals("61", readString(packet));
             assertEquals(1, packet.readInt());
             assertFalse(packet.readBoolean());
             assertEquals(0, packet.readInt());
