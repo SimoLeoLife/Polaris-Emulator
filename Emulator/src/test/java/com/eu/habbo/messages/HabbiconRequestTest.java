@@ -21,17 +21,20 @@ import com.eu.habbo.habbohotel.users.Habbo;
 import com.eu.habbo.habbohotel.users.HabboInfo;
 import com.eu.habbo.habbohotel.users.HabboManager;
 import com.eu.habbo.habbohotel.users.HabboStats;
+import com.eu.habbo.messages.incoming.Incoming;
 import com.eu.habbo.messages.incoming.friends.SendMessengerMessageEvent;
 import com.eu.habbo.messages.incoming.habbicons.HabbiconRequestEvent;
+import com.eu.habbo.messages.incoming.habbicons.TriggerHabbiconEvent;
 import com.eu.habbo.messages.incoming.inventory.UnseenResetCategoryEvent;
 import com.eu.habbo.messages.incoming.inventory.UnseenResetItemsEvent;
-import com.eu.habbo.messages.incoming.rooms.users.RoomUserHabbiconEvent;
-import com.eu.habbo.messages.outgoing.MessageComposer;
+import com.eu.habbo.messages.outgoing.catalog.AlertPurchaseFailedComposer;
+import com.eu.habbo.messages.outgoing.catalog.PurchaseOKComposer;
 import com.eu.habbo.messages.outgoing.friends.MessengerMessageAckComposer;
 import com.eu.habbo.messages.outgoing.friends.MessengerMessageComposer;
 import com.eu.habbo.messages.outgoing.friends.MessengerMessageFailedComposer;
 import com.eu.habbo.messages.outgoing.habbicons.UserHabbiconsComposer;
 import io.netty.buffer.Unpooled;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -39,39 +42,66 @@ import org.mockito.ArgumentCaptor;
 
 class HabbiconRequestTest {
     @Test
-    void eachMutationHeaderDispatchesItsTypedActionAndReturnsACorrelatedResult() throws Exception {
+    void eachMutationHeaderDispatchesItsTypedActionAndOnlyPurchasesAreAcknowledged() throws Exception {
+        Map<Integer, HabbiconService.Action> headers = new LinkedHashMap<>();
+        headers.put(Incoming.BuyHabbiconEvent, HabbiconService.Action.BUY);
+        headers.put(Incoming.BuyHabbiconCollectionEvent, HabbiconService.Action.BUY_COLLECTION);
+        headers.put(Incoming.ClaimHabbiconEvent, HabbiconService.Action.CLAIM);
+        headers.put(Incoming.FavoriteHabbiconEvent, HabbiconService.Action.FAVORITE);
+        headers.put(Incoming.UnfavoriteHabbiconEvent, HabbiconService.Action.UNFAVORITE);
         HabbiconService service = mock(HabbiconService.class);
         GameClient client = mock(GameClient.class);
         Habbo habbo = mock(Habbo.class);
+        HabboInfo info = mock(HabboInfo.class);
         when(client.getHabbo()).thenReturn(habbo);
+        when(habbo.getHabboInfo()).thenReturn(info);
+        when(info.getId()).thenReturn(1);
         when(habbo.getHabbiconService()).thenReturn(service);
-        for (HabbiconService.Action action : HabbiconService.Action.values()) {
+        for (Map.Entry<Integer, HabbiconService.Action> entry : headers.entrySet()) {
             var buffer = Unpooled.buffer().writeInt(61);
             try {
                 HabbiconRequestEvent event = new HabbiconRequestEvent();
                 event.client = client;
                 assertEquals(
                         0, event.getRatelimit(), "Header-scoped network limits must allow the following shop refresh");
-                event.packet = new ClientMessage(9462 + action.ordinal(), buffer);
+                event.packet = new ClientMessage(entry.getKey(), buffer);
                 event.handle();
-                verify(service).change(habbo, action, 61);
+                verify(service).change(habbo, entry.getValue(), 61);
             } finally {
                 buffer.release();
             }
         }
-        var responses = ArgumentCaptor.forClass(MessageComposer.class);
-        verify(client, org.mockito.Mockito.times(5)).sendResponse(responses.capture());
-        for (int index = 0; index < responses.getAllValues().size(); index++) {
-            var packet = responses.getAllValues().get(index).compose().get();
+        verify(client, org.mockito.Mockito.times(3)).sendResponse(any(PurchaseOKComposer.class));
+        verify(client, never()).sendResponse(any(AlertPurchaseFailedComposer.class));
+    }
+
+    @Test
+    void aRejectedPurchaseFailsTheCatalogPurchaseAndARejectedFavoriteStaysSilent() throws Exception {
+        HabbiconService service = mock(HabbiconService.class);
+        GameClient client = mock(GameClient.class);
+        Habbo habbo = mock(Habbo.class);
+        HabboInfo info = mock(HabboInfo.class);
+        when(client.getHabbo()).thenReturn(habbo);
+        when(habbo.getHabboInfo()).thenReturn(info);
+        when(info.getId()).thenReturn(1);
+        when(habbo.getHabbiconService()).thenReturn(service);
+        when(service.change(any(Habbo.class), any(HabbiconService.Action.class), org.mockito.ArgumentMatchers.anyInt()))
+                .thenThrow(new HabbiconService.Rejected(2));
+        for (int header : List.of(Incoming.BuyHabbiconEvent, Incoming.FavoriteHabbiconEvent)) {
+            var buffer = Unpooled.buffer().writeInt(61);
             try {
-                packet.skipBytes(6);
-                assertEquals(index, packet.readInt());
-                assertEquals(61, packet.readInt());
-                assertEquals(0, packet.readInt());
+                HabbiconRequestEvent event = new HabbiconRequestEvent();
+                event.client = client;
+                event.packet = new ClientMessage(header, buffer);
+                event.handle();
             } finally {
-                packet.release();
+                buffer.release();
             }
         }
+        var failures = ArgumentCaptor.forClass(AlertPurchaseFailedComposer.class);
+        verify(client).sendResponse(failures.capture());
+        assertEquals(2, failures.getValue().getError());
+        verify(client, never()).sendResponse(any(PurchaseOKComposer.class));
     }
 
     @Test
@@ -184,9 +214,9 @@ class HabbiconRequestTest {
         when(habbo.getHabbiconService()).thenReturn(service);
         var buffer = Unpooled.buffer().writeInt(61);
         try {
-            RoomUserHabbiconEvent event = new RoomUserHabbiconEvent();
+            TriggerHabbiconEvent event = new TriggerHabbiconEvent();
             event.client = client;
-            event.packet = new ClientMessage(9410, buffer);
+            event.packet = new ClientMessage(9417, buffer);
             event.handle();
             verify(service).use(1, 61);
             verify(room, never()).sendComposer(any(ServerMessage.class));

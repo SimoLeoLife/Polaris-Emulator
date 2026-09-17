@@ -1,4 +1,4 @@
-package com.eu.habbo.messages.incoming.rooms.users;
+package com.eu.habbo.messages.incoming.habbicons;
 
 import com.eu.habbo.habbohotel.habbicons.HabbiconService;
 import com.eu.habbo.habbohotel.permissions.Permission;
@@ -6,9 +6,9 @@ import com.eu.habbo.habbohotel.rooms.Room;
 import com.eu.habbo.habbohotel.users.Habbo;
 import com.eu.habbo.messages.incoming.MessageHandler;
 import com.eu.habbo.messages.outgoing.habbicons.UserHabbiconsComposer;
-import com.eu.habbo.messages.outgoing.rooms.users.RoomUserHabbiconComposer;
+import com.eu.habbo.messages.outgoing.rooms.users.RoomUseHabbiconComposer;
 
-public class RoomUserHabbiconEvent extends MessageHandler {
+public class TriggerHabbiconEvent extends MessageHandler {
     private static final int MAX_HABBICON_ID = 1000000;
 
     @Override
@@ -38,7 +38,7 @@ public class RoomUserHabbiconEvent extends MessageHandler {
             return;
         }
 
-        room.sendComposer(new RoomUserHabbiconComposer(habbo.getRoomUnit(), habbiconId).compose());
+        room.sendComposer(new RoomUseHabbiconComposer(habbo.getRoomUnit(), habbiconId).compose());
         this.client.sendResponse(
                 new UserHabbiconsComposer(habbicons.load(habbo.getHabboInfo().getId())));
     }
