@@ -7,6 +7,9 @@ import com.eu.habbo.messages.incoming.MessageHandler;
 import com.eu.habbo.messages.outgoing.furnieditor.FurniEditorResultComposer;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import java.util.HashSet;
+import java.util.Locale;
+import java.util.Set;
 
 public class FurniEditorUpdateEvent extends MessageHandler {
 
@@ -33,7 +36,12 @@ public class FurniEditorUpdateEvent extends MessageHandler {
             return;
         }
 
-        FurniEditorUpdatePayload payload = FurniEditorUpdatePayload.validate(json);
+        Set<String> registeredInteractions = new HashSet<>();
+        for (String name : Emulator.getGameEnvironment().getItemManager().getInteractionList()) {
+            registeredInteractions.add(name.toLowerCase(Locale.ROOT));
+        }
+
+        FurniEditorUpdatePayload payload = FurniEditorUpdatePayload.validate(json, registeredInteractions::contains);
         if (!payload.valid()) {
             this.client.sendResponse(new FurniEditorResultComposer(false, payload.error));
             return;
