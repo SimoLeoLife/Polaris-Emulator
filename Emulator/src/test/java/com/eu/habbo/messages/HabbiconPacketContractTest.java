@@ -13,9 +13,8 @@ import com.eu.habbo.habbohotel.habbicons.HabbiconService;
 import com.eu.habbo.habbohotel.items.Item;
 import com.eu.habbo.habbohotel.items.ItemManager;
 import com.eu.habbo.messages.outgoing.habbicons.HabbiconInfoComposer;
-import com.eu.habbo.messages.outgoing.habbicons.HabbiconResultComposer;
-import com.eu.habbo.messages.outgoing.habbicons.HabbiconShopComposer;
-import com.eu.habbo.messages.outgoing.habbicons.HabbiconStatusComposer;
+import com.eu.habbo.messages.outgoing.habbicons.HabbiconShopDataComposer;
+import com.eu.habbo.messages.outgoing.habbicons.UserHabbiconStatusChangedComposer;
 import com.eu.habbo.messages.outgoing.habbicons.UserHabbiconsComposer;
 import io.netty.buffer.ByteBuf;
 import java.nio.charset.StandardCharsets;
@@ -53,7 +52,7 @@ class HabbiconPacketContractTest {
 
     @Test
     void shopContainsTwoCompleteCollectionRecordsAndNestedItemsWithoutMisalignment() {
-        ByteBuf packet = new HabbiconShopComposer(snapshot()).compose().get();
+        ByteBuf packet = new HabbiconShopDataComposer(snapshot()).compose().get();
         try {
             packet.skipBytes(4);
             assertEquals(9467, packet.readShort());
@@ -79,10 +78,9 @@ class HabbiconPacketContractTest {
     }
 
     @Test
-    void infoStatusAndActionResultUseTheirFullRequiredWireShapes() {
+    void infoAndStatusChangeUseTheirFullRequiredWireShapes() {
         ByteBuf info = new HabbiconInfoComposer(second).compose().get();
-        ByteBuf status = new HabbiconStatusComposer(62, 3).compose().get();
-        ByteBuf result = new HabbiconResultComposer(1, 6, 3).compose().get();
+        ByteBuf status = new UserHabbiconStatusChangedComposer(62, 3).compose().get();
         try {
             info.skipBytes(4);
             assertEquals(9463, info.readShort());
@@ -93,16 +91,9 @@ class HabbiconPacketContractTest {
             assertEquals(62, status.readInt());
             assertEquals(3, status.readInt());
             assertFalse(status.isReadable());
-            result.skipBytes(4);
-            assertEquals(9464, result.readShort());
-            assertEquals(1, result.readInt());
-            assertEquals(6, result.readInt());
-            assertEquals(3, result.readInt());
-            assertFalse(result.isReadable());
         } finally {
             info.release();
             status.release();
-            result.release();
         }
     }
 
@@ -143,7 +134,7 @@ class HabbiconPacketContractTest {
             assertEquals(1, packet.readInt());
             assertEquals("habbicon", readString(packet));
             assertEquals(61, packet.readInt());
-            assertEquals("", readString(packet));
+            assertEquals("61", readString(packet));
             assertEquals(1, packet.readInt());
             assertFalse(packet.readBoolean());
             assertEquals(0, packet.readInt());

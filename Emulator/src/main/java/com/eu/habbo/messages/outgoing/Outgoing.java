@@ -752,7 +752,7 @@ public class Outgoing {
     public static final int EarningsCenterComposer = 9407;
     public static final int EarningsClaimResultComposer = 9408;
     public static final int HotelViewLandingComposer = 9409;
-    public static final int RoomUserHabbiconComposer = 9410;
+    public static final int RoomUseHabbiconComposer = 9410;
     public static final int TraxEditorSongsComposer = 9430;
     public static final int TraxEditorErrorComposer = 9431;
     public static final int SoundboardPlayDeniedComposer = 9440;
@@ -777,10 +777,9 @@ public class Outgoing {
     public static final int RewardTrackProgressComposer = 9452;
     public static final int RewardTrackPremiumPurchaseResultComposer = 2248;
     public static final int UserHabbiconsComposer = 9465; // Octane USER_HABBICONS
-    public static final int HabbiconStatusComposer = 9466; // Octane USER_HABBICON_STATUS_CHANGED
-    public static final int HabbiconShopComposer = 9467; // Octane HABBICON_SHOP_DATA
+    public static final int UserHabbiconStatusChangedComposer = 9466; // Octane USER_HABBICON_STATUS_CHANGED
+    public static final int HabbiconShopDataComposer = 9467; // Octane HABBICON_SHOP_DATA
     public static final int HabbiconInfoComposer = 9463;
-    public static final int HabbiconResultComposer = 9464;
     // AIR 13 official rooms view, room flags and batched removals (official ids, free in both repos)
     public static final int OfficialRoomsComposer = 438;
     public static final int ConfigurationItemStatesComposer = 1508;
