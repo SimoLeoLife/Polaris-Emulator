@@ -38,14 +38,7 @@ public class UpdateRewardTracksCommand extends Command {
     /** Reloads the tracks and sends the list to every client with a logged-in user; returns the active track count. */
     public static int reloadAndBroadcast() {
         RewardTrackManager manager = Emulator.getGameEnvironment().getRewardTrackManager();
-        manager.reload();
-        for (GameClient client :
-                Emulator.getGameServer().getGameClientManager().getSessions().values()) {
-            if (client.getHabbo() == null) {
-                continue;
-            }
-            manager.sendRewardTracks(client.getHabbo(), true);
-        }
+        manager.reloadAndBroadcast();
         return manager.activeTracks().size();
     }
 }

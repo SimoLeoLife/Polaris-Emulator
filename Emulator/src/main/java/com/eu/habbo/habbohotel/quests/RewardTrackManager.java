@@ -1,6 +1,7 @@
 package com.eu.habbo.habbohotel.quests;
 
 import com.eu.habbo.Emulator;
+import com.eu.habbo.habbohotel.gameclients.GameClient;
 import com.eu.habbo.habbohotel.users.Habbo;
 import com.eu.habbo.messages.outgoing.quests.RewardTrackClaimResultComposer;
 import com.eu.habbo.messages.outgoing.quests.RewardTrackPremiumPurchaseResultComposer;
@@ -60,12 +61,38 @@ public class RewardTrackManager {
         if (!this.persistent) {
             return;
         }
+        for (LoadedTrack loaded : loadFromDatabase(true)) {
+            this.register(loaded.track());
+        }
+        LOGGER.info("Reward Track Manager -> Loaded! ({} tracks)", this.tracks.size());
+    }
+
+    /** Reloads the tracks and sends the fresh list to every client with a logged-in user. */
+    public void reloadAndBroadcast() {
+        this.reload();
+        for (GameClient client :
+                Emulator.getGameServer().getGameClientManager().getSessions().values()) {
+            if (client.getHabbo() != null) {
+                this.sendRewardTracks(client.getHabbo(), true);
+            }
+        }
+    }
+
+    /** A track row as stored, with the flag the running hotel filters on. */
+    public record LoadedTrack(RewardTrack track, boolean enabled) {}
+
+    /**
+     * Reads the tracks with their tasks, levels and prizes. The hotel loads only the enabled ones;
+     * the staff editor reads them all.
+     */
+    public static List<LoadedTrack> loadFromDatabase(boolean onlyEnabled) {
+        Map<String, LoadedTrack> loaded = new LinkedHashMap<>();
         try (Connection connection = Emulator.getDatabase().getDataSource().getConnection()) {
-            try (PreparedStatement statement = connection.prepareStatement(
-                            "SELECT * FROM reward_tracks WHERE enabled = 1 ORDER BY sort_order, id");
+            try (PreparedStatement statement = connection.prepareStatement("SELECT * FROM reward_tracks"
+                            + (onlyEnabled ? " WHERE enabled = 1" : "") + " ORDER BY sort_order, id");
                     ResultSet set = statement.executeQuery()) {
                 while (set.next()) {
-                    this.register(new RewardTrack(
+                    RewardTrack track = new RewardTrack(
                             set.getString("id"),
                             set.getString("theme"),
                             set.getInt("sort_order"),
@@ -75,14 +102,15 @@ public class RewardTrackManager {
                             set.getDouble("premium_task_points_boost"),
                             set.getInt("premium_instant_points"),
                             set.getInt("premium_cost_diamonds"),
-                            set.getInt("premium_cost_credits")));
+                            set.getInt("premium_cost_credits"));
+                    loaded.put(track.getId(), new LoadedTrack(track, set.getBoolean("enabled")));
                 }
             }
             try (PreparedStatement statement =
                             connection.prepareStatement("SELECT * FROM reward_track_tasks ORDER BY sort_order, id");
                     ResultSet set = statement.executeQuery()) {
                 while (set.next()) {
-                    RewardTrack track = this.tracks.get(set.getString("track_id"));
+                    LoadedTrack track = loaded.get(set.getString("track_id"));
                     if (track == null) {
                         continue;
                     }
@@ -95,19 +123,19 @@ public class RewardTrackManager {
                     if (task.getGoalType() == null) {
                         LOGGER.warn(
                                 "Reward track task {}/{} has an unknown action type, skipped",
-                                track.getId(),
+                                track.track().getId(),
                                 task.getId());
                         continue;
                     }
-                    track.addTask(task);
+                    track.track().addTask(task);
                 }
             }
             try (PreparedStatement statement = connection.prepareStatement(
                             "SELECT * FROM reward_track_task_levels ORDER BY track_id, task_id, level");
                     ResultSet set = statement.executeQuery()) {
                 while (set.next()) {
-                    RewardTrack track = this.tracks.get(set.getString("track_id"));
-                    RewardTrack.Task task = track == null ? null : track.getTask(set.getString("task_id"));
+                    LoadedTrack track = loaded.get(set.getString("track_id"));
+                    RewardTrack.Task task = track == null ? null : track.track().getTask(set.getString("task_id"));
                     if (task != null) {
                         task.addLevel(new RewardTrack.Level(
                                 set.getInt("required_count"), set.getInt("points_reward"), set.getBoolean("premium")));
@@ -118,24 +146,25 @@ public class RewardTrackManager {
                             "SELECT * FROM reward_track_prizes ORDER BY required_points, sort_order, id");
                     ResultSet set = statement.executeQuery()) {
                 while (set.next()) {
-                    RewardTrack track = this.tracks.get(set.getString("track_id"));
+                    LoadedTrack track = loaded.get(set.getString("track_id"));
                     if (track != null) {
-                        track.addPrize(new RewardTrack.Prize(
-                                set.getString("id"),
-                                set.getInt("required_points"),
-                                set.getInt("product_item_type_id"),
-                                set.getString("reward_type"),
-                                set.getString("extra_params"),
-                                set.getInt("reward_amount"),
-                                set.getBoolean("premium"),
-                                set.getInt("sort_order")));
+                        track.track()
+                                .addPrize(new RewardTrack.Prize(
+                                        set.getString("id"),
+                                        set.getInt("required_points"),
+                                        set.getInt("product_item_type_id"),
+                                        set.getString("reward_type"),
+                                        set.getString("extra_params"),
+                                        set.getInt("reward_amount"),
+                                        set.getBoolean("premium"),
+                                        set.getInt("sort_order")));
                     }
                 }
             }
         } catch (SQLException exception) {
             LOGGER.error("Could not load the reward tracks", exception);
         }
-        LOGGER.info("Reward Track Manager -> Loaded! ({} tracks)", this.tracks.size());
+        return new ArrayList<>(loaded.values());
     }
 
     public synchronized void register(RewardTrack track) {
