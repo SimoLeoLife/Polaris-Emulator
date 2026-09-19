@@ -62,6 +62,12 @@ class RewardTrackAdminTest {
         assertNull(RewardTrackAdmin.validate(prize("badge", "ACH_1", 0)));
         assertNotNull(RewardTrackAdmin.validate(prize("badge", "", 0)));
         assertNotNull(RewardTrackAdmin.validate(prize("gold", "", 0)));
+        assertNull(RewardTrackAdmin.validate(prize("furni", "club_sofa", 0)));
+        assertNotNull(RewardTrackAdmin.validate(prize("furni", "", 0)), "a furni prize names its item");
+        assertNotNull(
+                RewardTrackAdmin.validate(
+                        new RewardTrackAdmin.PrizeInput("season_1", "p1", 10, 0, "furni", "club_sofa", 99, false, 1)),
+                "the copies are capped");
         assertNotNull(RewardTrackAdmin.validate(prize("duckets", "", Short.MAX_VALUE + 1)), "the wire uses a short");
     }
 

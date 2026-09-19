@@ -20,12 +20,22 @@ public final class RewardTrackAdmin {
     public static final int THEME_MAX_LENGTH = 64;
     public static final int MAX_LEVELS = 50;
 
+    /** The premium boost in hundredths: at most 10x. */
+    public static final int MAX_BOOST_PERCENT = 1000;
+
+    /** Points and currency amounts stay far from int overflow. */
+    public static final int MAX_AMOUNT = 1_000_000;
+
     public static final String ENTITY_TRACK = "track";
     public static final String ENTITY_TASK = "task";
     public static final String ENTITY_PRIZE = "prize";
 
     private static final List<String> REWARD_TYPES = List.of(
-            QuestRewards.TYPE_DUCKETS, QuestRewards.TYPE_DIAMONDS, QuestRewards.TYPE_CREDITS, QuestRewards.TYPE_BADGE);
+            QuestRewards.TYPE_DUCKETS,
+            QuestRewards.TYPE_DIAMONDS,
+            QuestRewards.TYPE_CREDITS,
+            QuestRewards.TYPE_BADGE,
+            QuestRewards.TYPE_FURNI);
 
     private RewardTrackAdmin() {}
 
@@ -99,6 +109,14 @@ public final class RewardTrackAdmin {
                 || input.premiumCostCredits() < 0) {
             return "Premium values cannot be negative";
         }
+        if (input.premiumBoostPercent() > MAX_BOOST_PERCENT) {
+            return "The premium boost is at most " + MAX_BOOST_PERCENT + "% (10x)";
+        }
+        if (input.premiumInstantPoints() > MAX_AMOUNT
+                || input.premiumCostDiamonds() > MAX_AMOUNT
+                || input.premiumCostCredits() > MAX_AMOUNT) {
+            return "Premium values are at most " + MAX_AMOUNT;
+        }
         return null;
     }
 
@@ -127,8 +145,8 @@ public final class RewardTrackAdmin {
             if (level.requiredCount() <= previous) {
                 return "Level counts must grow: each level needs more than the one before";
             }
-            if (level.pointsReward() < 0) {
-                return "Level points cannot be negative";
+            if (level.pointsReward() < 0 || level.pointsReward() > MAX_AMOUNT) {
+                return "Level points must be between 0 and " + MAX_AMOUNT;
             }
             previous = level.requiredCount();
         }
@@ -146,6 +164,9 @@ public final class RewardTrackAdmin {
         if (input.requiredPoints() < 0 || input.rewardAmount() < 0 || input.productItemTypeId() < 0) {
             return "Points, amount and product type cannot be negative";
         }
+        if (input.requiredPoints() > MAX_AMOUNT || input.rewardAmount() > MAX_AMOUNT) {
+            return "Points and amount are at most " + MAX_AMOUNT;
+        }
         if (input.productItemTypeId() > Short.MAX_VALUE) {
             return "The product type must fit in 16 bits";
         }
@@ -157,6 +178,14 @@ public final class RewardTrackAdmin {
         if (type.equals(QuestRewards.TYPE_BADGE)
                 && (input.extraParams() == null || input.extraParams().isBlank())) {
             return "A badge prize needs the badge code in the extra parameters";
+        }
+        if (type.equals(QuestRewards.TYPE_FURNI)) {
+            if (input.extraParams() == null || input.extraParams().isBlank()) {
+                return "A furni prize needs the furni name (items_base.item_name) in the extra parameters";
+            }
+            if (input.rewardAmount() < 1 || input.rewardAmount() > QuestRewards.MAX_FURNI_PER_PRIZE) {
+                return "A furni prize hands out 1 to " + QuestRewards.MAX_FURNI_PER_PRIZE + " copies";
+            }
         }
         if (input.extraParams() != null && input.extraParams().length() > TEXT_MAX_LENGTH) {
             return "The extra parameters are too long (up to " + TEXT_MAX_LENGTH + " characters)";

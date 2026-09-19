@@ -15,6 +15,12 @@ import org.slf4j.LoggerFactory;
 abstract class RewardTrackAdminEvent extends MessageHandler {
     private static final Logger LOGGER = LoggerFactory.getLogger(RewardTrackAdminEvent.class);
 
+    /** Every write reloads the tracks for everyone online, so a client may not fire more than two a second. */
+    @Override
+    public int getRatelimit() {
+        return 500;
+    }
+
     final boolean authorize() {
         if (this.client != null
                 && this.client.getHabbo() != null
@@ -46,7 +52,7 @@ abstract class RewardTrackAdminEvent extends MessageHandler {
         } catch (SQLException exception) {
             LOGGER.error("Reward track editor could not save {} {}/{}", entity, trackId, id, exception);
             this.client.sendResponse(new RewardTrackAdminResultComposer(
-                    false, "Database error: " + exception.getMessage(), entity, trackId, id));
+                    false, "The change could not be saved, see the emulator log", entity, trackId, id));
             return;
         }
         Emulator.getGameEnvironment().getRewardTrackManager().reloadAndBroadcast();

@@ -2,6 +2,7 @@ package com.eu.habbo.habbohotel.quests;
 
 import com.eu.habbo.Emulator;
 import com.eu.habbo.habbohotel.gameclients.GameClient;
+import com.eu.habbo.habbohotel.items.Item;
 import com.eu.habbo.habbohotel.users.Habbo;
 import com.eu.habbo.messages.outgoing.quests.RewardTrackClaimResultComposer;
 import com.eu.habbo.messages.outgoing.quests.RewardTrackPremiumPurchaseResultComposer;
@@ -337,12 +338,23 @@ public class RewardTrackManager {
                     complete = false;
                 }
             }
+            // A furni prize travels with its sprite id and "<s|i>:<name>", what the client needs to draw it.
+            int productItemTypeId = prize.getProductItemTypeId();
+            String extraParams = prize.getExtraParams();
+            if (QuestRewards.TYPE_FURNI.equalsIgnoreCase(prize.getRewardType())
+                    && Emulator.getGameEnvironment() != null) {
+                Item item = Emulator.getGameEnvironment().getItemManager().getItem(prize.getExtraParams());
+                if (item != null) {
+                    productItemTypeId = item.getSpriteId();
+                    extraParams = item.getType().code.toLowerCase() + ":" + item.getName();
+                }
+            }
             prizes.add(new RewardTracksComposer.Prize(
                     prize.getId(),
                     prize.getRequiredPoints(),
-                    prize.getProductItemTypeId(),
+                    productItemTypeId,
                     prize.getRewardType(),
-                    prize.getExtraParams(),
+                    extraParams,
                     prize.getRewardAmount(),
                     prize.isPremium(),
                     state.isPrizeAvailable(prize),
