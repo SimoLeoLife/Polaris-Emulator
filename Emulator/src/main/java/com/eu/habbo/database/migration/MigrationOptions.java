@@ -9,7 +9,8 @@ public record MigrationOptions(Mode mode, boolean migrationsOnly) {
         CONFIGURED,
         APPLY,
         VALIDATE,
-        REPAIR
+        REPAIR,
+        RECONCILE
     }
 
     public static MigrationOptions parse(String[] arguments) {
@@ -28,12 +29,13 @@ public record MigrationOptions(Mode mode, boolean migrationsOnly) {
                     case "apply" -> Mode.APPLY;
                     case "validate", "status" -> Mode.VALIDATE;
                     case "repair" -> Mode.REPAIR;
+                    case "reconcile" -> Mode.RECONCILE;
                     case "off" ->
                         throw new IllegalArgumentException("--migrations=off is intentionally not supported. "
                                 + "Set db.migrate.on_startup=false explicitly in config.ini instead.");
                     default ->
-                        throw new IllegalArgumentException(
-                                "Unsupported migration mode '" + value + "'; expected apply, validate or repair.");
+                        throw new IllegalArgumentException("Unsupported migration mode '" + value
+                                + "'; expected apply, validate, repair or reconcile.");
                 };
                 continue;
             }
@@ -42,7 +44,7 @@ public record MigrationOptions(Mode mode, boolean migrationsOnly) {
             if (argument.toLowerCase(Locale.ROOT).startsWith("--migration")) {
                 throw new IllegalArgumentException("Unrecognised migration option '" + argument
                         + "'; expected --migrations=apply, --migrations=validate, "
-                        + "--migrations=repair or --migrations-only.");
+                        + "--migrations=repair, --migrations=reconcile or --migrations-only.");
             }
         }
 

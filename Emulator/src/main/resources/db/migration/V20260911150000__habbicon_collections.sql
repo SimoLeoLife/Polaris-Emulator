@@ -1,4 +1,18 @@
-CREATE TABLE habbicon_collections (
+-- Re-runnable: a hotel that already carries these tables, rows or the catalog column (a manual
+-- pre-apply, or a run that was applied but never recorded) must be able to record this version
+-- without failing on "already exists". Every statement below therefore skips what is present.
+
+-- Remember whether ownership existed before this run. The full-access backfill at the end only
+-- belongs on the run that introduces ownership; on a hotel that already tracks holdings it
+-- would hand every user every icon again.
+SET @had_users_habbicons = (
+    SELECT COUNT(*)
+    FROM information_schema.TABLES
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'users_habbicons'
+);
+
+CREATE TABLE IF NOT EXISTS habbicon_collections (
     id INT NOT NULL PRIMARY KEY,
     name VARCHAR(100) NOT NULL,
     reward_id INT NOT NULL DEFAULT 0,
@@ -7,7 +21,7 @@ CREATE TABLE habbicon_collections (
     points_type INT UNSIGNED NOT NULL DEFAULT 0
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-CREATE TABLE habbicons (
+CREATE TABLE IF NOT EXISTS habbicons (
     id INT NOT NULL PRIMARY KEY,
     collection_id INT NOT NULL,
     name VARCHAR(100) NOT NULL,
@@ -20,7 +34,7 @@ CREATE TABLE habbicons (
     FOREIGN KEY (collection_id) REFERENCES habbicon_collections(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-CREATE TABLE users_habbicons (
+CREATE TABLE IF NOT EXISTS users_habbicons (
     user_id INT NOT NULL,
     habbicon_id INT NOT NULL,
     state TINYINT NOT NULL DEFAULT 2,
@@ -34,10 +48,10 @@ CREATE TABLE users_habbicons (
 
 -- Collection membership and rewards are hotel configuration; AIR supplies them over the wire.
 -- Names and collection badge ids come from the September Habbicon asset set.
-INSERT INTO habbicon_collections (id, name, reward_id) VALUES
+INSERT IGNORE INTO habbicon_collections (id, name, reward_id) VALUES
     (7, 'duck', 38), (8, 'duck2', 49), (5, 'frank', 60), (6, 'toast', 71);
 
-INSERT INTO habbicons (id, collection_id, name, default_owned) VALUES
+INSERT IGNORE INTO habbicons (id, collection_id, name, default_owned) VALUES
     (28, 7, 'duck_duck', 1),
     (29, 7, 'duck_happy', 1),
     (30, 7, 'duck_sad', 1),
@@ -84,7 +98,25 @@ INSERT INTO habbicons (id, collection_id, name, default_owned) VALUES
     (71, 6, 'toast_fine', 0);
 
 -- Preserve access for users who could already use every Habbicon before ownership existed.
+-- Only on the run that created users_habbicons: an existing holdings table is left as it is.
 INSERT INTO users_habbicons (user_id, habbicon_id)
-SELECT users.id, habbicons.id FROM users CROSS JOIN habbicons;
+SELECT users.id, habbicons.id
+FROM users CROSS JOIN habbicons
+WHERE @had_users_habbicons = 0;
 
-ALTER TABLE catalog_items ADD COLUMN habbicon_id INT NOT NULL DEFAULT 0;
+SET @col_exists = (
+    SELECT COUNT(*)
+    FROM information_schema.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'catalog_items'
+      AND COLUMN_NAME = 'habbicon_id'
+);
+
+SET @ddl = IF(@col_exists = 0,
+    'ALTER TABLE `catalog_items` ADD COLUMN `habbicon_id` INT NOT NULL DEFAULT 0',
+    'SELECT ''catalog_items.habbicon_id already present, skipping'' AS info'
+);
+
+PREPARE stmt FROM @ddl;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;

@@ -91,6 +91,11 @@ final class PolarisBootstrap {
                 return false;
             }
 
+            if (migrationOptions.mode() == MigrationOptions.Mode.RECONCILE) {
+                System.out.print(MigrationRunner.reconcileAtStartup(database.getDataSource()));
+                return false;
+            }
+
             if (migrationOptions.mode() == MigrationOptions.Mode.VALIDATE) {
                 System.out.print(MigrationRunner.statusAtStartup(database.getDataSource()));
                 DatabaseIntegrityAudit.auditAtStartup(database.getDataSource(), configuration, integrityAuditOptions);

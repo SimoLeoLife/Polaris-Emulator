@@ -626,6 +626,86 @@ class MigrationRunnerIT {
         }
     }
 
+    @Test
+    void hotelWhoseSchemaIsAheadOfItsHistoryIsAdoptedAtTheMigrationsItAlreadyCarries() throws Exception {
+        requireDocker();
+
+        try (HikariDataSource ds = TestDatabase.freshDatabase("mig_schema_ahead")) {
+            // A hotel migrated by an earlier build, restored from a dump taken without the
+            // Flyway history: every object up to the habbicon catalog exists, nothing records it.
+            Flyway.configure()
+                    .dataSource(ds)
+                    .locations(MigrationRunner.MIGRATION_LOCATION)
+                    .target("20260916180000")
+                    .placeholderReplacement(false)
+                    .load()
+                    .migrate();
+            try (Connection c = ds.getConnection();
+                    Statement s = c.createStatement()) {
+                s.execute("DROP TABLE flyway_schema_history");
+            }
+
+            assertEquals(SchemaPreflight.State.RECOGNISED_EXISTING, SchemaPreflight.detect(ds));
+            String status = MigrationRunner.status(ds);
+            assertTrue(status.contains("Adoption: record baseline V20260916180000"), status);
+            assertTrue(status.contains("recorded as applied without running"), status);
+            assertTrue(status.contains("  = V20260802090000"), status);
+
+            // Re-creating catalog_id_sequences and friends would fail; adoption must skip them.
+            MigrationRunner.migrate(ds);
+
+            assertEquals(SchemaPreflight.State.MANAGED, SchemaPreflight.detect(ds));
+            assertEquals(1, intValue(ds, """
+                    SELECT COUNT(*) FROM flyway_schema_history
+                    WHERE version = '20260916180000' AND type = 'BASELINE'
+                    """));
+            assertEquals(0, intValue(ds, """
+                    SELECT COUNT(*) FROM flyway_schema_history
+                    WHERE version = '20260802090000'
+                    """));
+            assertEquals(
+                    "Pending migrations: 0\n",
+                    MigrationRunner.status(ds)
+                            .lines()
+                            .filter(line -> line.startsWith("Pending migrations:"))
+                            .map(line -> line + "\n")
+                            .findFirst()
+                            .orElse(""));
+        }
+    }
+
+    @Test
+    void managedHistoryBehindTheSchemaIsReconciledInsteadOfReplayed() throws Exception {
+        requireDocker();
+
+        try (HikariDataSource ds = TestDatabase.freshDatabase("mig_reconcile")) {
+            MigrationRunner.migrate(ds);
+            // Lose the history rows for everything after the catalog drafts, as a partial
+            // restore or a hand-edited history would.
+            try (Connection c = ds.getConnection();
+                    Statement s = c.createStatement()) {
+                s.execute("DELETE FROM flyway_schema_history WHERE version > '20260802090000'");
+            }
+            assertEquals(SchemaPreflight.State.MANAGED, SchemaPreflight.detect(ds));
+            assertTrue(intValue(ds, "SELECT COUNT(*) FROM flyway_schema_history") > 1);
+
+            String status = MigrationRunner.status(ds);
+            assertTrue(status.contains("--migrations=reconcile"), status);
+
+            String report = MigrationRunner.reconcile(ds);
+            assertTrue(report.contains("Recorded as applied without running: V20260911150000"), report);
+
+            // Every reconciled row carries the packaged checksum, so validation passes and
+            // nothing is pending or replayed.
+            assertTrue(MigrationRunner.status(ds).contains("Pending migrations: 0"));
+            assertEquals(0, intValue(ds, "SELECT COUNT(*) FROM flyway_schema_history WHERE success = 0"));
+            MigrationRunner.migrate(ds);
+            assertEquals(1, intValue(ds, """
+                    SELECT COUNT(*) FROM flyway_schema_history WHERE version = '20260916180000'
+                    """));
+        }
+    }
+
     private static boolean tableExists(HikariDataSource ds, String table) throws Exception {
         try (Connection c = ds.getConnection();
                 var st = c.prepareStatement(
