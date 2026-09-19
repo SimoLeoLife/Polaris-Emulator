@@ -7,6 +7,7 @@ import com.eu.habbo.habbohotel.users.Habbo;
 import com.eu.habbo.messages.outgoing.quests.RewardTrackClaimResultComposer;
 import com.eu.habbo.messages.outgoing.quests.RewardTrackPremiumPurchaseResultComposer;
 import com.eu.habbo.messages.outgoing.quests.RewardTrackProgressComposer;
+import com.eu.habbo.messages.outgoing.quests.RewardTrackTextsComposer;
 import com.eu.habbo.messages.outgoing.quests.RewardTracksComposer;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -41,6 +42,10 @@ public class RewardTrackManager {
 
     private final Map<String, RewardTrack> tracks = new LinkedHashMap<>();
     private final Map<Integer, Map<String, UserRewardTrackState>> users = new ConcurrentHashMap<>();
+
+    /** The localization texts of every track, by track id then key suffix, read with the tracks. */
+    private final Map<String, Map<String, String>> texts = new ConcurrentHashMap<>();
+
     private final boolean persistent;
 
     public RewardTrackManager() {
@@ -59,12 +64,14 @@ public class RewardTrackManager {
     public synchronized void reload() {
         this.tracks.clear();
         this.users.clear();
+        this.texts.clear();
         if (!this.persistent) {
             return;
         }
         for (LoadedTrack loaded : loadFromDatabase(true)) {
             this.register(loaded.track());
         }
+        this.texts.putAll(RewardTrackAdmin.loadTexts());
         LOGGER.info("Reward Track Manager -> Loaded! ({} tracks)", this.tracks.size());
     }
 
@@ -385,7 +392,20 @@ public class RewardTrackManager {
     }
 
     public void sendRewardTracks(Habbo habbo, boolean reload) {
+        habbo.getClient().sendResponse(new RewardTrackTextsComposer(this.activeTexts()));
         habbo.getClient().sendResponse(this.rewardTracks(habbo, reload));
+    }
+
+    /** The texts of the active tracks as full localization keys, "reward_track.&lt;track&gt;.&lt;key&gt;". */
+    public Map<String, String> activeTexts() {
+        Map<String, String> full = new LinkedHashMap<>();
+        for (RewardTrack track : this.activeTracks()) {
+            for (Map.Entry<String, String> entry :
+                    this.texts.getOrDefault(track.getId(), Map.of()).entrySet()) {
+                full.put("reward_track." + track.getId() + "." + entry.getKey(), entry.getValue());
+            }
+        }
+        return full;
     }
 
     // ------------------------------------------------------------------ actions

@@ -81,6 +81,16 @@ class RewardTrackAdminTest {
     }
 
     @Test
+    void textsNeedPlainKeysAndBoundedValues() {
+        assertNull(RewardTrackAdmin.validateTexts(
+                "season_1", java.util.Map.of("name", "Season 1", "task.talk.desc", "Chat")));
+        assertNotNull(RewardTrackAdmin.validateTexts("season_1", java.util.Map.of("has space", "x")));
+        assertNotNull(RewardTrackAdmin.validateTexts(
+                "season_1", java.util.Map.of("name", "x".repeat(RewardTrackAdmin.TEXT_VALUE_MAX_LENGTH + 1))));
+        assertNotNull(RewardTrackAdmin.validateTexts("", java.util.Map.of("name", "x")));
+    }
+
+    @Test
     void theChoicesFollowTheServer() {
         assertEquals(
                 QuestGoalType.values().length, RewardTrackAdmin.actionTypes().size());

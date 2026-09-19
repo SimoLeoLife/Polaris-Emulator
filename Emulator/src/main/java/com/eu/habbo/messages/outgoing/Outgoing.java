@@ -779,6 +779,8 @@ public class Outgoing {
     // Reward track staff editor (Octane, 10100-10199).
     public static final int RewardTrackAdminDataComposer = 10100;
     public static final int RewardTrackAdminResultComposer = 10105;
+    public static final int RewardTrackFurniSearchResultComposer = 10107;
+    public static final int RewardTrackTextsComposer = 10109;
     public static final int UserHabbiconsComposer = 9465; // Octane USER_HABBICONS
     public static final int UserHabbiconStatusChangedComposer = 9466; // Octane USER_HABBICON_STATUS_CHANGED
     public static final int HabbiconShopDataComposer = 9467; // Octane HABBICON_SHOP_DATA

@@ -38,7 +38,9 @@ abstract class RewardTrackAdminEvent extends MessageHandler {
         this.client.sendResponse(new RewardTrackAdminDataComposer(
                 RewardTrackAdmin.actionTypes(),
                 RewardTrackAdmin.rewardTypes(),
-                RewardTrackManager.loadFromDatabase(false)));
+                RewardTrackManager.loadFromDatabase(false),
+                RewardTrackAdmin.claimCounts(),
+                RewardTrackAdmin.loadTexts()));
     }
 
     /** Runs the write, reloads the hotel's tracks for everyone and answers the editor. */

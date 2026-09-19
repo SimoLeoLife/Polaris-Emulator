@@ -5,11 +5,13 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.eu.habbo.habbohotel.quests.RewardTrack;
+import com.eu.habbo.habbohotel.quests.RewardTrackAdmin;
 import com.eu.habbo.habbohotel.quests.RewardTrackManager;
 import com.eu.habbo.messages.outgoing.Outgoing;
 import io.netty.buffer.ByteBuf;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 /** The staff editor packets, field by field: the manifest cannot verify loop-driven payloads. */
@@ -27,7 +29,9 @@ class RewardTrackAdminPacketContractTest {
         ByteBuf payload = new RewardTrackAdminDataComposer(
                         List.of("chat_with_someone", "place_item"),
                         List.of("duckets", "badge"),
-                        List.of(new RewardTrackManager.LoadedTrack(track, false)))
+                        List.of(new RewardTrackManager.LoadedTrack(track, false)),
+                        Map.of("season_1/p1", 7),
+                        Map.of("season_1", Map.of("name", "Season 1")))
                 .compose()
                 .get();
 
@@ -72,6 +76,39 @@ class RewardTrackAdminPacketContractTest {
         assertEquals(1, payload.readInt());
         assertTrue(payload.readBoolean());
         assertEquals(3, payload.readInt());
+        assertEquals(7, payload.readInt(), "how many users claimed it");
+        assertEquals(1, payload.readInt(), "the track's texts");
+        assertEquals("name", readString(payload));
+        assertEquals("Season 1", readString(payload));
+        assertEquals(0, payload.readableBytes());
+    }
+
+    @Test
+    void furniSearchResultEchoesTheQueryThenEveryMatch() {
+        ByteBuf payload = new RewardTrackFurniSearchResultComposer(
+                        "sofa", List.of(new RewardTrackAdmin.FurniMatch("club_sofa", 1234, "s")))
+                .compose()
+                .get();
+
+        assertHeader(payload, Outgoing.RewardTrackFurniSearchResultComposer);
+        assertEquals("sofa", readString(payload));
+        assertEquals(1, payload.readInt());
+        assertEquals("club_sofa", readString(payload));
+        assertEquals(1234, payload.readInt());
+        assertEquals("s", readString(payload));
+        assertEquals(0, payload.readableBytes());
+    }
+
+    @Test
+    void textsTravelAsFullKeys() {
+        ByteBuf payload = new RewardTrackTextsComposer(Map.of("reward_track.season_1.name", "Season 1"))
+                .compose()
+                .get();
+
+        assertHeader(payload, Outgoing.RewardTrackTextsComposer);
+        assertEquals(1, payload.readInt());
+        assertEquals("reward_track.season_1.name", readString(payload));
+        assertEquals("Season 1", readString(payload));
         assertEquals(0, payload.readableBytes());
     }
 

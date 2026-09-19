@@ -330,6 +330,8 @@ import com.eu.habbo.messages.incoming.quests.admin.GetRewardTrackAdminDataEvent;
 import com.eu.habbo.messages.incoming.quests.admin.SaveRewardTrackEvent;
 import com.eu.habbo.messages.incoming.quests.admin.SaveRewardTrackPrizeEvent;
 import com.eu.habbo.messages.incoming.quests.admin.SaveRewardTrackTaskEvent;
+import com.eu.habbo.messages.incoming.quests.admin.SaveRewardTrackTextsEvent;
+import com.eu.habbo.messages.incoming.quests.admin.SearchRewardTrackFurniEvent;
 import com.eu.habbo.messages.incoming.rooms.ChangeQueueEvent;
 import com.eu.habbo.messages.incoming.rooms.HandleDoorbellEvent;
 import com.eu.habbo.messages.incoming.rooms.RequestRoomDataEvent;
@@ -1643,5 +1645,7 @@ public class PacketManager {
         this.registerHandler(Incoming.SaveRewardTrackTaskEvent, SaveRewardTrackTaskEvent.class);
         this.registerHandler(Incoming.SaveRewardTrackPrizeEvent, SaveRewardTrackPrizeEvent.class);
         this.registerHandler(Incoming.DeleteRewardTrackEntityEvent, DeleteRewardTrackEntityEvent.class);
+        this.registerHandler(Incoming.SearchRewardTrackFurniEvent, SearchRewardTrackFurniEvent.class);
+        this.registerHandler(Incoming.SaveRewardTrackTextsEvent, SaveRewardTrackTextsEvent.class);
     }
 }

@@ -1,18 +1,27 @@
 package com.eu.habbo.habbohotel.quests;
 
 import com.eu.habbo.Emulator;
+import com.eu.habbo.habbohotel.items.Item;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * The staff editor's writes: each save validates its input, writes the rows and leaves the reload to
  * the caller. Validation is pure so the rules can be tested without a database.
  */
 public final class RewardTrackAdmin {
+    private static final Logger LOGGER = LoggerFactory.getLogger(RewardTrackAdmin.class);
+
     /** Column width of every reward track id. */
     public static final int ID_MAX_LENGTH = 64;
 
@@ -29,6 +38,17 @@ public final class RewardTrackAdmin {
     public static final String ENTITY_TRACK = "track";
     public static final String ENTITY_TASK = "task";
     public static final String ENTITY_PRIZE = "prize";
+    public static final String ENTITY_TEXTS = "texts";
+
+    /** A text key is the part after "reward_track.&lt;track&gt;.": name, desc, info, task.&lt;id&gt;.name ... */
+    public static final int TEXT_KEY_MAX_LENGTH = 128;
+
+    public static final int TEXT_VALUE_MAX_LENGTH = 1000;
+    public static final int MAX_TEXTS_PER_TRACK = 200;
+    public static final int FURNI_SEARCH_LIMIT = 30;
+
+    /** A furni the editor may pick as a prize: its items_base name, sprite id and floor/wall code. */
+    public record FurniMatch(String name, int spriteId, String typeCode) {}
 
     private static final List<String> REWARD_TYPES = List.of(
             QuestRewards.TYPE_DUCKETS,
@@ -206,6 +226,33 @@ public final class RewardTrackAdmin {
         };
     }
 
+    /** The texts of a track: every key is plain and short, every value fits the column. */
+    public static String validateTexts(String trackId, Map<String, String> texts) {
+        String problem = validateId(trackId, "track id");
+        if (problem != null) {
+            return problem;
+        }
+        if (texts == null || texts.size() > MAX_TEXTS_PER_TRACK) {
+            return "A track can have up to " + MAX_TEXTS_PER_TRACK + " texts";
+        }
+        for (Map.Entry<String, String> entry : texts.entrySet()) {
+            String key = entry.getKey();
+            if (key == null || key.isBlank() || key.length() > TEXT_KEY_MAX_LENGTH) {
+                return "A text key is required (up to " + TEXT_KEY_MAX_LENGTH + " characters)";
+            }
+            for (int i = 0; i < key.length(); i++) {
+                char c = key.charAt(i);
+                if (!(Character.isLetterOrDigit(c) || c == '_' || c == '.' || c == '-')) {
+                    return "The text key " + key + " may only use letters, digits, '_', '-' and '.'";
+                }
+            }
+            if (entry.getValue() == null || entry.getValue().length() > TEXT_VALUE_MAX_LENGTH) {
+                return "The text " + key + " is too long (up to " + TEXT_VALUE_MAX_LENGTH + " characters)";
+            }
+        }
+        return null;
+    }
+
     private static String validateId(String id, String label) {
         if (id == null || id.isBlank()) {
             return "The " + label + " is required";
@@ -334,6 +381,7 @@ public final class RewardTrackAdmin {
                         run(connection, "DELETE FROM users_reward_track_prizes WHERE track_id = ?", trackId);
                         run(connection, "DELETE FROM users_reward_track_tasks WHERE track_id = ?", trackId);
                         run(connection, "DELETE FROM users_reward_tracks WHERE track_id = ?", trackId);
+                        run(connection, "DELETE FROM reward_track_texts WHERE track_id = ?", trackId);
                         run(connection, "DELETE FROM reward_track_prizes WHERE track_id = ?", trackId);
                         run(connection, "DELETE FROM reward_track_task_levels WHERE track_id = ?", trackId);
                         run(connection, "DELETE FROM reward_track_tasks WHERE track_id = ?", trackId);
@@ -370,6 +418,92 @@ public final class RewardTrackAdmin {
                 connection.setAutoCommit(true);
             }
         }
+    }
+
+    /** Replaces every text of the track in one transaction. */
+    public static void saveTexts(String trackId, Map<String, String> texts) throws SQLException {
+        try (Connection connection = Emulator.getDatabase().getDataSource().getConnection()) {
+            connection.setAutoCommit(false);
+            try {
+                run(connection, "DELETE FROM reward_track_texts WHERE track_id = ?", trackId);
+                try (PreparedStatement statement = connection.prepareStatement(
+                        "INSERT INTO reward_track_texts (track_id, text_key, value) VALUES (?, ?, ?)")) {
+                    for (Map.Entry<String, String> entry : texts.entrySet()) {
+                        if (entry.getValue().isBlank()) {
+                            continue;
+                        }
+                        statement.setString(1, trackId);
+                        statement.setString(2, entry.getKey().trim());
+                        statement.setString(3, entry.getValue());
+                        statement.addBatch();
+                    }
+                    statement.executeBatch();
+                }
+                connection.commit();
+            } catch (SQLException exception) {
+                connection.rollback();
+                throw exception;
+            } finally {
+                connection.setAutoCommit(true);
+            }
+        }
+    }
+
+    /** Every stored text, by track then key. */
+    public static Map<String, Map<String, String>> loadTexts() {
+        Map<String, Map<String, String>> texts = new LinkedHashMap<>();
+        try (Connection connection = Emulator.getDatabase().getDataSource().getConnection();
+                PreparedStatement statement = connection.prepareStatement(
+                        "SELECT track_id, text_key, value FROM reward_track_texts ORDER BY track_id, text_key");
+                ResultSet set = statement.executeQuery()) {
+            while (set.next()) {
+                texts.computeIfAbsent(set.getString("track_id"), id -> new LinkedHashMap<>())
+                        .put(set.getString("text_key"), set.getString("value"));
+            }
+        } catch (SQLException exception) {
+            LOGGER.error("Could not load the reward track texts", exception);
+        }
+        return texts;
+    }
+
+    /** How many users claimed each prize, keyed "&lt;track&gt;/&lt;prize&gt;". */
+    public static Map<String, Integer> claimCounts() {
+        Map<String, Integer> counts = new HashMap<>();
+        try (Connection connection = Emulator.getDatabase().getDataSource().getConnection();
+                PreparedStatement statement = connection.prepareStatement(
+                        "SELECT track_id, prize_id, COUNT(*) AS claimed FROM users_reward_track_prizes GROUP BY track_id, prize_id");
+                ResultSet set = statement.executeQuery()) {
+            while (set.next()) {
+                counts.put(set.getString("track_id") + "/" + set.getString("prize_id"), set.getInt("claimed"));
+            }
+        } catch (SQLException exception) {
+            LOGGER.error("Could not count the reward track claims", exception);
+        }
+        return counts;
+    }
+
+    /** The furni whose name contains the query, case-insensitive, up to the search limit. */
+    public static List<FurniMatch> searchFurni(String query) {
+        List<FurniMatch> matches = new ArrayList<>();
+        String needle = query == null ? "" : query.trim().toLowerCase(Locale.ROOT);
+        if (needle.isEmpty()) {
+            return matches;
+        }
+        for (Item item :
+                Emulator.getGameEnvironment().getItemManager().getItems().values()) {
+            if (item == null || item.getName() == null) {
+                continue;
+            }
+            if (item.getName().toLowerCase(Locale.ROOT).contains(needle)) {
+                matches.add(new FurniMatch(
+                        item.getName(), item.getSpriteId(), item.getType().code.toLowerCase(Locale.ROOT)));
+                if (matches.size() >= FURNI_SEARCH_LIMIT) {
+                    break;
+                }
+            }
+        }
+        matches.sort((a, b) -> a.name().compareToIgnoreCase(b.name()));
+        return matches;
     }
 
     private static void run(Connection connection, String sql, String... params) throws SQLException {

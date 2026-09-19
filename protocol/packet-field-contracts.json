@@ -12266,6 +12266,28 @@
       ]
     },
     {
+      "name": "SEARCH_REWARD_TRACK_FURNI",
+      "direction": "client_to_server",
+      "header": 10106,
+      "java": {
+        "symbol": "SearchRewardTrackFurniEvent",
+        "className": "SearchRewardTrackFurniEvent",
+        "path": "Emulator/src/main/java/com/eu/habbo/messages/incoming/quests/admin/SearchRewardTrackFurniEvent.java"
+      },
+      "typescript": {
+        "symbol": "SEARCH_REWARD_TRACK_FURNI",
+        "className": "SearchRewardTrackFurniMessageComposer",
+        "path": "packages/communication/src/messages/outgoing/quest/SearchRewardTrackFurniMessageComposer.ts"
+      },
+      "fields": [
+        {
+          "kind": "scalar",
+          "type": "string",
+          "name": "query"
+        }
+      ]
+    },
+    {
       "name": "CLIENT_LATENCY",
       "direction": "server_to_client",
       "header": 10,
@@ -23815,6 +23837,22 @@
       "reason": "Java analyzer: Data-dependent packet operations in ForStmt inside handle; TypeScript analyzer: Outgoing message array _data is mutated with push"
     },
     {
+      "name": "SAVE_REWARD_TRACK_TEXTS",
+      "direction": "client_to_server",
+      "header": 10108,
+      "java": {
+        "symbol": "SaveRewardTrackTextsEvent",
+        "className": "SaveRewardTrackTextsEvent",
+        "path": "Emulator/src/main/java/com/eu/habbo/messages/incoming/quests/admin/SaveRewardTrackTextsEvent.java"
+      },
+      "typescript": {
+        "symbol": "SAVE_REWARD_TRACK_TEXTS",
+        "className": "SaveRewardTrackTextsMessageComposer",
+        "path": "packages/communication/src/messages/outgoing/quest/SaveRewardTrackTextsMessageComposer.ts"
+      },
+      "reason": "Java analyzer: Data-dependent packet operations in ForStmt inside handle; TypeScript analyzer: Outgoing message array _data is mutated with push"
+    },
+    {
       "name": "JUKEBOX_SONG_DISKS",
       "direction": "server_to_client",
       "header": 34,
@@ -28195,6 +28233,38 @@
         "symbol": "REWARD_TRACK_ADMIN_DATA",
         "className": "RewardTrackAdminDataMessageParser",
         "path": "packages/communication/src/messages/parser/quest/RewardTrackAdminDataMessageParser.ts"
+      },
+      "reason": "Java analyzer: Data-dependent packet operations in ForEachStmt inside composeInternal; TypeScript analyzer: Data-dependent packet operations in ForStatement inside parse"
+    },
+    {
+      "name": "REWARD_TRACK_FURNI_SEARCH_RESULT",
+      "direction": "server_to_client",
+      "header": 10107,
+      "java": {
+        "symbol": "RewardTrackFurniSearchResultComposer",
+        "className": "RewardTrackFurniSearchResultComposer",
+        "path": "Emulator/src/main/java/com/eu/habbo/messages/outgoing/quests/RewardTrackFurniSearchResultComposer.java"
+      },
+      "typescript": {
+        "symbol": "REWARD_TRACK_FURNI_SEARCH_RESULT",
+        "className": "RewardTrackFurniSearchResultMessageParser",
+        "path": "packages/communication/src/messages/parser/quest/RewardTrackFurniSearchResultMessageParser.ts"
+      },
+      "reason": "Java analyzer: Data-dependent packet operations in ForEachStmt inside composeInternal; TypeScript analyzer: Data-dependent packet operations in ForStatement inside parse"
+    },
+    {
+      "name": "REWARD_TRACK_TEXTS",
+      "direction": "server_to_client",
+      "header": 10109,
+      "java": {
+        "symbol": "RewardTrackTextsComposer",
+        "className": "RewardTrackTextsComposer",
+        "path": "Emulator/src/main/java/com/eu/habbo/messages/outgoing/quests/RewardTrackTextsComposer.java"
+      },
+      "typescript": {
+        "symbol": "REWARD_TRACK_TEXTS",
+        "className": "RewardTrackTextsMessageParser",
+        "path": "packages/communication/src/messages/parser/quest/RewardTrackTextsMessageParser.ts"
       },
       "reason": "Java analyzer: Data-dependent packet operations in ForEachStmt inside composeInternal; TypeScript analyzer: Data-dependent packet operations in ForStatement inside parse"
     }

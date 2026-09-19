@@ -6,21 +6,31 @@ import com.eu.habbo.messages.ServerMessage;
 import com.eu.habbo.messages.outgoing.MessageComposer;
 import com.eu.habbo.messages.outgoing.Outgoing;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Every reward track as stored, for the staff editor: the choices it may pick from, then each track
- * with its rows (disabled ones included). The premium boost travels in hundredths (150 is 1.5x).
+ * with its rows (disabled ones included), how many users claimed each prize, and the track's texts.
+ * The premium boost travels in hundredths (150 is 1.5x).
  */
 public class RewardTrackAdminDataComposer extends MessageComposer {
     private final List<String> actionTypes;
     private final List<String> rewardTypes;
     private final List<RewardTrackManager.LoadedTrack> tracks;
+    private final Map<String, Integer> claimCounts;
+    private final Map<String, Map<String, String>> texts;
 
     public RewardTrackAdminDataComposer(
-            List<String> actionTypes, List<String> rewardTypes, List<RewardTrackManager.LoadedTrack> tracks) {
+            List<String> actionTypes,
+            List<String> rewardTypes,
+            List<RewardTrackManager.LoadedTrack> tracks,
+            Map<String, Integer> claimCounts,
+            Map<String, Map<String, String>> texts) {
         this.actionTypes = actionTypes;
         this.rewardTypes = rewardTypes;
         this.tracks = tracks;
+        this.claimCounts = claimCounts;
+        this.texts = texts;
     }
 
     @Override
@@ -72,6 +82,13 @@ public class RewardTrackAdminDataComposer extends MessageComposer {
                 this.response.appendInt(prize.getRewardAmount());
                 this.response.appendBoolean(prize.isPremium());
                 this.response.appendInt(prize.getSortOrder());
+                this.response.appendInt(this.claimCounts.getOrDefault(track.getId() + "/" + prize.getId(), 0));
+            }
+            Map<String, String> trackTexts = this.texts.getOrDefault(track.getId(), Map.of());
+            this.response.appendInt(trackTexts.size());
+            for (Map.Entry<String, String> entry : trackTexts.entrySet()) {
+                this.response.appendString(entry.getKey());
+                this.response.appendString(entry.getValue());
             }
         }
         return this.response;
