@@ -647,9 +647,14 @@ class MigrationRunnerIT {
 
             assertEquals(SchemaPreflight.State.RECOGNISED_EXISTING, SchemaPreflight.detect(ds));
             String status = MigrationRunner.status(ds);
-            assertTrue(status.contains("Adoption: record baseline V20260916180000"), status);
+            // The last migration that leaves tables or columns behind is the talent reward
+            // column; the habbicon catalog migration after it only writes rows, so it cannot be
+            // proven applied and runs again (it is written to be re-runnable).
+            assertTrue(status.contains("Adoption: record baseline V20260911160100"), status);
             assertTrue(status.contains("recorded as applied without running"), status);
             assertTrue(status.contains("  = V20260802090000"), status);
+            assertTrue(status.contains("Pending migrations: 1"), status);
+            assertTrue(status.contains("  - V20260916180000"), status);
 
             // Re-creating catalog_id_sequences and friends would fail; adoption must skip them.
             MigrationRunner.migrate(ds);
@@ -657,20 +662,22 @@ class MigrationRunnerIT {
             assertEquals(SchemaPreflight.State.MANAGED, SchemaPreflight.detect(ds));
             assertEquals(1, intValue(ds, """
                     SELECT COUNT(*) FROM flyway_schema_history
-                    WHERE version = '20260916180000' AND type = 'BASELINE'
+                    WHERE version = '20260911160100' AND type = 'BASELINE'
                     """));
             assertEquals(0, intValue(ds, """
                     SELECT COUNT(*) FROM flyway_schema_history
                     WHERE version = '20260802090000'
                     """));
+            assertEquals(1, intValue(ds, """
+                    SELECT COUNT(*) FROM flyway_schema_history
+                    WHERE version = '20260916180000' AND success = 1
+                    """));
+            assertTrue(MigrationRunner.status(ds).contains("Pending migrations: 0"));
+            // The re-run habbicon catalog migration must not have doubled its page or offers.
+            assertEquals(1, intValue(ds, "SELECT COUNT(*) FROM catalog_pages WHERE caption_save = 'habbicons'"));
             assertEquals(
-                    "Pending migrations: 0\n",
-                    MigrationRunner.status(ds)
-                            .lines()
-                            .filter(line -> line.startsWith("Pending migrations:"))
-                            .map(line -> line + "\n")
-                            .findFirst()
-                            .orElse(""));
+                    intValue(ds, "SELECT COUNT(*) FROM habbicons WHERE cost_credits > 0 OR cost_points > 0"),
+                    intValue(ds, "SELECT COUNT(*) FROM catalog_items WHERE habbicon_id > 0"));
         }
     }
 
@@ -689,20 +696,27 @@ class MigrationRunnerIT {
             assertEquals(SchemaPreflight.State.MANAGED, SchemaPreflight.detect(ds));
             assertTrue(intValue(ds, "SELECT COUNT(*) FROM flyway_schema_history") > 1);
 
+            // Pending migrations are a report, not a validation failure.
             String status = MigrationRunner.status(ds);
             assertTrue(status.contains("--migrations=reconcile"), status);
+            assertTrue(status.contains("  = V20260911160100"), status);
 
             String report = MigrationRunner.reconcile(ds);
             assertTrue(report.contains("Recorded as applied without running: V20260911150000"), report);
+            assertTrue(report.contains("Recorded as applied without running: V20260911160100"), report);
 
-            // Every reconciled row carries the packaged checksum, so validation passes and
-            // nothing is pending or replayed.
-            assertTrue(MigrationRunner.status(ds).contains("Pending migrations: 0"));
+            // Every reconciled row carries the packaged checksum, so validation passes. Only
+            // the trailing data-only migration stays pending and is replayed by a normal start.
+            status = MigrationRunner.status(ds);
+            assertTrue(status.contains("Pending migrations: 1"), status);
+            assertTrue(status.contains("  - V20260916180000"), status);
             assertEquals(0, intValue(ds, "SELECT COUNT(*) FROM flyway_schema_history WHERE success = 0"));
             MigrationRunner.migrate(ds);
             assertEquals(1, intValue(ds, """
                     SELECT COUNT(*) FROM flyway_schema_history WHERE version = '20260916180000'
                     """));
+            assertTrue(MigrationRunner.status(ds).contains("Pending migrations: 0"));
+            assertEquals(1, intValue(ds, "SELECT COUNT(*) FROM catalog_pages WHERE caption_save = 'habbicons'"));
         }
     }
 

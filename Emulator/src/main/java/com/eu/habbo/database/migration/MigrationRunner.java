@@ -504,6 +504,9 @@ public final class MigrationRunner {
                 .baselineVersion(baselineVersion)
                 .baselineDescription("Existing Arcturus/Polaris installation")
                 .validateOnMigrate(true)
+                // A pending migration is what --migrations=validate reports, not a validation
+                // failure; migrate() already ignores pending ones in its own validation.
+                .ignoreMigrationPatterns("*:pending")
                 .outOfOrder(true)
                 // Reference data contains literal ${...} client template strings.
                 .placeholderReplacement(false)
