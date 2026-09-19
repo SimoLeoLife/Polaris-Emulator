@@ -62,9 +62,7 @@ public class RewardTrackPointsCommand extends Command {
                     .getHabbo()
                     .whisper(
                             Emulator.getTexts()
-                                    .getValue(
-                                            "commands.error.cmd_reward_points.track",
-                                            "No such reward track."),
+                                    .getValue("commands.error.cmd_reward_points.track", "No such reward track."),
                             RoomChatMessageBubbles.ALERT);
             return true;
         }
