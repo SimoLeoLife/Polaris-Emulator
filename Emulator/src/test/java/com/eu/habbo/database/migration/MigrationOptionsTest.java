@@ -39,6 +39,9 @@ class MigrationOptionsTest {
         assertEquals(
                 MigrationOptions.Mode.REPAIR,
                 MigrationOptions.parse(new String[] {"--migrations=repair"}).mode());
+        assertEquals(
+                MigrationOptions.Mode.RECONCILE,
+                MigrationOptions.parse(new String[] {"--migrations=reconcile"}).mode());
     }
 
     @Test

@@ -23,10 +23,21 @@ WHERE default_owned = FALSE
 
 UPDATE habbicon_collections SET cost_credits = 40;
 
+-- Re-runnable: the page and its offers are only created where they are missing, so a hotel that
+-- already has a Habbicons page (a manual pre-apply, or a run that was applied but never
+-- recorded) keeps that page and any offers an operator has since edited or moved.
 INSERT INTO catalog_pages (parent_id, caption_save, caption, page_layout, icon_image, min_rank, order_num)
-VALUES (-1, 'habbicons', 'Habbicons', 'default_3x3', 107, 1, 6);
+SELECT -1, 'habbicons', 'Habbicons', 'default_3x3', 107, 1, 6
+FROM DUAL
+WHERE NOT EXISTS (
+    SELECT 1 FROM catalog_pages existing_page
+    WHERE existing_page.caption_save = 'habbicons'
+);
 
-SET @habbicon_page = LAST_INSERT_ID();
+SET @habbicon_page = (
+    SELECT MIN(id) FROM catalog_pages
+    WHERE caption_save = 'habbicons'
+);
 
 INSERT INTO catalog_items (
     item_ids, page_id, catalog_name, cost_credits, cost_points, points_type,
@@ -34,4 +45,8 @@ INSERT INTO catalog_items (
 SELECT '0', @habbicon_page, name, cost_credits, cost_points, points_type,
        1, id, -1, '1', id
 FROM habbicons
-WHERE cost_credits > 0 OR cost_points > 0;
+WHERE (cost_credits > 0 OR cost_points > 0)
+  AND NOT EXISTS (
+      SELECT 1 FROM catalog_items existing_offer
+      WHERE existing_offer.habbicon_id = habbicons.id
+  );
