@@ -50,8 +50,16 @@ public class RewardTrackManager {
         this.persistent = persistent;
     }
 
+    /**
+     * Reads the tracks again and drops every cached user state, so the next request loads it from the
+     * database: every change to a state is written through, nothing in the cache is newer than the rows.
+     */
     public synchronized void reload() {
         this.tracks.clear();
+        this.users.clear();
+        if (!this.persistent) {
+            return;
+        }
         try (Connection connection = Emulator.getDatabase().getDataSource().getConnection()) {
             try (PreparedStatement statement = connection.prepareStatement(
                             "SELECT * FROM reward_tracks WHERE enabled = 1 ORDER BY sort_order, id");

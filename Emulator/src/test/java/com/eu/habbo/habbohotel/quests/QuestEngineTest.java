@@ -216,6 +216,26 @@ class QuestEngineTest {
     }
 
     @Test
+    void reloadingTheRewardTracksDropsTheTracksAndTheCachedUserStates() {
+        RewardTrackManager manager = new RewardTrackManager(false) {};
+        RewardTrack track = new RewardTrack("season_1", "blue", 1, 0, 0, true, 1.5, 50, 25, 0);
+        RewardTrack.Task talk = new RewardTrack.Task("talk", "chat_with_someone", "", false, 1);
+        talk.addLevel(new RewardTrack.Level(1, 10, false));
+        track.addTask(talk);
+        manager.register(track);
+        Habbo habbo = habbo(7, false);
+
+        manager.progress(habbo, QuestGoalType.TALK_IN_ROOM, 1);
+        assertEquals(10, manager.stateFor(habbo, track).getPoints());
+
+        manager.reload();
+        assertTrue(manager.activeTracks().isEmpty(), "the tracks are read again from the source");
+
+        manager.register(track);
+        assertEquals(0, manager.stateFor(habbo, track).getPoints(), "the cached state is dropped with the tracks");
+    }
+
+    @Test
     void theRewardTrackPaysLevelPointsAndGatesThePrizes() {
         RewardTrackManager manager = new RewardTrackManager(false) {};
         RewardTrack track = new RewardTrack("season_1", "blue", 1, 0, 0, true, 1.5, 50, 25, 0);
