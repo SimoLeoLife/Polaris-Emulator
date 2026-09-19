@@ -280,6 +280,8 @@ U|com/eu/habbo/habbohotel/commands/ReloadRoomCommand.java|CALL|getThreading|1
 U|com/eu/habbo/habbohotel/commands/RemovePrefixCommand.java|CALL|getGameEnvironment|1
 U|com/eu/habbo/habbohotel/commands/RemovePrefixCommand.java|CALL|getTexts|8
 U|com/eu/habbo/habbohotel/commands/RemovePrefixCommand.java|CALL|getThreading|2
+U|com/eu/habbo/habbohotel/commands/RewardTrackPointsCommand.java|CALL|getGameEnvironment|2
+U|com/eu/habbo/habbohotel/commands/RewardTrackPointsCommand.java|CALL|getTexts|5
 U|com/eu/habbo/habbohotel/commands/RoomAlertCommand.java|CALL|getTexts|2
 U|com/eu/habbo/habbohotel/commands/RoomBadgeCommand.java|CALL|getTexts|3
 U|com/eu/habbo/habbohotel/commands/RoomBundleCommand.java|CALL|getDatabase|1

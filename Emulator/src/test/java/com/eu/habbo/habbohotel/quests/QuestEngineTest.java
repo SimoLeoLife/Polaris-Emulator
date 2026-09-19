@@ -236,6 +236,19 @@ class QuestEngineTest {
     }
 
     @Test
+    void staffCanHandOutAndTakeBackPointsButNeverBelowZero() {
+        RewardTrackManager manager = new RewardTrackManager(false) {};
+        RewardTrack track = new RewardTrack("season_1", "blue", 1, 0, 0, false, 1, 0, 0, 0);
+        manager.register(track);
+        Habbo habbo = habbo(7, false);
+
+        assertEquals(30, manager.adjustPoints(habbo, track, 30));
+        assertEquals(10, manager.adjustPoints(habbo, track, -20));
+        assertEquals(0, manager.adjustPoints(habbo, track, -50), "taking more than they have leaves zero");
+        assertEquals(0, manager.stateFor(habbo, track).getPoints());
+    }
+
+    @Test
     void theRewardTrackPaysLevelPointsAndGatesThePrizes() {
         RewardTrackManager manager = new RewardTrackManager(false) {};
         RewardTrack track = new RewardTrack("season_1", "blue", 1, 0, 0, true, 1.5, 50, 25, 0);

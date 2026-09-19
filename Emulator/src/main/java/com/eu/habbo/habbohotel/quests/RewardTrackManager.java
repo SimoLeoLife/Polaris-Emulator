@@ -410,6 +410,20 @@ public class RewardTrackManager {
 
     // ------------------------------------------------------------------ actions
 
+    /**
+     * Staff hand: adds (or, negative, removes) points on a track; the total never goes below zero.
+     * Returns the points the user has afterwards. The user's window follows when they are online.
+     */
+    public int adjustPoints(Habbo habbo, RewardTrack track, int delta) {
+        UserRewardTrackState state = this.stateFor(habbo, track);
+        state.addPoints(delta);
+        this.saveTrack(habbo.getHabboInfo().getId(), state);
+        if (habbo.getClient() != null) {
+            this.sendRewardTracks(habbo, false);
+        }
+        return state.getPoints();
+    }
+
     public void progress(Habbo habbo, QuestGoalType goalType, int amount) {
         if (habbo == null || goalType == null || amount < 1 || this.tracks.isEmpty()) {
             return;
