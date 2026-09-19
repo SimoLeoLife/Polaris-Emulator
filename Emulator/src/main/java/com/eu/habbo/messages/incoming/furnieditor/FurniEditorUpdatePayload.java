@@ -26,6 +26,14 @@ public class FurniEditorUpdatePayload {
      * would silently fall back to the default behaviour once loaded, so it is refused
      * here instead of saved. An empty type is accepted and means that default.
      */
+    /**
+     * Kept for binary compatibility with plugins compiled against the released jar:
+     * validates without the interaction registry check. New callers pass the registry.
+     */
+    public static FurniEditorUpdatePayload validate(JsonObject json) {
+        return validate(json, type -> true);
+    }
+
     public static FurniEditorUpdatePayload validate(JsonObject json, Predicate<String> knownInteraction) {
         if (json == null || json.size() == 0) {
             return invalid("No fields to update");
