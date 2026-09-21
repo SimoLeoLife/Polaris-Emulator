@@ -247,6 +247,7 @@ import com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectCance
 import com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectChangeFurniDirection;
 import com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectChangeOpacity;
 import com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectChangeVariableValue;
+import com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectClickSettings;
 import com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectControlClock;
 import com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectForwardUserToRoom;
 import com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectFreeze;
@@ -349,6 +350,12 @@ import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraTimeUtil
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraUnseen;
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraUserVariable;
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraVariableEcho;
+import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraVariableFxBossBar;
+import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraVariableFxHealthPoints;
+import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraVariableFxLevellingProgress;
+import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraVariableFxNumberDisplay;
+import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraVariableFxProgressBar;
+import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraVariableFxStatusBar;
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraVariableLevelUpSystem;
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraVariableReference;
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraVariableTextConnector;
@@ -382,6 +389,7 @@ import com.eu.habbo.habbohotel.items.interactions.wired.triggers.WiredTriggerClo
 import com.eu.habbo.habbohotel.items.interactions.wired.triggers.WiredTriggerCollision;
 import com.eu.habbo.habbohotel.items.interactions.wired.triggers.WiredTriggerDiceRolled;
 import com.eu.habbo.habbohotel.items.interactions.wired.triggers.WiredTriggerFurniStateToggled;
+import com.eu.habbo.habbohotel.items.interactions.wired.triggers.WiredTriggerFurniStateUpdated;
 import com.eu.habbo.habbohotel.items.interactions.wired.triggers.WiredTriggerGameEnds;
 import com.eu.habbo.habbohotel.items.interactions.wired.triggers.WiredTriggerGameStarts;
 import com.eu.habbo.habbohotel.items.interactions.wired.triggers.WiredTriggerHabboClicksFurni;
@@ -619,7 +627,7 @@ public class ItemManager {
         this.interactionsList.add(new ItemInteraction("wf_trg_periodically", WiredTriggerRepeater.class));
         this.interactionsList.add(new ItemInteraction("wf_trg_period_short", WiredTriggerRepeaterShort.class));
         this.interactionsList.add(new ItemInteraction("wf_trg_period_long", WiredTriggerRepeaterLong.class));
-        this.interactionsList.add(new ItemInteraction("wf_trg_state_changed", WiredTriggerFurniStateToggled.class));
+        this.interactionsList.add(new ItemInteraction("wf_trg_state_changed", WiredTriggerFurniStateUpdated.class));
         this.interactionsList.add(new ItemInteraction("wf_trg_stuff_state", WiredTriggerFurniStateToggled.class));
         this.interactionsList.add(new ItemInteraction("wf_trg_at_given_time", WiredTriggerAtSetTime.class));
         this.interactionsList.add(new ItemInteraction("wf_trg_at_time_long", WiredTriggerAtTimeLong.class));
@@ -721,6 +729,7 @@ public class ItemManager {
                 new ItemInteraction("wf_act_neg_call_stacks", WiredEffectNegativeTriggerStacks.class));
         this.interactionsList.add(new ItemInteraction("wf_act_kick_user", WiredEffectKickHabbo.class));
         this.interactionsList.add(new ItemInteraction("wf_act_mute_triggerer", WiredEffectMuteHabbo.class));
+        this.interactionsList.add(new ItemInteraction("wf_act_click_conf", WiredEffectClickSettings.class));
         this.interactionsList.add(new ItemInteraction("wf_act_bot_teleport", WiredEffectBotTeleport.class));
         this.interactionsList.add(new ItemInteraction("wf_act_bot_move", WiredEffectBotWalkToFurni.class));
         this.interactionsList.add(new ItemInteraction("wf_act_bot_talk", WiredEffectBotTalk.class));
@@ -922,6 +931,16 @@ public class ItemManager {
                 new ItemInteraction("wf_xtra_text_input_variable", WiredExtraTextInputVariable.class));
         this.interactionsList.add(
                 new ItemInteraction("wf_xtra_var_text_connector", WiredExtraVariableTextConnector.class));
+        // Variable fx: what a variable box's values look like over the avatars and furni that hold them.
+        this.interactionsList.add(new ItemInteraction("wf_xtra_var_fx_health", WiredExtraVariableFxHealthPoints.class));
+        this.interactionsList.add(
+                new ItemInteraction("wf_xtra_var_fx_progress", WiredExtraVariableFxProgressBar.class));
+        this.interactionsList.add(
+                new ItemInteraction("wf_xtra_var_fx_level", WiredExtraVariableFxLevellingProgress.class));
+        this.interactionsList.add(new ItemInteraction("wf_xtra_var_fx_status", WiredExtraVariableFxStatusBar.class));
+        this.interactionsList.add(new ItemInteraction("wf_xtra_var_fx_boss", WiredExtraVariableFxBossBar.class));
+        this.interactionsList.add(
+                new ItemInteraction("wf_xtra_var_fx_number", WiredExtraVariableFxNumberDisplay.class));
         this.interactionsList.add(
                 new ItemInteraction("wf_xtra_var_lvlup_system", WiredExtraVariableLevelUpSystem.class));
         this.interactionsList.add(new ItemInteraction("wf_var_user", WiredExtraUserVariable.class));

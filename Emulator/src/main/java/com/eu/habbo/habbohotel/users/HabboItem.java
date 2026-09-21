@@ -409,6 +409,7 @@ public abstract class HabboItem implements Runnable, IEventTriggers {
                     || isTogglingInteraction
                     || (objects != null && objects.length == 1 && objects[0].equals("TOGGLE_OVERRIDE"))) {
                 WiredManager.triggerFurniStateChanged(room, client.getHabbo().getRoomUnit(), this);
+                WiredManager.triggerFurniStateUpdated(room, client.getHabbo().getRoomUnit(), this, false);
             }
         }
     }

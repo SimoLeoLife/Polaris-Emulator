@@ -236,6 +236,7 @@ public class WiredEffectToggleRandom extends InteractionWiredEffect {
                 item.setExtradata(Emulator.getRandom().nextInt(Math.max(1, stateCount)) + "");
                 item.needsUpdate(true);
                 room.updateItem(item);
+                WiredManager.triggerFurniStateUpdated(room, ctx.actor().orElse(null), item, true);
             } catch (Exception e) {
                 LOGGER.error("Caught exception", e);
             }

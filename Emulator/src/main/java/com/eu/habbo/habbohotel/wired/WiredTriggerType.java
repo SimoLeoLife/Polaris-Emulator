@@ -49,7 +49,10 @@ public enum WiredTriggerType {
     AT_GIVEN_TIME_LONG(30),
     // "Say your username" borrowed the keyword dialog, whose keyword and match-mode controls it
     // never reads. Its own code lets the client draw only what the box uses.
-    USERNAME_AS_TRIGGER(31);
+    USERNAME_AS_TRIGGER(31),
+    // The official "furni state is changed" trigger: any state update of the picked furni, whether a
+    // user toggled it or a wired effect set it. STATE_CHANGED (4) stays the user-toggle-only box.
+    STATE_CHANGE(32);
 
     public final int code;
 

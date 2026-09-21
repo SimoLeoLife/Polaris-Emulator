@@ -115,6 +115,7 @@ public class WiredEffectMatchFurni extends InteractionWiredEffect implements Int
                 item.setExtradata(setting.state);
                 item.needsUpdate(true);
                 room.updateItemState(item);
+                WiredManager.triggerFurniStateUpdated(room, ctx.actor().orElse(null), item, true);
             }
         }
 

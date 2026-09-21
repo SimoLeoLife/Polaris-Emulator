@@ -3,32 +3,189 @@ package com.eu.habbo.messages.outgoing.wired;
 import com.eu.habbo.Emulator;
 import com.eu.habbo.habbohotel.rooms.Room;
 import com.eu.habbo.habbohotel.rooms.RoomFurniVariableManager;
-import com.eu.habbo.habbohotel.rooms.RoomVariableManager;
 import com.eu.habbo.habbohotel.rooms.RoomUserVariableManager;
+import com.eu.habbo.habbohotel.rooms.RoomVariableManager;
 import com.eu.habbo.habbohotel.rooms.WiredVariableDefinitionInfo;
 import com.eu.habbo.habbohotel.wired.core.WiredContextVariableSupport;
+import com.eu.habbo.habbohotel.wired.core.WiredManager;
+import com.eu.habbo.habbohotel.wired.core.WiredVariableTextConnectorSupport;
 import com.eu.habbo.messages.ServerMessage;
 import com.eu.habbo.messages.outgoing.MessageComposer;
 import com.eu.habbo.messages.outgoing.Outgoing;
-
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 
 public class WiredUserVariablesDataComposer extends MessageComposer {
+    /** {@code variableType} of the trailing metadata, as the client's parser files the entries. */
+    public static final int METADATA_TYPE_FURNI = 0;
+
+    public static final int METADATA_TYPE_ROOM = 1;
+
+    public static final int METADATA_TYPE_USER = 2;
+
+    public static final int METADATA_TYPE_CONTEXT = 3;
+
     private final RoomUserVariableManager.Snapshot userSnapshot;
     private final RoomFurniVariableManager.Snapshot furniSnapshot;
     private final RoomVariableManager.Snapshot roomSnapshot;
     private final List<WiredVariableDefinitionInfo> contextDefinitions;
+    private final List<TextConnectorMetadata> textConnectors;
 
-    public WiredUserVariablesDataComposer(RoomUserVariableManager.Snapshot userSnapshot, RoomFurniVariableManager.Snapshot furniSnapshot, RoomVariableManager.Snapshot roomSnapshot) {
-        this(userSnapshot, furniSnapshot, roomSnapshot, resolveContextDefinitions(userSnapshot, furniSnapshot, roomSnapshot));
+    public WiredUserVariablesDataComposer(
+            RoomUserVariableManager.Snapshot userSnapshot,
+            RoomFurniVariableManager.Snapshot furniSnapshot,
+            RoomVariableManager.Snapshot roomSnapshot) {
+        this(
+                userSnapshot,
+                furniSnapshot,
+                roomSnapshot,
+                resolveContextDefinitions(userSnapshot, furniSnapshot, roomSnapshot));
     }
 
-    public WiredUserVariablesDataComposer(RoomUserVariableManager.Snapshot userSnapshot, RoomFurniVariableManager.Snapshot furniSnapshot, RoomVariableManager.Snapshot roomSnapshot, List<WiredVariableDefinitionInfo> contextDefinitions) {
+    public WiredUserVariablesDataComposer(
+            RoomUserVariableManager.Snapshot userSnapshot,
+            RoomFurniVariableManager.Snapshot furniSnapshot,
+            RoomVariableManager.Snapshot roomSnapshot,
+            List<WiredVariableDefinitionInfo> contextDefinitions) {
+        this(
+                userSnapshot,
+                furniSnapshot,
+                roomSnapshot,
+                contextDefinitions,
+                resolveTextConnectors(
+                        resolveRoom(userSnapshot, furniSnapshot, roomSnapshot),
+                        userSnapshot,
+                        furniSnapshot,
+                        roomSnapshot,
+                        contextDefinitions));
+    }
+
+    public WiredUserVariablesDataComposer(
+            RoomUserVariableManager.Snapshot userSnapshot,
+            RoomFurniVariableManager.Snapshot furniSnapshot,
+            RoomVariableManager.Snapshot roomSnapshot,
+            List<WiredVariableDefinitionInfo> contextDefinitions,
+            List<TextConnectorMetadata> textConnectors) {
         this.userSnapshot = userSnapshot;
         this.furniSnapshot = furniSnapshot;
         this.roomSnapshot = roomSnapshot;
         this.contextDefinitions = (contextDefinitions != null) ? contextDefinitions : Collections.emptyList();
+        this.textConnectors = (textConnectors != null) ? textConnectors : Collections.emptyList();
+    }
+
+    /**
+     * One trailing-metadata entry: the value-to-text table of a text connected definition. Serialized
+     * as JSON after the fixed part of the packet, which older clients simply do not read.
+     */
+    public static final class TextConnectorMetadata {
+        private final int itemId;
+        private final int variableType;
+        private final List<TextConnectorEntry> textConnector;
+
+        public TextConnectorMetadata(int itemId, int variableType, Map<Integer, String> mappings) {
+            this.itemId = itemId;
+            this.variableType = variableType;
+            this.textConnector = new ArrayList<>();
+            if (mappings != null) {
+                for (Map.Entry<Integer, String> mapping : mappings.entrySet()) {
+                    this.textConnector.add(new TextConnectorEntry(mapping.getKey(), mapping.getValue()));
+                }
+            }
+        }
+
+        public int getItemId() {
+            return this.itemId;
+        }
+
+        public int getVariableType() {
+            return this.variableType;
+        }
+
+        public List<TextConnectorEntry> getTextConnector() {
+            return Collections.unmodifiableList(this.textConnector);
+        }
+    }
+
+    public static final class TextConnectorEntry {
+        private final int key;
+        private final String value;
+
+        public TextConnectorEntry(int key, String value) {
+            this.key = key;
+            this.value = value;
+        }
+
+        public int getKey() {
+            return this.key;
+        }
+
+        public String getValue() {
+            return this.value;
+        }
+    }
+
+    /** The text-connector tables of every text connected definition in the snapshots. */
+    public static List<TextConnectorMetadata> resolveTextConnectors(
+            Room room,
+            RoomUserVariableManager.Snapshot userSnapshot,
+            RoomFurniVariableManager.Snapshot furniSnapshot,
+            RoomVariableManager.Snapshot roomSnapshot,
+            List<WiredVariableDefinitionInfo> contextDefinitions) {
+        List<TextConnectorMetadata> result = new ArrayList<>();
+
+        if (room == null) {
+            return result;
+        }
+
+        if (userSnapshot != null) {
+            for (RoomUserVariableManager.DefinitionEntry definition : userSnapshot.getDefinitions()) {
+                addTextConnector(
+                        result, room, definition.getItemId(), METADATA_TYPE_USER, definition.isTextConnected());
+            }
+        }
+
+        if (furniSnapshot != null) {
+            for (RoomFurniVariableManager.DefinitionEntry definition : furniSnapshot.getDefinitions()) {
+                addTextConnector(
+                        result, room, definition.getItemId(), METADATA_TYPE_FURNI, definition.isTextConnected());
+            }
+        }
+
+        if (roomSnapshot != null) {
+            for (RoomVariableManager.DefinitionEntry definition : roomSnapshot.getDefinitions()) {
+                addTextConnector(
+                        result, room, definition.getItemId(), METADATA_TYPE_ROOM, definition.isTextConnected());
+            }
+        }
+
+        if (contextDefinitions != null) {
+            for (WiredVariableDefinitionInfo definition : contextDefinitions) {
+                if (definition == null) {
+                    continue;
+                }
+
+                addTextConnector(
+                        result, room, definition.getItemId(), METADATA_TYPE_CONTEXT, definition.isTextConnected());
+            }
+        }
+
+        return result;
+    }
+
+    private static void addTextConnector(
+            List<TextConnectorMetadata> result, Room room, int itemId, int variableType, boolean textConnected) {
+        if (!textConnected) {
+            return;
+        }
+
+        Map<Integer, String> mappings = WiredVariableTextConnectorSupport.mappings(room, itemId);
+        if (mappings.isEmpty()) {
+            return;
+        }
+
+        result.add(new TextConnectorMetadata(itemId, variableType, mappings));
     }
 
     @Override
@@ -47,7 +204,8 @@ public class WiredUserVariablesDataComposer extends MessageComposer {
 
         this.response.appendInt(roomId);
 
-        this.response.appendInt((this.userSnapshot != null) ? this.userSnapshot.getDefinitions().size() : 0);
+        this.response.appendInt(
+                (this.userSnapshot != null) ? this.userSnapshot.getDefinitions().size() : 0);
 
         if (this.userSnapshot != null) {
             for (RoomUserVariableManager.DefinitionEntry definition : this.userSnapshot.getDefinitions()) {
@@ -60,7 +218,8 @@ public class WiredUserVariablesDataComposer extends MessageComposer {
             }
         }
 
-        this.response.appendInt((this.userSnapshot != null) ? this.userSnapshot.getUsers().size() : 0);
+        this.response.appendInt(
+                (this.userSnapshot != null) ? this.userSnapshot.getUsers().size() : 0);
 
         if (this.userSnapshot != null) {
             for (RoomUserVariableManager.UserAssignmentsEntry user : this.userSnapshot.getUsers()) {
@@ -77,7 +236,10 @@ public class WiredUserVariablesDataComposer extends MessageComposer {
             }
         }
 
-        this.response.appendInt((this.furniSnapshot != null) ? this.furniSnapshot.getDefinitions().size() : 0);
+        this.response.appendInt(
+                (this.furniSnapshot != null)
+                        ? this.furniSnapshot.getDefinitions().size()
+                        : 0);
 
         if (this.furniSnapshot != null) {
             for (RoomFurniVariableManager.DefinitionEntry definition : this.furniSnapshot.getDefinitions()) {
@@ -90,7 +252,8 @@ public class WiredUserVariablesDataComposer extends MessageComposer {
             }
         }
 
-        this.response.appendInt((this.furniSnapshot != null) ? this.furniSnapshot.getFurnis().size() : 0);
+        this.response.appendInt(
+                (this.furniSnapshot != null) ? this.furniSnapshot.getFurnis().size() : 0);
 
         if (this.furniSnapshot != null) {
             for (RoomFurniVariableManager.FurniAssignmentsEntry furni : this.furniSnapshot.getFurnis()) {
@@ -107,7 +270,8 @@ public class WiredUserVariablesDataComposer extends MessageComposer {
             }
         }
 
-        this.response.appendInt((this.roomSnapshot != null) ? this.roomSnapshot.getDefinitions().size() : 0);
+        this.response.appendInt(
+                (this.roomSnapshot != null) ? this.roomSnapshot.getDefinitions().size() : 0);
 
         if (this.roomSnapshot != null) {
             for (RoomVariableManager.DefinitionEntry definition : this.roomSnapshot.getDefinitions()) {
@@ -120,7 +284,8 @@ public class WiredUserVariablesDataComposer extends MessageComposer {
             }
         }
 
-        this.response.appendInt((this.roomSnapshot != null) ? this.roomSnapshot.getAssignments().size() : 0);
+        this.response.appendInt(
+                (this.roomSnapshot != null) ? this.roomSnapshot.getAssignments().size() : 0);
 
         if (this.roomSnapshot != null) {
             for (RoomVariableManager.AssignmentEntry assignment : this.roomSnapshot.getAssignments()) {
@@ -147,10 +312,19 @@ public class WiredUserVariablesDataComposer extends MessageComposer {
             this.response.appendBoolean(definition.isReadOnly());
         }
 
+        // Optional trailing metadata: the client reads it only when bytes remain, so a packet
+        // without it stays exactly what it was.
+        if (!this.textConnectors.isEmpty()) {
+            this.response.appendString(WiredManager.getGson().toJson(this.textConnectors));
+        }
+
         return this.response;
     }
 
-    private static List<WiredVariableDefinitionInfo> resolveContextDefinitions(RoomUserVariableManager.Snapshot userSnapshot, RoomFurniVariableManager.Snapshot furniSnapshot, RoomVariableManager.Snapshot roomSnapshot) {
+    private static Room resolveRoom(
+            RoomUserVariableManager.Snapshot userSnapshot,
+            RoomFurniVariableManager.Snapshot furniSnapshot,
+            RoomVariableManager.Snapshot roomSnapshot) {
         int roomId = 0;
 
         if (userSnapshot != null) {
@@ -161,11 +335,34 @@ public class WiredUserVariablesDataComposer extends MessageComposer {
             roomId = roomSnapshot.getRoomId();
         }
 
-        if (roomId <= 0) {
-            return Collections.emptyList();
+        return roomById(roomId);
+    }
+
+    /** The loaded room, or null outside a running hotel or for an unknown id. */
+    private static Room roomById(int roomId) {
+        if (roomId <= 0) return null;
+
+        var environment = Emulator.getGameEnvironment();
+        if (environment == null || environment.getRoomManager() == null) return null;
+
+        return environment.getRoomManager().getRoom(roomId);
+    }
+
+    private static List<WiredVariableDefinitionInfo> resolveContextDefinitions(
+            RoomUserVariableManager.Snapshot userSnapshot,
+            RoomFurniVariableManager.Snapshot furniSnapshot,
+            RoomVariableManager.Snapshot roomSnapshot) {
+        int roomId = 0;
+
+        if (userSnapshot != null) {
+            roomId = userSnapshot.getRoomId();
+        } else if (furniSnapshot != null) {
+            roomId = furniSnapshot.getRoomId();
+        } else if (roomSnapshot != null) {
+            roomId = roomSnapshot.getRoomId();
         }
 
-        Room room = Emulator.getGameEnvironment().getRoomManager().getRoom(roomId);
+        Room room = roomById(roomId);
         return room != null ? WiredContextVariableSupport.createDefinitionInfos(room) : Collections.emptyList();
     }
 }

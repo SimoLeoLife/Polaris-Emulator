@@ -6,6 +6,7 @@ import com.eu.habbo.habbohotel.rooms.Room;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -61,6 +62,32 @@ public final class WiredVariableTextConnectorSupport {
         }
 
         return connectors;
+    }
+
+    /**
+     * The value-to-text table the definition's text connectors give it, in connector execution order
+     * with the first connector naming a value winning, exactly as {@link #toText} resolves it. Empty
+     * when the definition has no connector, so callers can tell "connected" from "named nothing".
+     */
+    public static Map<Integer, String> mappings(Room room, int definitionItemId) {
+        List<WiredExtraVariableTextConnector> connectors = getConnectors(room, definitionItemId);
+        if (connectors.isEmpty()) {
+            return Collections.emptyMap();
+        }
+
+        Map<Integer, String> merged = new LinkedHashMap<>();
+
+        for (WiredExtraVariableTextConnector connector : connectors) {
+            for (Map.Entry<Integer, String> mapping : connector.getMappings().entrySet()) {
+                if (mapping.getKey() == null || mapping.getValue() == null) {
+                    continue;
+                }
+
+                merged.putIfAbsent(mapping.getKey(), mapping.getValue());
+            }
+        }
+
+        return Collections.unmodifiableMap(merged);
     }
 
     public static String toText(Room room, int definitionItemId, Integer value) {

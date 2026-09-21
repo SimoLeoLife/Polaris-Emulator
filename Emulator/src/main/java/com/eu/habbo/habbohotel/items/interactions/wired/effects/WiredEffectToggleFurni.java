@@ -376,6 +376,7 @@ public class WiredEffectToggleFurni extends InteractionWiredEffect {
         item.setExtradata(Integer.toString(nextState));
         item.needsUpdate(true);
         room.updateItemState(item);
+        WiredManager.triggerFurniStateUpdated(room, (habbo != null) ? habbo.getRoomUnit() : null, item, true);
     }
 
     static class JsonData {

@@ -55,7 +55,7 @@ public final class WiredEvent {
         /** User performs an avatar action */
         USER_PERFORMS_ACTION(WiredTriggerType.USER_PERFORMS_ACTION),
 
-        /** Furniture state is toggled/changed */
+        /** Furniture state is toggled by a user */
         FURNI_STATE_CHANGED(WiredTriggerType.STATE_CHANGED),
 
         /** A user said their own username; its own event because the room index looks stacks up by legacy type */
@@ -142,7 +142,13 @@ public final class WiredEvent {
         PRESS_KEYBIND(WiredTriggerType.PRESS_KEYBIND),
 
         /** Custom trigger type for plugins */
-        CUSTOM(WiredTriggerType.CUSTOM);
+        CUSTOM(WiredTriggerType.CUSTOM),
+
+        /**
+         * Furniture state was updated by anyone or anything, wired effects included. Last so the
+         * ordinals plugins compiled against stay where they were.
+         */
+        FURNI_STATE_UPDATED(WiredTriggerType.STATE_CHANGE);
 
         private final WiredTriggerType legacyType;
 

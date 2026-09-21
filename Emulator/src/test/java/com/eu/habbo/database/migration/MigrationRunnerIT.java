@@ -647,14 +647,19 @@ class MigrationRunnerIT {
 
             assertEquals(SchemaPreflight.State.RECOGNISED_EXISTING, SchemaPreflight.detect(ds));
             String status = MigrationRunner.status(ds);
-            // The last migration that leaves tables or columns behind is the talent reward
-            // column; the habbicon catalog migration after it only writes rows, so it cannot be
-            // proven applied and runs again (it is written to be re-runnable).
+            // The last migration up to the target that leaves tables or columns behind is the
+            // talent reward column; the habbicon catalog migration after it only writes rows, so
+            // it cannot be proven applied and runs again (it is written to be re-runnable), as
+            // does everything packaged after it.
+            List<String> pending = packagedVersionsAbove(ds, "20260911160100");
             assertTrue(status.contains("Adoption: record baseline V20260911160100"), status);
             assertTrue(status.contains("recorded as applied without running"), status);
             assertTrue(status.contains("  = V20260802090000"), status);
-            assertTrue(status.contains("Pending migrations: 1"), status);
+            assertTrue(status.contains("Pending migrations: " + pending.size() + "\n"), status);
             assertTrue(status.contains("  - V20260916180000"), status);
+            for (String version : pending) {
+                assertTrue(status.contains("  - V" + version), status);
+            }
 
             // Re-creating catalog_id_sequences and friends would fail; adoption must skip them.
             MigrationRunner.migrate(ds);
@@ -706,10 +711,15 @@ class MigrationRunnerIT {
             assertTrue(report.contains("Recorded as applied without running: V20260911160100"), report);
 
             // Every reconciled row carries the packaged checksum, so validation passes. Only
-            // the trailing data-only migration stays pending and is replayed by a normal start.
+            // the data-only migrations after the last one that leaves objects behind stay
+            // pending and are replayed by a normal start.
+            List<String> trailing = packagedVersionsAbove(ds, lastEvidenceBearingVersion(ds));
             status = MigrationRunner.status(ds);
-            assertTrue(status.contains("Pending migrations: 1"), status);
-            assertTrue(status.contains("  - V20260916180000"), status);
+            assertTrue(status.contains("Pending migrations: " + trailing.size() + "\n"), status);
+            for (String version : trailing) {
+                assertTrue(status.contains("  - V" + version), status);
+            }
+            assertTrue(!status.contains("  - V20260916180000"), status);
             assertEquals(0, intValue(ds, "SELECT COUNT(*) FROM flyway_schema_history WHERE success = 0"));
             MigrationRunner.migrate(ds);
             assertEquals(1, intValue(ds, """
@@ -788,6 +798,24 @@ class MigrationRunnerIT {
             }
         }
         return count;
+    }
+
+    /** The packaged migration versions above {@code version}, in order; what stays pending past it. */
+    private static List<String> packagedVersionsAbove(HikariDataSource ds, String version) {
+        List<String> above = new ArrayList<>();
+        for (SchemaEvidence.Migration migration : SchemaEvidence.packaged(MigrationRunner.flyway(ds))) {
+            if (migration.version().compareTo(version) > 0) above.add(migration.version());
+        }
+        return above;
+    }
+
+    /** The last packaged migration that creates a table or column the schema can be checked for. */
+    private static String lastEvidenceBearingVersion(HikariDataSource ds) {
+        String last = MigrationRunner.BASELINE_VERSION;
+        for (SchemaEvidence.Migration migration : SchemaEvidence.packaged(MigrationRunner.flyway(ds))) {
+            if (migration.hasEvidence()) last = migration.version();
+        }
+        return last;
     }
 
     private static void installArcturusFixture(HikariDataSource ds) throws Exception {

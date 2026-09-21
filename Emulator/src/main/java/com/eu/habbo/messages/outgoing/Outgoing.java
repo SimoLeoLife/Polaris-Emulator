@@ -164,6 +164,11 @@ public class Outgoing {
     public static final int WiredClickUserResponseComposer = 9460; // CUSTOM
     public static final int WiredVariableHoldersPageComposer = 9461; // CUSTOM
     public static final int WiredVariableHoldersComposer = 9462; // CUSTOM
+    // Wired variable fx: the room tells each player what to draw over avatars and furni.
+    public static final int WiredVariableFxConfigsComposer = 9473; // CUSTOM
+    public static final int WiredVariableFxConfigsRemovedComposer = 9474; // CUSTOM
+    public static final int WiredVariableFxStatusComposer = 9475; // CUSTOM
+    public static final int WiredVariableFxStatusRemovedComposer = 9476; // CUSTOM
     public static final int ConfInvisStateComposer = 5104; // CUSTOM
     public static final int TranslationLanguagesComposer = 5106; // CUSTOM
     public static final int TranslationResultComposer = 5107; // CUSTOM
