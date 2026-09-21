@@ -28267,6 +28267,70 @@
         "path": "packages/communication/src/messages/parser/quest/RewardTrackTextsMessageParser.ts"
       },
       "reason": "Java analyzer: Data-dependent packet operations in ForEachStmt inside composeInternal; TypeScript analyzer: Data-dependent packet operations in ForStatement inside parse"
+    },
+    {
+      "name": "WIRED_VARIABLE_FX_CONFIGS",
+      "direction": "server_to_client",
+      "header": 9473,
+      "java": {
+        "symbol": "WiredVariableFxConfigsComposer",
+        "className": "WiredVariableFxConfigsComposer",
+        "path": "Emulator/src/main/java/com/eu/habbo/messages/outgoing/wired/WiredVariableFxConfigsComposer.java"
+      },
+      "typescript": {
+        "symbol": "WIRED_VARIABLE_FX_CONFIGS",
+        "className": "WiredVariableFxConfigsParser",
+        "path": "packages/communication/src/messages/parser/roomevents/WiredVariableFxConfigsParser.ts"
+      },
+      "reason": "Java analyzer: Data-dependent packet operations in ForEachStmt inside composeInternal; TypeScript analyzer: Data-dependent packet operations in ForStatement inside parse"
+    },
+    {
+      "name": "WIRED_VARIABLE_FX_CONFIGS_REMOVED",
+      "direction": "server_to_client",
+      "header": 9474,
+      "java": {
+        "symbol": "WiredVariableFxConfigsRemovedComposer",
+        "className": "WiredVariableFxConfigsRemovedComposer",
+        "path": "Emulator/src/main/java/com/eu/habbo/messages/outgoing/wired/WiredVariableFxConfigsRemovedComposer.java"
+      },
+      "typescript": {
+        "symbol": "WIRED_VARIABLE_FX_CONFIGS_REMOVED",
+        "className": "WiredVariableFxConfigsRemovedParser",
+        "path": "packages/communication/src/messages/parser/roomevents/WiredVariableFxConfigsRemovedParser.ts"
+      },
+      "reason": "Java analyzer: Data-dependent packet operations in ForEachStmt inside composeInternal; TypeScript analyzer: Data-dependent packet operations in ForStatement inside parse"
+    },
+    {
+      "name": "WIRED_VARIABLE_FX_STATUS",
+      "direction": "server_to_client",
+      "header": 9475,
+      "java": {
+        "symbol": "WiredVariableFxStatusComposer",
+        "className": "WiredVariableFxStatusComposer",
+        "path": "Emulator/src/main/java/com/eu/habbo/messages/outgoing/wired/WiredVariableFxStatusComposer.java"
+      },
+      "typescript": {
+        "symbol": "WIRED_VARIABLE_FX_STATUS",
+        "className": "WiredVariableFxStatusParser",
+        "path": "packages/communication/src/messages/parser/roomevents/WiredVariableFxStatusParser.ts"
+      },
+      "reason": "Java analyzer: Data-dependent packet operations in ForEachStmt inside composeInternal; TypeScript analyzer: Data-dependent packet operations in ForStatement inside parse"
+    },
+    {
+      "name": "WIRED_VARIABLE_FX_STATUS_REMOVED",
+      "direction": "server_to_client",
+      "header": 9476,
+      "java": {
+        "symbol": "WiredVariableFxStatusRemovedComposer",
+        "className": "WiredVariableFxStatusRemovedComposer",
+        "path": "Emulator/src/main/java/com/eu/habbo/messages/outgoing/wired/WiredVariableFxStatusRemovedComposer.java"
+      },
+      "typescript": {
+        "symbol": "WIRED_VARIABLE_FX_STATUS_REMOVED",
+        "className": "WiredVariableFxStatusRemovedParser",
+        "path": "packages/communication/src/messages/parser/roomevents/WiredVariableFxStatusRemovedParser.ts"
+      },
+      "reason": "Java analyzer: Data-dependent packet operations in ForEachStmt inside composeInternal; TypeScript analyzer: Data-dependent packet operations in ForStatement inside parse"
     }
   ]
 }

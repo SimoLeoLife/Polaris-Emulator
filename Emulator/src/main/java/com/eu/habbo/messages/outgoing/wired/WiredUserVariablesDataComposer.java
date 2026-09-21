@@ -335,13 +335,17 @@ public class WiredUserVariablesDataComposer extends MessageComposer {
             roomId = roomSnapshot.getRoomId();
         }
 
-        if (roomId <= 0
-                || Emulator.getGameEnvironment() == null
-                || Emulator.getGameEnvironment().getRoomManager() == null) {
-            return null;
-        }
+        return roomById(roomId);
+    }
 
-        return Emulator.getGameEnvironment().getRoomManager().getRoom(roomId);
+    /** The loaded room, or null outside a running hotel or for an unknown id. */
+    private static Room roomById(int roomId) {
+        if (roomId <= 0) return null;
+
+        var environment = Emulator.getGameEnvironment();
+        if (environment == null || environment.getRoomManager() == null) return null;
+
+        return environment.getRoomManager().getRoom(roomId);
     }
 
     private static List<WiredVariableDefinitionInfo> resolveContextDefinitions(
@@ -358,11 +362,7 @@ public class WiredUserVariablesDataComposer extends MessageComposer {
             roomId = roomSnapshot.getRoomId();
         }
 
-        if (roomId <= 0) {
-            return Collections.emptyList();
-        }
-
-        Room room = Emulator.getGameEnvironment().getRoomManager().getRoom(roomId);
+        Room room = roomById(roomId);
         return room != null ? WiredContextVariableSupport.createDefinitionInfos(room) : Collections.emptyList();
     }
 }

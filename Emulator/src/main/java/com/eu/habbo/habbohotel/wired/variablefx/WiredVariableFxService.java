@@ -1,6 +1,5 @@
 package com.eu.habbo.habbohotel.wired.variablefx;
 
-import com.eu.habbo.Emulator;
 import com.eu.habbo.habbohotel.games.GamePlayer;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredExtra;
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraVariableFx;
@@ -39,6 +38,12 @@ public final class WiredVariableFxService implements WiredTickable {
 
     /** The tick service's ids are furni ids; this is not one, so it uses a seat no furni has. */
     private static final int SERVICE_ID = -7_000_000;
+    /** How often the diffs go out; a quarter second reads as live without flooding the room. */
+    private static final int FLUSH_MS = 250;
+    /** Fx boxes per room beyond which the rest are ignored, and statuses per viewer likewise. */
+    private static final int MAX_BOXES = 25;
+
+    private static final int MAX_STATUSES_PER_VIEWER = 500;
 
     private final int roomId;
     private final Map<Integer, String> configSignatures = new HashMap<>();
@@ -288,19 +293,14 @@ public final class WiredVariableFxService implements WiredTickable {
     }
 
     static int flushMs() {
-        return Math.max(50, setting("hotel.wired.variablefx.flush_ms", 250));
+        return FLUSH_MS;
     }
 
     static int maxBoxes() {
-        return Math.max(1, setting("hotel.wired.variablefx.max_boxes", 25));
+        return MAX_BOXES;
     }
 
     static int maxStatusesPerViewer() {
-        return Math.max(1, setting("hotel.wired.variablefx.max_statuses_per_viewer", 500));
-    }
-
-    /** A hotel setting, or its default when there is no configuration loaded (tests). */
-    private static int setting(String key, int fallback) {
-        return (Emulator.getConfig() != null) ? Emulator.getConfig().getInt(key, fallback) : fallback;
+        return MAX_STATUSES_PER_VIEWER;
     }
 }

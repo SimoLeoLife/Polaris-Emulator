@@ -1,6 +1,5 @@
 package com.eu.habbo.habbohotel.items.interactions.wired.extra;
 
-import com.eu.habbo.Emulator;
 import com.eu.habbo.habbohotel.gameclients.GameClient;
 import com.eu.habbo.habbohotel.items.Item;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredExtra;
@@ -375,8 +374,6 @@ public abstract class WiredExtraVariableFx extends InteractionWiredExtra {
             throw new WiredSaveException("wiredfurni.params.variablefx.validation.range");
         }
 
-        this.ensureFxService();
-
         return true;
     }
 
@@ -468,15 +465,6 @@ public abstract class WiredExtraVariableFx extends InteractionWiredExtra {
 
     @Override
     public void onWalk(RoomUnit roomUnit, Room room, Object[] objects) {}
-
-    /** Starts the room's fx service after a save; outside a running hotel there is no room to start it for. */
-    private void ensureFxService() {
-        if (Emulator.getGameEnvironment() == null
-                || Emulator.getGameEnvironment().getRoomManager() == null) return;
-
-        Room room = Emulator.getGameEnvironment().getRoomManager().getRoom(this.getRoomId());
-        if (room != null) WiredVariableFxSupport.ensure(room);
-    }
 
     @Override
     public boolean hasConfiguration() {
