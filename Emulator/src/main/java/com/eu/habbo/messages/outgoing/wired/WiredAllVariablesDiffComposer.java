@@ -6,6 +6,7 @@ import com.eu.habbo.messages.outgoing.MessageComposer;
 import com.eu.habbo.messages.outgoing.Outgoing;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Official AIR 13 {@code AllVariablesDiff}: the variables the client has to drop and the ones it has
@@ -43,7 +44,16 @@ public class WiredAllVariablesDiffComposer extends MessageComposer {
         response.appendBoolean(false); // isInvisible
         response.appendBoolean(true); // canReadCreationTime
         response.appendBoolean(true); // canReadLastUpdateTime
-        response.appendBoolean(false); // no text connector table
+
+        Map<Integer, String> textConnector = variable.getTextConnector();
+        response.appendBoolean(!textConnector.isEmpty()); // hasTextConnector
+        if (!textConnector.isEmpty()) {
+            response.appendInt(textConnector.size());
+            for (Map.Entry<Integer, String> mapping : textConnector.entrySet()) {
+                response.appendInt(mapping.getKey());
+                response.appendString(mapping.getValue());
+            }
+        }
     }
 
     @Override
