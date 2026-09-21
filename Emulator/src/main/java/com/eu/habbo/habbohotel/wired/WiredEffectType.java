@@ -116,7 +116,11 @@ public enum WiredEffectType {
     ALL_USERS_LEAVE_TEAM(124),
     // The official OVERRIDE_HEIGHT: a two-way choice and a 0..8000 thousandths slider. Its dialog is
     // its own, so it takes the next free code rather than borrowing one.
-    OVERRIDE_HEIGHT(125);
+    OVERRIDE_HEIGHT(125),
+    // The official click-settings action: what the selected users' clicks on avatars and furni do,
+    // sent to their clients as WiredClickSettings. 126 and 127 stay free for the array boxes and
+    // 128 is the web API extra, so this takes the next seat.
+    CLICK_SETTINGS(129);
 
     public final int code;
 

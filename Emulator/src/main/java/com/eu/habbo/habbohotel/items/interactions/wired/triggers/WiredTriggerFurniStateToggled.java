@@ -47,6 +47,11 @@ public class WiredTriggerFurniStateToggled extends InteractionWiredTrigger {
             return false;
         }
 
+        return this.matchesStateChange(event);
+    }
+
+    /** Whether the event's furni is one this box watches, in the state it asks for. */
+    protected boolean matchesStateChange(WiredEvent event) {
         HabboItem sourceItem = event.getSourceItem().orElse(null);
         if (sourceItem == null) {
             return false;

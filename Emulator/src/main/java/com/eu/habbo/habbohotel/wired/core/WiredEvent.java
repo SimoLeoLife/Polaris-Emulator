@@ -55,8 +55,11 @@ public final class WiredEvent {
         /** User performs an avatar action */
         USER_PERFORMS_ACTION(WiredTriggerType.USER_PERFORMS_ACTION),
 
-        /** Furniture state is toggled/changed */
+        /** Furniture state is toggled by a user */
         FURNI_STATE_CHANGED(WiredTriggerType.STATE_CHANGED),
+
+        /** Furniture state was updated by anyone or anything, wired effects included */
+        FURNI_STATE_UPDATED(WiredTriggerType.STATE_CHANGE),
 
         /** A user said their own username; its own event because the room index looks stacks up by legacy type */
         USER_SAYS_USERNAME(WiredTriggerType.USERNAME_AS_TRIGGER),

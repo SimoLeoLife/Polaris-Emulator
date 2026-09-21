@@ -577,6 +577,19 @@ public final class WiredManager {
         return handleEvent(event);
     }
 
+    /**
+     * Trigger when a furni's state was updated by anyone or anything: the user-toggle event above
+     * only answers clicks, this one also answers wired effects and the room itself.
+     */
+    public static boolean triggerFurniStateUpdated(Room room, RoomUnit user, HabboItem item, boolean byEffect) {
+        if (!isEnabled() || room == null || item == null) {
+            return false;
+        }
+
+        WiredEvent event = WiredEvents.furniStateUpdated(room, user, item, byEffect);
+        return handleEvent(event);
+    }
+
     public static boolean triggerUserVariableChanged(
             Room room,
             int userId,

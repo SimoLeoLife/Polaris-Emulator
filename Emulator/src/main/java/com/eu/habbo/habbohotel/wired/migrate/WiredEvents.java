@@ -212,6 +212,24 @@ public final class WiredEvents {
                 .build();
     }
 
+    /**
+     * Create an event for any state update of a furni, user click or wired effect alike.
+     * @param room the room
+     * @param user the user behind the change, null when a wired effect or the room did it
+     * @param item the furniture that changed
+     * @param byEffect true when a wired effect changed the state
+     * @return the event
+     */
+    public static WiredEvent furniStateUpdated(Room room, RoomUnit user, HabboItem item, boolean byEffect) {
+        RoomTile tile = (room.getLayout() != null) ? room.getLayout().getTile(item.getX(), item.getY()) : null;
+        return WiredEvent.builder(WiredEvent.Type.FURNI_STATE_UPDATED, room)
+                .actor(user)
+                .sourceItem(item)
+                .tile(tile)
+                .triggeredByEffect(byEffect)
+                .build();
+    }
+
     public static WiredEvent userVariableChanged(
             Room room,
             RoomUnit user,
