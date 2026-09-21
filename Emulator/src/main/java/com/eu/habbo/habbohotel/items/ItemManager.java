@@ -350,6 +350,12 @@ import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraTimeUtil
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraUnseen;
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraUserVariable;
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraVariableEcho;
+import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraVariableFxBossBar;
+import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraVariableFxHealthPoints;
+import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraVariableFxLevellingProgress;
+import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraVariableFxNumberDisplay;
+import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraVariableFxProgressBar;
+import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraVariableFxStatusBar;
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraVariableLevelUpSystem;
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraVariableReference;
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraVariableTextConnector;
@@ -925,6 +931,16 @@ public class ItemManager {
                 new ItemInteraction("wf_xtra_text_input_variable", WiredExtraTextInputVariable.class));
         this.interactionsList.add(
                 new ItemInteraction("wf_xtra_var_text_connector", WiredExtraVariableTextConnector.class));
+        // Variable fx: what a variable box's values look like over the avatars and furni that hold them.
+        this.interactionsList.add(new ItemInteraction("wf_xtra_var_fx_health", WiredExtraVariableFxHealthPoints.class));
+        this.interactionsList.add(
+                new ItemInteraction("wf_xtra_var_fx_progress", WiredExtraVariableFxProgressBar.class));
+        this.interactionsList.add(
+                new ItemInteraction("wf_xtra_var_fx_level", WiredExtraVariableFxLevellingProgress.class));
+        this.interactionsList.add(new ItemInteraction("wf_xtra_var_fx_status", WiredExtraVariableFxStatusBar.class));
+        this.interactionsList.add(new ItemInteraction("wf_xtra_var_fx_boss", WiredExtraVariableFxBossBar.class));
+        this.interactionsList.add(
+                new ItemInteraction("wf_xtra_var_fx_number", WiredExtraVariableFxNumberDisplay.class));
         this.interactionsList.add(
                 new ItemInteraction("wf_xtra_var_lvlup_system", WiredExtraVariableLevelUpSystem.class));
         this.interactionsList.add(new ItemInteraction("wf_var_user", WiredExtraUserVariable.class));

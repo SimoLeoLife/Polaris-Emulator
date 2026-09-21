@@ -24,6 +24,7 @@ import com.eu.habbo.habbohotel.wired.api.WiredStack;
 import com.eu.habbo.habbohotel.wired.migrate.WiredEvents;
 import com.eu.habbo.habbohotel.wired.tick.WiredTickService;
 import com.eu.habbo.habbohotel.wired.tick.WiredTickable;
+import com.eu.habbo.habbohotel.wired.variablefx.WiredVariableFxSupport;
 import com.eu.habbo.messages.outgoing.catalog.PurchaseOKComposer;
 import com.eu.habbo.messages.outgoing.inventory.AddHabboItemComposer;
 import com.eu.habbo.messages.outgoing.inventory.InventoryRefreshComposer;
@@ -1082,6 +1083,7 @@ public final class WiredManager {
      */
     public static void unregisterRoomTickables(Room room) {
         getTickService().unregisterRoom(room);
+        WiredVariableFxSupport.drop(room);
         if (room != null) {
             room.getFurniVariableManager().clearTransientAssignments();
             room.getRoomVariableManager().clearTransientAssignments();

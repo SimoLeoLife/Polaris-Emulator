@@ -16,6 +16,9 @@ import com.eu.habbo.habbohotel.rooms.Room;
 import com.eu.habbo.habbohotel.rooms.WiredOpacityState;
 import com.eu.habbo.habbohotel.users.Habbo;
 import com.eu.habbo.habbohotel.users.HabboItem;
+import com.eu.habbo.habbohotel.wired.variablefx.WiredVariableFxConfig;
+import com.eu.habbo.habbohotel.wired.variablefx.WiredVariableFxStatus;
+import com.eu.habbo.habbohotel.wired.variablefx.WiredVariableFxStyles;
 import com.eu.habbo.messages.ServerMessage;
 import com.eu.habbo.messages.outgoing.MessageComposer;
 import com.eu.habbo.messages.outgoing.rooms.WiredFurniOpacityComposer;
@@ -27,6 +30,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 /** Golden framed bytes for every current wired outgoing composer family. */
@@ -103,6 +107,50 @@ class WiredPacketGoldenCompatibilityTest {
         lines.add(packet(
                 "variable-holders-page-empty",
                 new WiredVariableHoldersPageComposer("user:42", 0, 1, 50, List.of(), 0, -1)));
+        lines.add(packet("variable-fx-configs-empty", new WiredVariableFxConfigsComposer(List.of())));
+        lines.add(packet(
+                "variable-fx-configs-one",
+                new WiredVariableFxConfigsComposer(List.of(new WiredVariableFxConfig(
+                        0x01020304,
+                        true,
+                        1,
+                        3,
+                        false,
+                        1500,
+                        WiredVariableFxStyles.CATEGORY_HEALTH_POINTS,
+                        2,
+                        1,
+                        0,
+                        7,
+                        0L,
+                        0x0102030405L,
+                        Map.of(WiredVariableFxStyles.EXTRA_SEGMENTS, "4"))))));
+        lines.add(
+                packet("variable-fx-configs-removed", new WiredVariableFxConfigsRemovedComposer(List.of(0x01020304))));
+        lines.add(packet("variable-fx-status-empty", new WiredVariableFxStatusComposer(true, List.of())));
+        lines.add(packet(
+                "variable-fx-status-mixed",
+                new WiredVariableFxStatusComposer(
+                        false,
+                        List.of(
+                                new WiredVariableFxStatus(
+                                        new WiredVariableFxStatus.Key(0x01020304, "user:42", true, 9),
+                                        true,
+                                        0x0102030405L,
+                                        null,
+                                        null,
+                                        Map.of()),
+                                new WiredVariableFxStatus(
+                                        new WiredVariableFxStatus.Key(0x01020304, "furni:7", false, 0x01020305),
+                                        false,
+                                        -5L,
+                                        1L,
+                                        200L,
+                                        Map.of("current_level", "3"))))));
+        lines.add(packet(
+                "variable-fx-status-removed",
+                new WiredVariableFxStatusRemovedComposer(
+                        List.of(new WiredVariableFxStatus.Key(0x01020304, "user:42", true, 9)))));
         return lines;
     }
 

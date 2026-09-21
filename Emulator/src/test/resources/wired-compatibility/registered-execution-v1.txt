@@ -107,6 +107,7 @@ com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectCancelTransa
 com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectChangeFurniDirection | EFFECT | type=MOVE_DIRECTION | actor=false | execute=OK
 com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectChangeOpacity | EFFECT | type=CHANGE_OPACITY | actor=true | execute=OK
 com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectChangeVariableValue | EFFECT | type=CHANGE_VAR_VAL | actor=true | execute=OK
+com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectClickSettings | EFFECT | type=CLICK_SETTINGS | actor=true | execute=OK
 com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectControlClock | EFFECT | type=CONTROL_CLOCK | actor=false | execute=OK
 com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectForwardUserToRoom | EFFECT | type=EFFECT_ID | actor=true | execute=OK
 com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectFreeze | EFFECT | type=FREEZE | actor=true | execute=OK
@@ -208,6 +209,12 @@ com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraTimeUtilities |
 com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraUnseen | EXTRA | configured=true | execute=false
 com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraUserVariable | EXTRA | configured=true | execute=false
 com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraVariableEcho | EXTRA | configured=true | execute=false
+com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraVariableFxBossBar | EXTRA | configured=true | execute=false
+com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraVariableFxHealthPoints | EXTRA | configured=true | execute=false
+com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraVariableFxLevellingProgress | EXTRA | configured=true | execute=false
+com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraVariableFxNumberDisplay | EXTRA | configured=true | execute=false
+com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraVariableFxProgressBar | EXTRA | configured=true | execute=false
+com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraVariableFxStatusBar | EXTRA | configured=true | execute=false
 com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraVariableLevelUpSystem | EXTRA | configured=true | execute=false
 com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraVariableReference | EXTRA | configured=true | execute=false
 com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraVariableTextConnector | EXTRA | configured=true | execute=false
@@ -241,6 +248,7 @@ com.eu.habbo.habbohotel.items.interactions.wired.triggers.WiredTriggerClockCount
 com.eu.habbo.habbohotel.items.interactions.wired.triggers.WiredTriggerCollision | TRIGGER | type=COLLISION | event=BOT_COLLISION | actor=true | match=false
 com.eu.habbo.habbohotel.items.interactions.wired.triggers.WiredTriggerDiceRolled | TRIGGER | type=DICE_ROLLED | event=DICE_ROLLED | actor=false | match=true
 com.eu.habbo.habbohotel.items.interactions.wired.triggers.WiredTriggerFurniStateToggled | TRIGGER | type=STATE_CHANGED | event=FURNI_STATE_CHANGED | actor=true | match=true
+com.eu.habbo.habbohotel.items.interactions.wired.triggers.WiredTriggerFurniStateUpdated | TRIGGER | type=STATE_CHANGE | event=FURNI_STATE_UPDATED | actor=true | match=true
 com.eu.habbo.habbohotel.items.interactions.wired.triggers.WiredTriggerGameEnds | TRIGGER | type=GAME_ENDS | event=GAME_ENDS | actor=false | match=true
 com.eu.habbo.habbohotel.items.interactions.wired.triggers.WiredTriggerGameStarts | TRIGGER | type=GAME_STARTS | event=GAME_STARTS | actor=false | match=true
 com.eu.habbo.habbohotel.items.interactions.wired.triggers.WiredTriggerHabboClicksFurni | TRIGGER | type=CLICKS_FURNI | event=USER_CLICKS_FURNI | actor=true | match=true
