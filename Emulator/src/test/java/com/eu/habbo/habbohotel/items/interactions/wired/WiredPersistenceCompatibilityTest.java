@@ -73,7 +73,7 @@ class WiredPersistenceCompatibilityTest {
     @Test
     void matrixCoversEveryRegisteredInteractionWiredClass() throws Exception {
         Set<Class<? extends InteractionWired>> types = WiredInteractionRegistryFixture.wiredTypes();
-        assertEquals(267, types.size(), "Review every added or removed registered wired persistence type");
+        assertEquals(275, types.size(), "Review every added or removed registered wired persistence type");
     }
 
     @Test
@@ -95,14 +95,14 @@ class WiredPersistenceCompatibilityTest {
                 Map.of(
                         "blank", 15,
                         "json-empty", 20,
-                        "json-malformed", 98,
+                        "json-malformed", 100,
                         "legacy-zero", 10,
                         "legacy-tab", 16),
                 byPayload,
                 "Review every change against the production-loader boundary and real legacy corpus");
         assertEquals(
                 Map.of(
-                        "java.io.EOFException", 90,
+                        "java.io.EOFException", 92,
                         "java.lang.NullPointerException", 58,
                         "java.lang.NumberFormatException", 11),
                 byException,

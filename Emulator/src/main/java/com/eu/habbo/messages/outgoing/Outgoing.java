@@ -164,6 +164,11 @@ public class Outgoing {
     public static final int WiredClickUserResponseComposer = 9460; // CUSTOM
     public static final int WiredVariableHoldersPageComposer = 9461; // CUSTOM
     public static final int WiredVariableHoldersComposer = 9462; // CUSTOM
+    // Wired variable fx: the room tells each player what to draw over avatars and furni.
+    public static final int WiredVariableFxConfigsComposer = 9473; // CUSTOM
+    public static final int WiredVariableFxConfigsRemovedComposer = 9474; // CUSTOM
+    public static final int WiredVariableFxStatusComposer = 9475; // CUSTOM
+    public static final int WiredVariableFxStatusRemovedComposer = 9476; // CUSTOM
     public static final int ConfInvisStateComposer = 5104; // CUSTOM
     public static final int TranslationLanguagesComposer = 5106; // CUSTOM
     public static final int TranslationResultComposer = 5107; // CUSTOM
@@ -776,6 +781,11 @@ public class Outgoing {
     public static final int RewardTrackClaimResultComposer = 9451;
     public static final int RewardTrackProgressComposer = 9452;
     public static final int RewardTrackPremiumPurchaseResultComposer = 2248;
+    // Reward track staff editor (Octane, 10100-10199).
+    public static final int RewardTrackAdminDataComposer = 10100;
+    public static final int RewardTrackAdminResultComposer = 10105;
+    public static final int RewardTrackFurniSearchResultComposer = 10107;
+    public static final int RewardTrackTextsComposer = 10109;
     public static final int UserHabbiconsComposer = 9465; // Octane USER_HABBICONS
     public static final int UserHabbiconStatusChangedComposer = 9466; // Octane USER_HABBICON_STATUS_CHANGED
     public static final int HabbiconShopDataComposer = 9467; // Octane HABBICON_SHOP_DATA

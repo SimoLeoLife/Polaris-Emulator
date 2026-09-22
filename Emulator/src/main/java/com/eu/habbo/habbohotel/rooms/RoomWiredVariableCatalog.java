@@ -3,7 +3,9 @@ package com.eu.habbo.habbohotel.rooms;
 import com.eu.habbo.habbohotel.users.Habbo;
 import com.eu.habbo.habbohotel.users.HabboItem;
 import com.eu.habbo.habbohotel.wired.core.WiredContextVariableSupport;
+import com.eu.habbo.habbohotel.wired.core.WiredVariableTextConnectorSupport;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -54,8 +56,9 @@ public final class RoomWiredVariableCatalog {
         private final boolean hasValue;
         private final boolean textConnected;
         private final boolean readOnly;
+        private final Map<Integer, String> textConnector;
 
-        Variable(
+        public Variable(
                 String variableId,
                 int variableType,
                 String variableName,
@@ -64,6 +67,28 @@ public final class RoomWiredVariableCatalog {
                 boolean hasValue,
                 boolean textConnected,
                 boolean readOnly) {
+            this(
+                    variableId,
+                    variableType,
+                    variableName,
+                    availabilityType,
+                    variableTarget,
+                    hasValue,
+                    textConnected,
+                    readOnly,
+                    Collections.emptyMap());
+        }
+
+        public Variable(
+                String variableId,
+                int variableType,
+                String variableName,
+                int availabilityType,
+                int variableTarget,
+                boolean hasValue,
+                boolean textConnected,
+                boolean readOnly,
+                Map<Integer, String> textConnector) {
             this.variableId = variableId;
             this.variableType = variableType;
             this.variableName = variableName;
@@ -72,6 +97,9 @@ public final class RoomWiredVariableCatalog {
             this.hasValue = hasValue;
             this.textConnected = textConnected;
             this.readOnly = readOnly;
+            this.textConnector = (textConnector != null)
+                    ? Collections.unmodifiableMap(new LinkedHashMap<>(textConnector))
+                    : Collections.emptyMap();
         }
 
         public String getVariableId() {
@@ -106,6 +134,14 @@ public final class RoomWiredVariableCatalog {
             return this.readOnly;
         }
 
+        /**
+         * The value-to-text table a text connector addon gives this variable; the official client
+         * shows the text beside the number. Empty when the variable is not text connected.
+         */
+        public Map<Integer, String> getTextConnector() {
+            return this.textConnector;
+        }
+
         /** Stable per-variable hash; the client only compares it, it never interprets it. */
         public int hash() {
             int result = this.variableId.hashCode();
@@ -116,6 +152,11 @@ public final class RoomWiredVariableCatalog {
             result = (31 * result) + (this.hasValue ? 1 : 0);
             result = (31 * result) + (this.textConnected ? 2 : 0);
             result = (31 * result) + (this.readOnly ? 4 : 0);
+            // The table is part of what the client caches, so a renamed value has to re-sync too.
+            for (Map.Entry<Integer, String> mapping : this.textConnector.entrySet()) {
+                result = (31 * result) + mapping.getKey();
+                result = (31 * result) + mapping.getValue().hashCode();
+            }
             return result;
         }
     }
@@ -182,7 +223,8 @@ public final class RoomWiredVariableCatalog {
                     TARGET_USER,
                     definition.hasValue(),
                     definition.isTextConnected(),
-                    definition.isReadOnly()));
+                    definition.isReadOnly(),
+                    textConnector(room, definition.getItemId())));
         }
 
         RoomFurniVariableManager.Snapshot furniSnapshot =
@@ -196,7 +238,8 @@ public final class RoomWiredVariableCatalog {
                     TARGET_FURNI,
                     definition.hasValue(),
                     definition.isTextConnected(),
-                    definition.isReadOnly()));
+                    definition.isReadOnly(),
+                    textConnector(room, definition.getItemId())));
         }
 
         RoomVariableManager.Snapshot roomSnapshot =
@@ -210,7 +253,8 @@ public final class RoomWiredVariableCatalog {
                     TARGET_ROOM,
                     definition.hasValue(),
                     definition.isTextConnected(),
-                    definition.isReadOnly()));
+                    definition.isReadOnly(),
+                    textConnector(room, definition.getItemId())));
         }
 
         for (WiredVariableDefinitionInfo definition : WiredContextVariableSupport.createDefinitionInfos(room)) {
@@ -226,13 +270,19 @@ public final class RoomWiredVariableCatalog {
                     TARGET_CONTEXT,
                     definition.hasValue(),
                     definition.isTextConnected(),
-                    true));
+                    true,
+                    textConnector(room, definition.getItemId())));
         }
 
         variables.sort(Comparator.comparingInt(Variable::getVariableTarget)
                 .thenComparing(Variable::getVariableName, String.CASE_INSENSITIVE_ORDER)
                 .thenComparing(Variable::getVariableId));
         return variables;
+    }
+
+    /** The text-connector table of a definition, empty unless a connector addon names its values. */
+    private static Map<Integer, String> textConnector(Room room, int definitionItemId) {
+        return WiredVariableTextConnectorSupport.mappings(room, definitionItemId);
     }
 
     /** Hash of the whole set; the client asks for it before requesting a diff. */

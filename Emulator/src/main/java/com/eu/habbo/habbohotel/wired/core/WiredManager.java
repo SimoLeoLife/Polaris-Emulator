@@ -24,6 +24,7 @@ import com.eu.habbo.habbohotel.wired.api.WiredStack;
 import com.eu.habbo.habbohotel.wired.migrate.WiredEvents;
 import com.eu.habbo.habbohotel.wired.tick.WiredTickService;
 import com.eu.habbo.habbohotel.wired.tick.WiredTickable;
+import com.eu.habbo.habbohotel.wired.variablefx.WiredVariableFxSupport;
 import com.eu.habbo.messages.outgoing.catalog.PurchaseOKComposer;
 import com.eu.habbo.messages.outgoing.inventory.AddHabboItemComposer;
 import com.eu.habbo.messages.outgoing.inventory.InventoryRefreshComposer;
@@ -577,6 +578,19 @@ public final class WiredManager {
         return handleEvent(event);
     }
 
+    /**
+     * Trigger when a furni's state was updated by anyone or anything: the user-toggle event above
+     * only answers clicks, this one also answers wired effects and the room itself.
+     */
+    public static boolean triggerFurniStateUpdated(Room room, RoomUnit user, HabboItem item, boolean byEffect) {
+        if (!isEnabled() || room == null || item == null) {
+            return false;
+        }
+
+        WiredEvent event = WiredEvents.furniStateUpdated(room, user, item, byEffect);
+        return handleEvent(event);
+    }
+
     public static boolean triggerUserVariableChanged(
             Room room,
             int userId,
@@ -1069,6 +1083,7 @@ public final class WiredManager {
      */
     public static void unregisterRoomTickables(Room room) {
         getTickService().unregisterRoom(room);
+        WiredVariableFxSupport.drop(room);
         if (room != null) {
             room.getFurniVariableManager().clearTransientAssignments();
             room.getRoomVariableManager().clearTransientAssignments();

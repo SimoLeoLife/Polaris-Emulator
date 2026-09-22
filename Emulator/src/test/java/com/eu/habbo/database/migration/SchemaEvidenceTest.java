@@ -180,5 +180,20 @@ class SchemaEvidenceTest {
                 .orElseThrow();
         assertEquals(Set.of("habbicon_collections", "habbicons", "users_habbicons"), habbicons.tables());
         assertEquals(Set.of(new SchemaEvidence.Column("catalog_items", "habbicon_id")), habbicons.columns());
+
+        // The reward track texts table is the last object a migration leaves behind so far; the
+        // index clean-up after it drops nothing checkable and counts as no evidence, which is
+        // what the adoption and reconcile tests build their pending sets on.
+        SchemaEvidence.Migration rewardTexts = stable.stream()
+                .filter(migration -> migration.version().equals("20260919150000"))
+                .findFirst()
+                .orElseThrow();
+        assertEquals(Set.of("reward_track_texts"), rewardTexts.tables());
+        SchemaEvidence.Migration duplicateIndexes = stable.stream()
+                .filter(migration -> migration.version().equals("20260919170000"))
+                .findFirst()
+                .orElseThrow();
+        assertFalse(duplicateIndexes.hasEvidence());
+        assertTrue(duplicateIndexes.droppedColumns().isEmpty());
     }
 }
