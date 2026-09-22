@@ -6,6 +6,7 @@ import com.eu.habbo.habbohotel.rooms.RoomFurniVariableManager;
 import com.eu.habbo.habbohotel.rooms.RoomUserVariableManager;
 import com.eu.habbo.habbohotel.rooms.RoomVariableManager;
 import com.eu.habbo.habbohotel.rooms.WiredVariableDefinitionInfo;
+import com.eu.habbo.habbohotel.wired.arrays.WiredArrayDefinitionSupport;
 import com.eu.habbo.habbohotel.wired.core.WiredContextVariableSupport;
 import com.eu.habbo.habbohotel.wired.core.WiredManager;
 import com.eu.habbo.habbohotel.wired.core.WiredVariableTextConnectorSupport;
@@ -32,6 +33,7 @@ public class WiredUserVariablesDataComposer extends MessageComposer {
     private final RoomVariableManager.Snapshot roomSnapshot;
     private final List<WiredVariableDefinitionInfo> contextDefinitions;
     private final List<TextConnectorMetadata> textConnectors;
+    private final Room room;
 
     public WiredUserVariablesDataComposer(
             RoomUserVariableManager.Snapshot userSnapshot,
@@ -73,6 +75,7 @@ public class WiredUserVariablesDataComposer extends MessageComposer {
         this.roomSnapshot = roomSnapshot;
         this.contextDefinitions = (contextDefinitions != null) ? contextDefinitions : Collections.emptyList();
         this.textConnectors = (textConnectors != null) ? textConnectors : Collections.emptyList();
+        this.room = resolveRoom(userSnapshot, furniSnapshot, roomSnapshot);
     }
 
     /**
@@ -313,9 +316,15 @@ public class WiredUserVariablesDataComposer extends MessageComposer {
         }
 
         // Optional trailing metadata: the client reads it only when bytes remain, so a packet
-        // without it stays exactly what it was.
-        if (!this.textConnectors.isEmpty()) {
-            this.response.appendString(WiredManager.getGson().toJson(this.textConnectors));
+        // without it stays exactly what it was. Text-connector tables and array schemas share the
+        // one JSON array, because the client applies every entry to the definition it names and
+        // ignores the half it was not given.
+        List<Object> metadata = new ArrayList<>(this.textConnectors);
+
+        metadata.addAll(WiredArrayDefinitionSupport.collect(this.room));
+
+        if (!metadata.isEmpty()) {
+            this.response.appendString(WiredManager.getGson().toJson(metadata));
         }
 
         return this.response;

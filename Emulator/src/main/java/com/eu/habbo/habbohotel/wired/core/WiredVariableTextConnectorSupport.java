@@ -3,6 +3,7 @@ package com.eu.habbo.habbohotel.wired.core;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredExtra;
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraVariableTextConnector;
 import com.eu.habbo.habbohotel.rooms.Room;
+import com.eu.habbo.habbohotel.wired.arrays.WiredArrayVariableDefinition;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -16,15 +17,15 @@ public final class WiredVariableTextConnectorSupport {
     private WiredVariableTextConnectorSupport() {}
 
     public static boolean isTextConnected(Room room, InteractionWiredExtra definition) {
-        return getConnector(room, definition) != null;
+        return getConnector(room, definition, 0) != null;
     }
 
     public static boolean isTextConnected(Room room, int definitionItemId) {
-        return getConnector(room, definitionItemId) != null;
+        return getConnector(room, definitionItemId, 0) != null;
     }
 
     public static WiredExtraVariableTextConnector getConnector(Room room, int definitionItemId) {
-        List<WiredExtraVariableTextConnector> connectors = getConnectors(room, definitionItemId);
+        List<WiredExtraVariableTextConnector> connectors = getConnectors(room, definitionItemId, 0);
         return connectors.isEmpty() ? null : connectors.get(0);
     }
 
@@ -38,7 +39,7 @@ public final class WiredVariableTextConnectorSupport {
     }
 
     public static WiredExtraVariableTextConnector getConnector(Room room, InteractionWiredExtra definition) {
-        List<WiredExtraVariableTextConnector> connectors = getConnectors(room, definition);
+        List<WiredExtraVariableTextConnector> connectors = getConnectors(room, definition, 0);
         return connectors.isEmpty() ? null : connectors.get(0);
     }
 
@@ -70,7 +71,7 @@ public final class WiredVariableTextConnectorSupport {
      * when the definition has no connector, so callers can tell "connected" from "named nothing".
      */
     public static Map<Integer, String> mappings(Room room, int definitionItemId) {
-        List<WiredExtraVariableTextConnector> connectors = getConnectors(room, definitionItemId);
+        List<WiredExtraVariableTextConnector> connectors = getConnectors(room, definitionItemId, 0);
         if (connectors.isEmpty()) {
             return Collections.emptyMap();
         }
@@ -95,12 +96,9 @@ public final class WiredVariableTextConnectorSupport {
             return "";
         }
 
-        for (WiredExtraVariableTextConnector connector : getConnectors(room, definitionItemId)) {
-            Map<Integer, String> mappings = connector.getMappings();
-            if (mappings.containsKey(value)) {
-                String mappedValue = mappings.get(value);
-                return mappedValue != null ? preserveSpaces(mappedValue) : "";
-            }
+        for (WiredExtraVariableTextConnector connector : getConnectors(room, definitionItemId, 0)) {
+            String resolved = connector.resolveText(value);
+            if (!resolved.equals(String.valueOf(value))) return resolved;
         }
 
         return String.valueOf(value);
@@ -113,7 +111,7 @@ public final class WiredVariableTextConnectorSupport {
 
         String normalizedText = normalizePreservedSpaces(text);
 
-        for (WiredExtraVariableTextConnector connector : getConnectors(room, definitionItemId)) {
+        for (WiredExtraVariableTextConnector connector : getConnectors(room, definitionItemId, 0)) {
             Integer mappedValue = connector.resolveValue(normalizedText);
             if (mappedValue != null) {
                 return mappedValue;
@@ -123,8 +121,55 @@ public final class WiredVariableTextConnectorSupport {
         return null;
     }
 
-    private static String preserveSpaces(String value) {
-        return value.replace(" ", PRESERVED_SPACE);
+    public static String toArrayText(Room room, int definitionItemId, int fieldId, Long value) {
+        if (value == null) return "";
+        for (WiredExtraVariableTextConnector connector : getConnectors(room, definitionItemId, fieldId)) {
+            String resolved = connector.resolveText(value.longValue());
+            if (!resolved.equals(String.valueOf(value))) return resolved;
+        }
+        return String.valueOf(value);
+    }
+
+    public static Long toArrayValue(Room room, int definitionItemId, int fieldId, String text) {
+        if (text == null) return null;
+        String normalizedText = normalizePreservedSpaces(text);
+        for (WiredExtraVariableTextConnector connector : getConnectors(room, definitionItemId, fieldId)) {
+            Long value = connector.resolveLongValue(normalizedText);
+            if (value != null) return value;
+        }
+        return null;
+    }
+
+    public static WiredExtraVariableTextConnector getConnector(
+            Room room, InteractionWiredExtra definition, int fieldId) {
+        List<WiredExtraVariableTextConnector> connectors = getConnectors(room, definition, fieldId);
+        return connectors.isEmpty() ? null : connectors.get(0);
+    }
+
+    public static WiredExtraVariableTextConnector getConnector(Room room, int definitionItemId, int fieldId) {
+        List<WiredExtraVariableTextConnector> connectors = getConnectors(room, definitionItemId, fieldId);
+        return connectors.isEmpty() ? null : connectors.get(0);
+    }
+
+    public static List<WiredExtraVariableTextConnector> getConnectors(Room room, int definitionItemId, int fieldId) {
+        if (room == null || room.getRoomSpecialTypes() == null || definitionItemId <= 0) {
+            return Collections.emptyList();
+        }
+        InteractionWiredExtra extra = room.getRoomSpecialTypes().getExtra(definitionItemId);
+        return getConnectors(room, extra, fieldId);
+    }
+
+    public static List<WiredExtraVariableTextConnector> getConnectors(
+            Room room, InteractionWiredExtra definition, int fieldId) {
+        List<WiredExtraVariableTextConnector> connectors = getConnectors(room, definition);
+        if (connectors.isEmpty()) return connectors;
+        List<WiredExtraVariableTextConnector> matching = new ArrayList<>();
+        for (WiredExtraVariableTextConnector connector : connectors) {
+            if (definition instanceof WiredArrayVariableDefinition arrayDefinition
+                    ? connector.appliesToField(arrayDefinition, fieldId)
+                    : connector.appliesToField(fieldId)) matching.add(connector);
+        }
+        return matching;
     }
 
     private static String normalizePreservedSpaces(String value) {
