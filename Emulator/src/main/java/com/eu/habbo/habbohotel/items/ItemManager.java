@@ -932,13 +932,22 @@ public class ItemManager {
         this.interactionsList.add(
                 new ItemInteraction("wf_xtra_var_text_connector", WiredExtraVariableTextConnector.class));
         // Variable fx: what a variable box's values look like over the avatars and furni that hold them.
+        // The canonical keys are the ones the official furniture ships under, so hotels that import it
+        // get working boxes; the wf_xtra_var_fx_* spellings this build first used stay as aliases.
+        this.interactionsList.add(new ItemInteraction("wf_xtra_varfx_hp", WiredExtraVariableFxHealthPoints.class));
         this.interactionsList.add(new ItemInteraction("wf_xtra_var_fx_health", WiredExtraVariableFxHealthPoints.class));
+        this.interactionsList.add(new ItemInteraction("wf_xtra_varfx_prog", WiredExtraVariableFxProgressBar.class));
         this.interactionsList.add(
                 new ItemInteraction("wf_xtra_var_fx_progress", WiredExtraVariableFxProgressBar.class));
         this.interactionsList.add(
+                new ItemInteraction("wf_xtra_varfx_levelling", WiredExtraVariableFxLevellingProgress.class));
+        this.interactionsList.add(
                 new ItemInteraction("wf_xtra_var_fx_level", WiredExtraVariableFxLevellingProgress.class));
+        this.interactionsList.add(new ItemInteraction("wf_xtra_varfx_status", WiredExtraVariableFxStatusBar.class));
         this.interactionsList.add(new ItemInteraction("wf_xtra_var_fx_status", WiredExtraVariableFxStatusBar.class));
+        this.interactionsList.add(new ItemInteraction("wf_xtra_varfx_boss", WiredExtraVariableFxBossBar.class));
         this.interactionsList.add(new ItemInteraction("wf_xtra_var_fx_boss", WiredExtraVariableFxBossBar.class));
+        this.interactionsList.add(new ItemInteraction("wf_xtra_varfx_number", WiredExtraVariableFxNumberDisplay.class));
         this.interactionsList.add(
                 new ItemInteraction("wf_xtra_var_fx_number", WiredExtraVariableFxNumberDisplay.class));
         this.interactionsList.add(
