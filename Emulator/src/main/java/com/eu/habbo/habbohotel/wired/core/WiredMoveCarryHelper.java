@@ -7,6 +7,7 @@ import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraMoveCarr
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraMoveNoAnimation;
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraMovePhysics;
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraMovementCurve;
+import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraProjectile;
 import com.eu.habbo.habbohotel.rooms.FurnitureMovementError;
 import com.eu.habbo.habbohotel.rooms.Room;
 import com.eu.habbo.habbohotel.rooms.RoomTile;
@@ -191,6 +192,8 @@ public final class WiredMoveCarryHelper {
         if (room == null || movingItem == null || targetTile == null) {
             return FurnitureMovementError.INVALID_MOVE;
         }
+
+        rotation = resolveProjectileRotation(room, stackItem, movingItem, targetTile, rotation);
 
         if (!hasMovementBehaviorExtra(room, stackItem)) {
             return moveFurniLegacy(room, movingItem, targetTile, rotation, z, actor, sendUpdates);
@@ -760,6 +763,23 @@ public final class WiredMoveCarryHelper {
         if (removeEmpty && followers.isEmpty()) {
             ACTIVE_USER_FOLLOWERS.remove(roomUnitId, followers);
         }
+    }
+
+    static int resolveProjectileRotation(
+            Room room, HabboItem stackItem, HabboItem movingItem, RoomTile targetTile, int rotation) {
+        Collection<InteractionWiredExtra> extras = getMovementExtras(room, stackItem);
+        if (extras == null) {
+            return rotation;
+        }
+
+        for (InteractionWiredExtra extra : extras) {
+            if (extra instanceof WiredExtraProjectile projectile && projectile.appliesTo(movingItem)) {
+                return projectile.resolveRotation(
+                        movingItem.getX(), movingItem.getY(), targetTile.x, targetTile.y, rotation);
+            }
+        }
+
+        return rotation;
     }
 
     private static boolean hasMovementBehaviorExtra(Room room, HabboItem stackItem) {

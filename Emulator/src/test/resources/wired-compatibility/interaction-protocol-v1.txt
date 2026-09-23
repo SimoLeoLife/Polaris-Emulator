@@ -392,6 +392,7 @@ INTERACTION 386 wf_xtra_var_time_util=WiredExtraTimeUtilities
 INTERACTION 387 wf_xtra_var_web_api=WiredExtraVariableWebApi
 INTERACTION 388 wf_highscore=InteractionWiredHighscore
 INTERACTION 389 wf_act_change_opacity=WiredEffectChangeOpacity
+INTERACTION 390 wf_xtra_rotate_to_dir=WiredExtraProjectile
 
 LAYOUT EFFECT 000 TOGGLE_STATE=0
 LAYOUT EFFECT 001 RESET_TIMERS=1

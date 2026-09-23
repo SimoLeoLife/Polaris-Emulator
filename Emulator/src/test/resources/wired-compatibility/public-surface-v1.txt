@@ -3816,6 +3816,27 @@ METHOD public com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraO
 METHOD public com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraOrEval#saveData(com.eu.habbo.habbohotel.items.interactions.wired.WiredSettings,com.eu.habbo.habbohotel.gameclients.GameClient):boolean throws -
 METHOD public com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraOrEval#serializeWiredData(com.eu.habbo.messages.ServerMessage,com.eu.habbo.habbohotel.rooms.Room):void throws -
 
+TYPE public com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraProjectile extends com.eu.habbo.habbohotel.items.interactions.InteractionWiredExtra
+FIELD public static final com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraProjectile#CODE:int
+FIELD public static final com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraProjectile#PARAM_COUNT:int
+FIELD public static final com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraProjectile#PARAM_DIRECTIONAL_SYSTEM:int
+FIELD public static final com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraProjectile#PARAM_ROTATE:int
+FIELD public static final com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraProjectile#PARAM_ROTATION_OFFSET:int
+CONSTRUCTOR public com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraProjectile(int,int,com.eu.habbo.habbohotel.items.Item,java.lang.String,int,int) throws -
+CONSTRUCTOR public com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraProjectile(java.sql.ResultSet,com.eu.habbo.habbohotel.items.Item) throws java.sql.SQLException
+METHOD public com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraProjectile#appliesTo(com.eu.habbo.habbohotel.users.HabboItem):boolean throws -
+METHOD public com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraProjectile#execute(com.eu.habbo.habbohotel.rooms.RoomUnit,com.eu.habbo.habbohotel.rooms.Room,java.lang.Object[]):boolean throws -
+METHOD public com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraProjectile#getItems(-):java.util.Set<com.eu.habbo.habbohotel.users.HabboItem> throws -
+METHOD public com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraProjectile#getParams(-):int[] throws -
+METHOD public com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraProjectile#getWiredData(-):java.lang.String throws -
+METHOD public com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraProjectile#hasConfiguration(-):boolean throws -
+METHOD public com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraProjectile#loadWiredData(java.sql.ResultSet,com.eu.habbo.habbohotel.rooms.Room):void throws java.sql.SQLException
+METHOD public com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraProjectile#onPickUp(-):void throws -
+METHOD public com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraProjectile#onWalk(com.eu.habbo.habbohotel.rooms.RoomUnit,com.eu.habbo.habbohotel.rooms.Room,java.lang.Object[]):void throws -
+METHOD public com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraProjectile#resolveRotation(int,int,int,int,int):int throws -
+METHOD public com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraProjectile#saveData(com.eu.habbo.habbohotel.items.interactions.wired.WiredSettings,com.eu.habbo.habbohotel.gameclients.GameClient):boolean throws -
+METHOD public com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraProjectile#serializeWiredData(com.eu.habbo.messages.ServerMessage,com.eu.habbo.habbohotel.rooms.Room):void throws -
+
 TYPE public com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraQuest extends com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraQuestBase
 FIELD public static final com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraQuest#CODE:int
 FIELD public static final com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraQuest#SUBVARIABLE_COUNT:int
@@ -7051,6 +7072,23 @@ METHOD public com.eu.habbo.habbohotel.wired.core.WiredMovementPhysics#isBlocking
 METHOD public com.eu.habbo.habbohotel.wired.core.WiredMovementPhysics#isKeepAltitude(-):boolean throws -
 METHOD public com.eu.habbo.habbohotel.wired.core.WiredMovementPhysics#shouldIgnoreFurni(com.eu.habbo.habbohotel.users.HabboItem):boolean throws -
 METHOD public com.eu.habbo.habbohotel.wired.core.WiredMovementPhysics#shouldIgnoreUser(com.eu.habbo.habbohotel.rooms.RoomUnit):boolean throws -
+
+TYPE public final com.eu.habbo.habbohotel.wired.core.WiredProjectileDirections extends java.lang.Object
+FIELD public static final com.eu.habbo.habbohotel.wired.core.WiredProjectileDirections#EAST:int
+FIELD public static final com.eu.habbo.habbohotel.wired.core.WiredProjectileDirections#EIGHT_DIFFUSE:int
+FIELD public static final com.eu.habbo.habbohotel.wired.core.WiredProjectileDirections#EIGHT_STRAIGHT:int
+FIELD public static final com.eu.habbo.habbohotel.wired.core.WiredProjectileDirections#FOUR_PREFER_HORIZONTAL:int
+FIELD public static final com.eu.habbo.habbohotel.wired.core.WiredProjectileDirections#FOUR_PREFER_VERTICAL:int
+FIELD public static final com.eu.habbo.habbohotel.wired.core.WiredProjectileDirections#NORTH:int
+FIELD public static final com.eu.habbo.habbohotel.wired.core.WiredProjectileDirections#NORTH_EAST:int
+FIELD public static final com.eu.habbo.habbohotel.wired.core.WiredProjectileDirections#NORTH_WEST:int
+FIELD public static final com.eu.habbo.habbohotel.wired.core.WiredProjectileDirections#SOUTH:int
+FIELD public static final com.eu.habbo.habbohotel.wired.core.WiredProjectileDirections#SOUTH_EAST:int
+FIELD public static final com.eu.habbo.habbohotel.wired.core.WiredProjectileDirections#SOUTH_WEST:int
+FIELD public static final com.eu.habbo.habbohotel.wired.core.WiredProjectileDirections#WEST:int
+METHOD public static com.eu.habbo.habbohotel.wired.core.WiredProjectileDirections#normalizeSystem(int):int throws -
+METHOD public static com.eu.habbo.habbohotel.wired.core.WiredProjectileDirections#resolve(int,int,int):int throws -
+METHOD public static com.eu.habbo.habbohotel.wired.core.WiredProjectileDirections#rotate(int,int):int throws -
 
 TYPE public final com.eu.habbo.habbohotel.wired.core.WiredRoomDiagnostics extends java.lang.Object
 CONSTRUCTOR public com.eu.habbo.habbohotel.wired.core.WiredRoomDiagnostics(int,int,int,int,int,int,int) throws -

@@ -341,6 +341,7 @@ import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraMoveNoAn
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraMovePhysics;
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraMovementCurve;
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraOrEval;
+import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraProjectile;
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraQuest;
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraQuestChain;
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraRandom;
@@ -936,9 +937,6 @@ public class ItemManager {
                 new ItemInteraction("wf_xtra_text_input_variable", WiredExtraTextInputVariable.class));
         this.interactionsList.add(
                 new ItemInteraction("wf_xtra_var_text_connector", WiredExtraVariableTextConnector.class));
-        // Variable fx: what a variable box's values look like over the avatars and furni that hold them.
-        // The canonical keys are the ones the official furniture ships under, so hotels that import it
-        // get working boxes; the wf_xtra_var_fx_* spellings this build first used stay as aliases.
         this.interactionsList.add(new ItemInteraction("wf_xtra_varfx_hp", WiredExtraVariableFxHealthPoints.class));
         this.interactionsList.add(new ItemInteraction("wf_xtra_var_fx_health", WiredExtraVariableFxHealthPoints.class));
         this.interactionsList.add(new ItemInteraction("wf_xtra_varfx_prog", WiredExtraVariableFxProgressBar.class));
@@ -1093,6 +1091,9 @@ public class ItemManager {
 
         this.interactionsList.add(new ItemInteraction("wf_highscore", InteractionWiredHighscore.class));
         this.interactionsList.add(new ItemInteraction("wf_act_change_opacity", WiredEffectChangeOpacity.class));
+        // Last among the wired ones so no registered wired interaction changes position.
+        // Habbo sells the projectile add-on under this name; it turns what the stack moves to face its flight.
+        this.interactionsList.add(new ItemInteraction("wf_xtra_rotate_to_dir", WiredExtraProjectile.class));
 
         this.interactionsList.add(new ItemInteraction("battlebanzai_tile", InteractionBattleBanzaiTile.class));
         this.interactionsList.add(
