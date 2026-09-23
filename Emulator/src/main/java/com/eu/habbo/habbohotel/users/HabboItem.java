@@ -79,6 +79,8 @@ public abstract class HabboItem implements Runnable, IEventTriggers {
     private boolean allowUnderpass = false;
     /** Unix timestamp the rent period ends at, {@link RentableFurniture#NEVER} for furni owned outright. */
     private int expiresTimestamp = RentableFurniture.NEVER;
+    /** The room's tile index while this furni is in a room; told about every move. */
+    private volatile ItemFootprintListener footprintListener;
 
     public HabboItem(ResultSet set, Item baseItem) throws SQLException {
         this.id = set.getInt("id");
@@ -254,6 +256,7 @@ public abstract class HabboItem implements Runnable, IEventTriggers {
 
     public void setX(short x) {
         this.x = x;
+        this.notifyFootprintChanged();
     }
 
     public short getY() {
@@ -262,6 +265,7 @@ public abstract class HabboItem implements Runnable, IEventTriggers {
 
     public void setY(short y) {
         this.y = y;
+        this.notifyFootprintChanged();
     }
 
     public double getZ() {
@@ -279,6 +283,25 @@ public abstract class HabboItem implements Runnable, IEventTriggers {
 
     public void setRotation(int rotation) {
         this.rotation = (byte) (rotation % 8);
+        this.notifyFootprintChanged();
+    }
+
+    public void setFootprintListener(ItemFootprintListener listener) {
+        this.footprintListener = listener;
+    }
+
+    /** Detaches the listener only if it is still this one, so a newer room keeps its own. */
+    public void clearFootprintListener(ItemFootprintListener listener) {
+        if (this.footprintListener == listener) {
+            this.footprintListener = null;
+        }
+    }
+
+    private void notifyFootprintChanged() {
+        ItemFootprintListener listener = this.footprintListener;
+        if (listener != null) {
+            listener.onFootprintChanged(this);
+        }
     }
 
     public String getExtradata() {
