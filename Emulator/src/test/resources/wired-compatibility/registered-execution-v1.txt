@@ -110,7 +110,7 @@ com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectChangeOpacit
 com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectChangeVariableValue | EFFECT | type=CHANGE_VAR_VAL | actor=true | execute=OK
 com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectClickSettings | EFFECT | type=CLICK_SETTINGS | actor=true | execute=OK
 com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectControlClock | EFFECT | type=CONTROL_CLOCK | actor=false | execute=OK
-com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectForwardUserToRoom | EFFECT | type=EFFECT_ID | actor=true | execute=OK
+com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectForwardUserToRoom | EFFECT | type=TELEPORT_TO_ROOM | actor=true | execute=OK
 com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectFreeze | EFFECT | type=FREEZE | actor=true | execute=OK
 com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectFurniToFurni | EFFECT | type=FURNI_TO_FURNI | actor=false | execute=OK
 com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectFurniToUser | EFFECT | type=FURNI_TO_USER | actor=true | execute=OK
@@ -161,6 +161,8 @@ com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectOpenHabboPag
 com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectOverrideHeight | EFFECT | type=OVERRIDE_HEIGHT | actor=false | execute=OK
 com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectPlaceFurni | EFFECT | type=PLACE_FURNI | actor=false | execute=OK
 com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectPlayYoutube | EFFECT | type=PLAY_YOUTUBE | actor=false | execute=OK
+com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectProgressAchievement | EFFECT | type=PROGRESS_ACHIEVEMENT | actor=true | execute=OK
+com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectProgressRewardTrack | EFFECT | type=PROGRESS_REWARD_TRACK | actor=true | execute=OK
 com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectQuickBopper | EFFECT | type=QUICK_BOPPER | actor=false | execute=OK
 com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectRelativeMove | EFFECT | type=RELATIVE_MOVE | actor=false | execute=OK
 com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectRemoveBadge | EFFECT | type=EFFECT_BADGE | actor=true | execute=OK
@@ -168,6 +170,7 @@ com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectRemoveFurni 
 com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectRemoveTag | EFFECT | type=EFFECT_TAG | actor=true | execute=OK
 com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectRemoveVariable | EFFECT | type=REMOVE_VAR | actor=false | execute=OK
 com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectResetHighscores | EFFECT | type=RESET_TIMERS | actor=false | execute=OK
+com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectResetRewardTrack | EFFECT | type=RESET_REWARD_TRACK | actor=true | execute=OK
 com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectResetTimers | EFFECT | type=RESET_TIMERS | actor=false | execute=OK
 com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectRollDice | EFFECT | type=TOGGLE_STATE | actor=false | execute=OK
 com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectSayCommand | EFFECT | type=EFFECT_TEXT | actor=true | execute=OK
@@ -185,9 +188,11 @@ com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectUnfreeze | E
 com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectUserToFurni | EFFECT | type=USER_TO_FURNI | actor=true | execute=OK
 com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectWalkToFurni | EFFECT | type=WALK_TO_FURNI | actor=true | execute=OK
 com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectWhisper | EFFECT | type=SHOW_MESSAGE | actor=true | execute=OK
+com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraAchievementEnabler | EXTRA | configured=true | execute=false
 com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraAnimationTime | EXTRA | configured=true | execute=false
 com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraArrayCaptureVariable | EXTRA | configured=true | execute=false
 com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraContextVariable | EXTRA | configured=true | execute=false
+com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraDailyTask | EXTRA | configured=true | execute=false
 com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraExecuteInOrder | EXTRA | configured=true | execute=false
 com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraExecutionLimit | EXTRA | configured=true | execute=false
 com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraFilterFurni | EXTRA | configured=true | execute=false
@@ -207,6 +212,7 @@ com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraRandom | EXTRA 
 com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraRoomVariable | EXTRA | configured=true | execute=false
 com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraTextInputVariable | EXTRA | configured=true | execute=false
 com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraTextOutputFurniName | EXTRA | configured=true | execute=false
+com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraTextOutputGlobal | EXTRA | configured=true | execute=false
 com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraTextOutputUsername | EXTRA | configured=true | execute=false
 com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraTextOutputVariable | EXTRA | configured=true | execute=false
 com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraTimeUtilities | EXTRA | configured=true | execute=false

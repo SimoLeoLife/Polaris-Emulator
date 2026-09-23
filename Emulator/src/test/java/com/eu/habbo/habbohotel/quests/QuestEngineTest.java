@@ -236,6 +236,48 @@ class QuestEngineTest {
     }
 
     @Test
+    void aTaskPutBackToZeroNeverPaysItsLevelsAgain() {
+        RewardTrackManager manager = new RewardTrackManager(false) {};
+        RewardTrack track = new RewardTrack("season_1", "blue", 1, 0, 0, false, 1, 0, 0, 0);
+        RewardTrack.Task talk = new RewardTrack.Task("talk", "chat_with_someone", "", false, 1);
+        talk.addLevel(new RewardTrack.Level(2, 10, false));
+        track.addTask(talk);
+        manager.register(track);
+        Habbo habbo = habbo(7, false);
+
+        manager.progress(habbo, QuestGoalType.TALK_IN_ROOM, 2);
+        assertEquals(10, manager.stateFor(habbo, track).getPoints());
+
+        manager.resetTasks(habbo, track, List.of(talk));
+        assertEquals(0, manager.stateFor(habbo, track).progressOf("talk"));
+        assertEquals(2, manager.stateFor(habbo, track).peakOf("talk"));
+
+        manager.progress(habbo, QuestGoalType.TALK_IN_ROOM, 2);
+        assertEquals(10, manager.stateFor(habbo, track).getPoints(), "chatting back up pays nothing twice");
+    }
+
+    @Test
+    void aWiredTaskIsNeverMovedByPlay() {
+        RewardTrackManager manager = new RewardTrackManager(false) {};
+        RewardTrack track = new RewardTrack("season_1", "blue", 1, 0, 0, false, 1, 0, 0, 0);
+        RewardTrack.Task games = new RewardTrack.Task("games", "wired", "", false, 1);
+        games.addLevel(new RewardTrack.Level(1, 10, false));
+        track.addTask(games);
+        manager.register(track);
+        Habbo habbo = habbo(7, false);
+
+        assertEquals(QuestGoalType.WIRED, games.getGoalType());
+        for (QuestGoalType type : QuestGoalType.values()) {
+            if (type != QuestGoalType.WIRED) {
+                manager.progress(habbo, type, 5);
+            }
+        }
+        assertEquals(0, manager.stateFor(habbo, track).progressOf("games"));
+        assertEquals(1, manager.setTaskProgress(habbo, track, games, 1));
+        assertEquals(10, manager.stateFor(habbo, track).getPoints());
+    }
+
+    @Test
     void staffCanHandOutAndTakeBackPointsButNeverBelowZero() {
         RewardTrackManager manager = new RewardTrackManager(false) {};
         RewardTrack track = new RewardTrack("season_1", "blue", 1, 0, 0, false, 1, 0, 0, 0);

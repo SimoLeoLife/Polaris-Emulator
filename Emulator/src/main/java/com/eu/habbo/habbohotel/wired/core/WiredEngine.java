@@ -116,6 +116,7 @@ public final class WiredEngine {
     private final WiredExecutionGuard executionGuard;
     private final WiredStackExecutor stackExecutor;
     private final WiredStackRepository stackRepository;
+    private final WiredProgressLimiter progressLimiter = new WiredProgressLimiter();
 
     /** Track unseen effect indices per room+tile for round-robin selection */
     private final ConcurrentHashMap<String, Integer> unseenIndices;
@@ -227,6 +228,11 @@ public final class WiredEngine {
 
     public boolean handleEvent(WiredEvent event, boolean negateConditions) {
         return this.eventDispatcher.dispatch(event, negateConditions);
+    }
+
+    /** The hotel-wide allowance of the achievement and reward-track boxes. */
+    public WiredProgressLimiter progressLimiter() {
+        return this.progressLimiter;
     }
 
     /**

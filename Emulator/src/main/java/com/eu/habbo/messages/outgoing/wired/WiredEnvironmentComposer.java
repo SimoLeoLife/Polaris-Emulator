@@ -1,10 +1,13 @@
 package com.eu.habbo.messages.outgoing.wired;
 
+import com.eu.habbo.WiredPlatform;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredEffect;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredTrigger;
 import com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectGiveAchievement;
+import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraAchievementEnabler;
 import com.eu.habbo.habbohotel.items.interactions.wired.triggers.WiredTriggerHabboClicksUser;
 import com.eu.habbo.habbohotel.rooms.Room;
+import com.eu.habbo.habbohotel.wired.core.WiredHotelProgressPolicy;
 import com.eu.habbo.messages.ServerMessage;
 import com.eu.habbo.messages.outgoing.MessageComposer;
 import com.eu.habbo.messages.outgoing.Outgoing;
@@ -18,7 +21,8 @@ import java.util.Set;
  *
  * <p>{@code hasClickUserWired} tells the client to route avatar clicks through the server instead
  * of opening the menu itself; {@code enabledAchievements} lists the achievements the room's wired
- * can hand out, which is what gates the room-tools achievements button.
+ * can hand out, which is what gates the room-tools achievements button: those of the give-achievement
+ * boxes, and those the room's achievement enablers name that the hotel lets wired progress.
  */
 public class WiredEnvironmentComposer extends MessageComposer {
     private final Room room;
@@ -70,6 +74,15 @@ public class WiredEnvironmentComposer extends MessageComposer {
 
                 if (achievement != null && !achievement.isBlank()) {
                     achievements.add(achievement);
+                }
+            }
+
+            WiredHotelProgressPolicy policy = WiredHotelProgressPolicy.achievements(WiredPlatform.configuration());
+            if (policy.enabled()) {
+                for (String achievement : WiredExtraAchievementEnabler.declaredAchievements(room)) {
+                    if (policy.allows(achievement)) {
+                        achievements.add(achievement);
+                    }
                 }
             }
         }

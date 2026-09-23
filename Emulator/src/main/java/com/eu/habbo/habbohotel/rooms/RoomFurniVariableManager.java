@@ -274,9 +274,7 @@ public class RoomFurniVariableManager {
                 WiredVariableLevelSystemSupport.resolveDerivedDefinition(
                         this.room, WiredVariableLevelSystemSupport.TARGET_FURNI, definitionItemId);
         if (derivedDefinition != null) {
-            Integer baseValue = this.getRawValue(furniId, derivedDefinition.getBaseDefinitionItemId());
-            Integer derivedValue = WiredVariableLevelSystemSupport.getDerivedValue(
-                    derivedDefinition.getLevelSystem(), derivedDefinition.getSubvariableType(), baseValue);
+            Integer derivedValue = this.getDerivedValue(furniId, derivedDefinition);
             return (derivedValue != null) ? derivedValue : 0;
         }
 
@@ -892,9 +890,19 @@ public class RoomFurniVariableManager {
         return (assignments != null) ? assignments.get(definitionItemId) : null;
     }
 
-    private Integer getRawValue(int furniId, int definitionItemId) {
-        VariableAssignment assignment = this.getRawAssignment(furniId, definitionItemId);
-        return (assignment != null) ? assignment.getValue() : null;
+    private Integer getDerivedValue(int furniId, WiredVariableLevelSystemSupport.DerivedDefinition derivedDefinition) {
+        VariableAssignment base = this.getRawAssignment(furniId, derivedDefinition.getBaseDefinitionItemId());
+        if (base == null) {
+            return null;
+        }
+
+        return WiredVariableLevelSystemSupport.getDerivedValue(
+                this.room,
+                derivedDefinition.getLevelSystem(),
+                derivedDefinition.getSubvariableType(),
+                base.getValue(),
+                base.getCreatedAt(),
+                base.getUpdatedAt());
     }
 
     private void emitVariableChangedEvents(
@@ -918,6 +926,9 @@ public class RoomFurniVariableManager {
                 existsAfter,
                 currentValue);
 
+        VariableAssignment stamps = null;
+        boolean stampsRead = false;
+
         for (WiredVariableDefinitionInfo derivedDefinition : WiredVariableLevelSystemSupport.getDerivedDefinitions(
                 this.room, WiredVariableLevelSystemSupport.TARGET_FURNI, definitionExtra, definitionInfo)) {
             WiredVariableLevelSystemSupport.DerivedDefinition resolvedDefinition =
@@ -928,13 +939,30 @@ public class RoomFurniVariableManager {
                 continue;
             }
 
+            if (!stampsRead) {
+                stamps = this.getRawAssignment(furniId, definitionInfo.getItemId());
+                stampsRead = true;
+            }
+
+            int createdAt = (stamps != null) ? stamps.getCreatedAt() : 0;
+            int updatedAt = (stamps != null) ? stamps.getUpdatedAt() : 0;
             Integer derivedPreviousValue = existedBefore
                     ? WiredVariableLevelSystemSupport.getDerivedValue(
-                            resolvedDefinition.getLevelSystem(), resolvedDefinition.getSubvariableType(), previousValue)
+                            this.room,
+                            resolvedDefinition.getLevelSystem(),
+                            resolvedDefinition.getSubvariableType(),
+                            previousValue,
+                            createdAt,
+                            updatedAt)
                     : null;
             Integer derivedCurrentValue = existsAfter
                     ? WiredVariableLevelSystemSupport.getDerivedValue(
-                            resolvedDefinition.getLevelSystem(), resolvedDefinition.getSubvariableType(), currentValue)
+                            this.room,
+                            resolvedDefinition.getLevelSystem(),
+                            resolvedDefinition.getSubvariableType(),
+                            currentValue,
+                            createdAt,
+                            updatedAt)
                     : null;
 
             this.emitVariableChangedEvent(

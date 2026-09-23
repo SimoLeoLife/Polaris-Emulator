@@ -3,6 +3,7 @@ package com.eu.habbo.habbohotel.wired.core;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredExtra;
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraFurniVariable;
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraRoomVariable;
+import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraTimeUtilities;
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraUserVariable;
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraVariableLevelUpSystem;
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraVariableReference;
@@ -29,6 +30,12 @@ public final class WiredVariableLevelSystemSupport {
     private static final int SYNTHETIC_FURNI_OFFSET = 800_000_000;
     private static final int SYNTHETIC_ROOM_OFFSET = 900_000_000;
     private static final int SYNTHETIC_STRIDE = 16;
+    // Time-utilities sub-variables need ids up to 26, so they get their own ranges.
+    private static final int TIME_USER_OFFSET = 1_500_000_000;
+    private static final int TIME_FURNI_OFFSET = 1_700_000_000;
+    private static final int TIME_ROOM_OFFSET = 1_900_000_000;
+    private static final int TIME_STRIDE = 32;
+    private static final int TIME_MAX_BASE_ID = 200_000_000 / TIME_STRIDE - 1;
 
     private WiredVariableLevelSystemSupport() {}
 
@@ -68,8 +75,33 @@ public final class WiredVariableLevelSystemSupport {
         }
 
         for (InteractionWiredExtra extra : WiredExecutionOrderUtil.sort(extras)) {
+            if (extra instanceof WiredExtraTimeUtilities) {
+                continue;
+            }
+
             if (extra instanceof WiredExtraVariableLevelUpSystem || extra instanceof WiredDerivedVariableBox) {
                 return extra;
+            }
+        }
+
+        return null;
+    }
+
+    /** The time-utilities box on a variable definition's tile, which can sit beside a level-up or quest box. */
+    public static WiredExtraTimeUtilities getTimeUtilities(Room room, InteractionWiredExtra definition) {
+        if (room == null || definition == null || room.getRoomSpecialTypes() == null) {
+            return null;
+        }
+
+        Collection<InteractionWiredExtra> extras =
+                room.getRoomSpecialTypes().getExtras(definition.getX(), definition.getY());
+        if (extras == null || extras.isEmpty()) {
+            return null;
+        }
+
+        for (InteractionWiredExtra extra : WiredExecutionOrderUtil.sort(extras)) {
+            if (extra instanceof WiredExtraTimeUtilities timeUtilities) {
+                return timeUtilities;
             }
         }
 
@@ -98,30 +130,48 @@ public final class WiredVariableLevelSystemSupport {
             int targetType,
             InteractionWiredExtra definitionExtra,
             WiredVariableDefinitionInfo baseDefinition) {
-        if (room == null || definitionExtra == null || baseDefinition == null || !baseDefinition.hasValue()) {
-            return Collections.emptyList();
-        }
-
-        InteractionWiredExtra box = getDerivedBox(room, definitionExtra);
-        if (box == null) {
+        if (room == null || definitionExtra == null || baseDefinition == null) {
             return Collections.emptyList();
         }
 
         List<WiredVariableDefinitionInfo> result = new ArrayList<>();
+        InteractionWiredExtra box = baseDefinition.hasValue() ? getDerivedBox(room, definitionExtra) : null;
 
-        for (int subvariableType : boxSubvariables(box)) {
-            result.add(new WiredVariableDefinitionInfo(
-                    createSyntheticItemId(targetType, baseDefinition.getItemId(), subvariableType),
-                    baseDefinition.getName() + "." + boxSubvariableKey(box, subvariableType),
-                    true,
-                    baseDefinition.getAvailability(),
-                    false,
-                    true));
+        if (box != null) {
+            for (int subvariableType : boxSubvariables(box)) {
+                result.add(createDerivedInfo(
+                        createSyntheticItemId(targetType, baseDefinition.getItemId(), subvariableType),
+                        baseDefinition,
+                        boxSubvariableKey(box, subvariableType)));
+            }
+        }
+
+        WiredExtraTimeUtilities timeUtilities = getTimeUtilities(room, definitionExtra);
+        if (timeUtilities != null
+                && (baseDefinition.hasValue() || timeUtilities.readsTimestamps())
+                && baseDefinition.getItemId() <= TIME_MAX_BASE_ID) {
+            for (int subvariableType : timeUtilities.getSelectedSubvariables()) {
+                result.add(createDerivedInfo(
+                        createTimeItemId(targetType, baseDefinition.getItemId(), subvariableType),
+                        baseDefinition,
+                        timeUtilities.subvariableKey(subvariableType)));
+            }
         }
 
         result.sort(Comparator.comparing(WiredVariableDefinitionInfo::getName, String.CASE_INSENSITIVE_ORDER)
                 .thenComparingInt(WiredVariableDefinitionInfo::getItemId));
         return result;
+    }
+
+    private static WiredVariableDefinitionInfo createDerivedInfo(
+            int syntheticItemId, WiredVariableDefinitionInfo baseDefinition, String key) {
+        return new WiredVariableDefinitionInfo(
+                syntheticItemId,
+                baseDefinition.getName() + "." + key,
+                true,
+                baseDefinition.getAvailability(),
+                false,
+                true);
     }
 
     public static WiredVariableDefinitionInfo getDerivedDefinitionInfo(Room room, int targetType, int syntheticItemId) {
@@ -141,8 +191,17 @@ public final class WiredVariableLevelSystemSupport {
     }
 
     public static DerivedDefinition resolveDerivedDefinition(Room room, int targetType, int syntheticItemId) {
+        if (room == null || room.getRoomSpecialTypes() == null) {
+            return null;
+        }
+
+        DerivedDefinition timeDefinition = resolveTimeDefinition(room, targetType, syntheticItemId);
+        if (timeDefinition != null) {
+            return timeDefinition;
+        }
+
         DecodedSyntheticId decoded = decodeSyntheticId(syntheticItemId);
-        if (decoded == null || decoded.targetType != targetType || room == null || room.getRoomSpecialTypes() == null) {
+        if (decoded == null || decoded.targetType != targetType) {
             return null;
         }
 
@@ -168,6 +227,61 @@ public final class WiredVariableLevelSystemSupport {
                 baseDefinition.getName() + "." + boxSubvariableKey(box, decoded.subvariableType),
                 baseDefinition,
                 box);
+    }
+
+    private static DerivedDefinition resolveTimeDefinition(Room room, int targetType, int syntheticItemId) {
+        int offset = timeOffset(targetType);
+        int localValue = syntheticItemId - offset;
+        if (syntheticItemId < offset || localValue / TIME_STRIDE > TIME_MAX_BASE_ID) {
+            return null;
+        }
+
+        int baseDefinitionItemId = localValue / TIME_STRIDE;
+        int subvariableType = localValue % TIME_STRIDE;
+        if (baseDefinitionItemId <= 0) {
+            return null;
+        }
+
+        InteractionWiredExtra baseExtra = room.getRoomSpecialTypes().getExtra(baseDefinitionItemId);
+        if (!matchesTarget(baseExtra, targetType)) {
+            return null;
+        }
+
+        WiredExtraTimeUtilities timeUtilities = getTimeUtilities(room, baseExtra);
+        if (timeUtilities == null || !timeUtilities.hasSubvariable(subvariableType)) {
+            return null;
+        }
+
+        WiredVariableDefinitionInfo baseDefinition = createBaseDefinitionInfo(room, baseExtra, targetType);
+        if (baseDefinition == null || !(baseDefinition.hasValue() || timeUtilities.readsTimestamps())) {
+            return null;
+        }
+
+        return new DerivedDefinition(
+                syntheticItemId,
+                baseDefinitionItemId,
+                subvariableType,
+                baseDefinition.getName() + "." + timeUtilities.subvariableKey(subvariableType),
+                baseDefinition,
+                timeUtilities);
+    }
+
+    /**
+     * A derived value from the base variable's value and timestamps (unix seconds). Time-utilities boxes read
+     * calendar parts in the room's wired timezone; other boxes only use the value.
+     */
+    public static Integer getDerivedValue(
+            Room room,
+            InteractionWiredExtra box,
+            int subvariableType,
+            Integer baseValue,
+            int createdAt,
+            int updatedAt) {
+        if (box instanceof WiredExtraTimeUtilities timeUtilities) {
+            return timeUtilities.derive(subvariableType, baseValue, createdAt, updatedAt, WiredRoomTime.zoneFor(room));
+        }
+
+        return getDerivedValue(box, subvariableType, baseValue);
     }
 
     public static Integer getDerivedValue(InteractionWiredExtra box, int subvariableType, Integer baseValue) {
@@ -302,6 +416,18 @@ public final class WiredVariableLevelSystemSupport {
                 };
 
         return offset + (baseDefinitionItemId * SYNTHETIC_STRIDE) + (subvariableType + 1);
+    }
+
+    private static int timeOffset(int targetType) {
+        return switch (targetType) {
+            case TARGET_FURNI -> TIME_FURNI_OFFSET;
+            case TARGET_ROOM -> TIME_ROOM_OFFSET;
+            default -> TIME_USER_OFFSET;
+        };
+    }
+
+    private static int createTimeItemId(int targetType, int baseDefinitionItemId, int subvariableType) {
+        return timeOffset(targetType) + (baseDefinitionItemId * TIME_STRIDE) + subvariableType;
     }
 
     private static DecodedSyntheticId decodeSyntheticId(int syntheticItemId) {

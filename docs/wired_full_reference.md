@@ -178,14 +178,20 @@ The wired runtime has multiple safety layers:
 - maximum steps per stack
 - recursion depth protection
 - per-room, per-event-type rate limiting (only for events a stack in the room listens to)
-- temporary room wired ban after abuse (all wired in the room stops, including direct stack calls)
+- timer firings (repeaters, timers, at-time triggers) are not counted toward the per-event-type rate limit and can never ban a room; instead a room runs at most `200` timer firings per second, all repeaters together, and the rest of that second is skipped (logged once as an execution cap)
+- per-player throttle: an event a player raises by their own action (a click, a chat line, a step) is admitted at most `5` times per second per player and event type
+- temporary room wired ban after abuse (all wired in the room stops, including direct stack calls). Only floods that wired causes itself (loops, chains, delayed effects) ban the room; when players push a room over its rate limit, their extra events are dropped instead, so visitors cannot switch a room's wired off
 - delayed queue cap
-- execution budget per room window
+- execution budget per room window: each stack run costs its boxes plus one unit per ten selected furni or users, so a stack that moves or toggles half the room is charged for it
 - deferred event queue cap (`1000` events per drain)
 - call-stacks limits: at most `20` target tiles and `20` stacks per call, and every call consumes `10` units of the room execution budget
 - send-signal limits: at most `250` signals per firing, at most `100` forwarded users or furni per signal, each antenna pulses once per firing
 - signal depth: `wired.signal.max.depth` (default `100`)
 - movement-style hints are batched per movement, so one effect moving many furni sends one packet instead of one per furni
+- moving or saving a wired box refreshes the stack index only; it no longer resets the room's execution budget, delayed counters, recursion depth or room log
+- the stack index is only rebuilt when a wired box moves; toggling, rolling or moving other furni keeps it
+- chat-capture templates (`wf_xtra_text_input_variable`) compile once per template and cannot backtrack exponentially on long lines
+- a selector that reads its reference from the selector source cannot re-run itself recursively
 
 Main defaults from runtime/config:
 
@@ -195,8 +201,8 @@ Main defaults from runtime/config:
 - `wired.abuse.rate.limit.window.ms = 10000`
 - `wired.abuse.ban.duration.ms = 600000` (`0` disables the ban and only logs)
 - `wired.monitor.usage.window.ms = 1000`
-- `wired.monitor.usage.limit = 50000`
-- `wired.monitor.delayed.events.limit = 50000`
+- `wired.monitor.usage.limit = 1000`
+- `wired.monitor.delayed.events.limit = 100`
 
 Client input is also bounded on save: text params are capped (`hotel.wired.message.max_length`), selections are capped (`hotel.wired.furni.selection.count`), delays are capped (`hotel.wired.max_delay`), numeric params are clamped to their documented range, and variable tokens are normalized to `custom:<id>` or `internal:<key>` (anything else is treated as "no variable").
 
@@ -321,6 +327,14 @@ Value-or-variable settings:
 | `wired.api.rate_limit.enabled` | Rate limit the wired API (default on) |
 | `wired.api.rate_limit.limit_for_period` | Wired API calls per period (default `60`) |
 | `wired.api.rate_limit.refresh_period_ms` | Wired API rate-limit period (default `1000`) |
+| `hotel.wired.achievements.enabled` | Let `wf_act_progress_achievement` progress achievements (default off) |
+| `hotel.wired.achievements.allowed` | Achievement names wired may progress, comma separated (default empty: none) |
+| `hotel.wired.achievements.max_per_window` | Progress one user may get per achievement per window, across all rooms (default `50`) |
+| `hotel.wired.achievements.window_seconds` | Length of that window (default `3600`, clamped to 1 s .. 7 days) |
+| `hotel.wired.reward_tracks.enabled` | Let the reward-track boxes progress and reset tracks (default off) |
+| `hotel.wired.reward_tracks.allowed` | Tracks (`track`) or single tasks (`track:task`) wired may move, comma separated (default empty: none) |
+| `hotel.wired.reward_tracks.max_per_window` | Task progress one user may get per track per window, across all rooms (default `50`) |
+| `hotel.wired.reward_tracks.window_seconds` | Length of that window (default `3600`) |
 
 ---
 
@@ -689,7 +703,28 @@ Value-or-variable settings:
 - **Class:** `WiredEffectGiveAchievement`
 - **Behavior:** adds one progress step to the named achievement for every resolved user.
 - **Main settings:** string param = achievement name (trimmed, not empty); int[0] = user source; delay. Dialog type `EFFECT_TEXT` (123).
-- **Notes:** the name is not checked on save; an unknown achievement does nothing at run time. Saving, placing or picking up the box resends the room's `WiredEnvironment` packet, which lists the achievement. No reward-permission gate.
+- **Notes:** the name is not checked on save; an unknown achievement does nothing at run time. Saving, placing or picking up the box resends the room's `WiredEnvironment` packet, which lists the achievement. Saving sits behind the reward-permission gate (`ACC_SUPERWIRED` unless `hotel.wired.reward.require_permission = 0`); boxes saved before keep working.
+
+### `wf_act_progress_achievement`
+
+- **Class:** `WiredEffectProgressAchievement`
+- **Behavior:** Habbo's progress-achievement action. Progresses one achievement for every resolved user: mode 1 adds the amount, mode 0 raises the progress to the amount (only the missing part is added). The work runs on the worker pool, not the wired thread.
+- **Main settings:** string param = achievement name (one name, `[A-Za-z0-9_-]`, up to 64); int params `[mode (1 add / 0 raise to, anything else 1), amount (1..1000000), user source (0, 11, 200 or 201; anything else 0)]`; delay. Dialog type `PROGRESS_ACHIEVEMENT` (150).
+- **Notes:** hotel-wide rewards, so every gate must pass: `hotel.wired.achievements.enabled` on; the name on `hotel.wired.achievements.allowed`; an achievement enabler (`wf_xtra_achievement_enabler`) in the same room names it; the user is still in the room when the worker runs; and the user has allowance left (`max_per_window` per achievement per `window_seconds`, shared by all rooms). At most 50 users per firing. Disabled, archived and off-season achievements do not move (`AchievementManager`). Saving needs the reward permission.
+
+### `wf_act_progress_reward_track`
+
+- **Class:** `WiredEffectProgressRewardTrack`
+- **Behavior:** Habbo's progress-reward-track action. Moves one task of a running reward track for every resolved user: with "add to existing" the amount is added, otherwise the progress becomes the amount (lower is allowed). Task levels pay their points as in play, but a level pays only once: each task keeps its highest count (`users_reward_track_tasks.peak_count`) and only climbing past it pays.
+- **Main settings:** string param = `track id<TAB>task id` (each 1..64 of letters, digits, `_`, `-`, `.`); int params `[add to existing (0/1), amount (1..1000000), user source]`; delay. Dialog type `PROGRESS_REWARD_TRACK` (152).
+- **Notes:** `hotel.wired.reward_tracks.enabled` must be on and the track (`season_1`) or the task (`season_1:games`) listed in `hotel.wired.reward_tracks.allowed`; the user must still be in the room; units above the current progress count against `max_per_window` per track. A premium task does not move for a user without the pass. Tasks with action type `wired` are moved only by this box, never by play. Saving needs the reward permission; the work runs on the worker pool.
+
+### `wf_act_reset_reward_track`
+
+- **Class:** `WiredEffectResetRewardTrack`
+- **Behavior:** Habbo's reset-reward-track action. Puts the resolved users' tasks of a track back to zero: only the tasks the allow-list lets wired move. Points, claimed prizes and the peak counts stay, so a reset never pays a level twice.
+- **Main settings:** string param = track id; int params `[user source]`; delay. Dialog type `RESET_REWARD_TRACK` (153).
+- **Notes:** same switch and allow-list as `wf_act_progress_reward_track`; nothing happens for a track that is not running. Saving needs the reward permission.
 
 ### `wf_act_give_experience`
 
@@ -870,9 +905,9 @@ Value-or-variable settings:
 ### `wf_act_join_team`
 
 - **Class:** `WiredEffectJoinTeam`
-- **Behavior:** puts each resolved user into the chosen team of the chosen game type, creating the game if needed. A user already in a different game type or team is removed from it first.
-- **Main settings:** int params `[team type 0 wired / 1 Banzai / 2 Freeze, team 1-4, user source]` (older two-int form `[team, user source]` means the wired game); delay. Dialog type `JOIN_TEAM` (9).
-- **Notes:** a team outside 1-4 refuses the save.
+- **Behavior:** puts each resolved user into a team of the chosen game type, creating the game if needed. The join mode picks the team: the chosen one, the one with the fewest members, or a random one of the four. A user already in a different game type or team is removed from it first.
+- **Main settings:** int params `[team type 0 wired / 1 Banzai / 2 Freeze, team 1-4, user source, join mode 0 chosen / 1 smallest / 2 random]`. The older forms `[team type, team, user source]` and `[team, user source]` (the wired game) join the chosen team; delay. Dialog type `JOIN_TEAM` (9).
+- **Notes:** a team outside 1-4 refuses the save, even in the smallest and random modes; an unknown join mode saves as chosen. "Smallest" counts the other members of each team, so users are spread in turn; a tie keeps a user in their own team, otherwise red, green, blue, yellow is the order. Random re-rolls on every run, like Habbo's.
 
 ### `wf_act_leave_team`
 
@@ -1432,9 +1467,9 @@ Value-or-variable settings:
 ### `wf_act_forward_user_to_room`
 
 - **Class:** `WiredEffectForwardUserToRoom`
-- **Behavior:** sends each resolved online user to another room. They leave the current room and are forwarded and entered into the target room.
-- **Main settings:** string = the target room id, which must be a positive integer or the save is refused. One int, the user source. Standard delay (no max check in this class).
-- **Notes:** users already in the target room are skipped, and so is a target room that cannot be loaded. A room that is not open (locked or password) only admits users with rights there, or all users when this room's owner has rights there; that case also bypasses the door.
+- **Behavior:** Habbo's "teleport to room". Sends each resolved online user to another room: the room a furni of the furni source leads to, or else the typed room. A room link (a furni with custom values whose `internalLink` is a room id) leads to that room and marks the entry as a room network. A teleporter leads to the room its pair stands in now, and the user arrives on the pair, facing its way, with the entry marked as a teleport and `@room_entry.teleport_id` set to the pair. The typed room is an ordinary door entry. `@room_entry.method` then reads 1 for the door, 2 for a teleport and 3 for a room network.
+- **Main settings:** int params `[user source, furni source]` (the furni source is 100 picked, 0 trigger, 200 selector or 201 signal); string param = the room id, plain digits, which may be empty when furni are picked or come from another source; picked furni must be room links or teleporters (at most the wired furni limit). The delay may be at most `hotel.wired.max_delay`. Dialog type `TELEPORT_TO_ROOM` (138).
+- **Notes:** the first of up to 20 resolved furni that leads somewhere wins; a destination that is this room does nothing. Users are only forwarded: their client asks to enter like a navigator visit, so the doorbell, password, bans, full rooms and hidden rooms decide as they always do, and nobody is sent to a room they are banned from or a hidden room they have no rights in. At most 50 users per run, each user at most once every 2 seconds, and the box itself at most every 500 ms. A teleporter's pair is looked up at most once a second per box and kept for 5 seconds. The arrival is kept for 15 seconds; a user who gets in later, or is let in by the doorbell after that, arrives at the door. Boxes saved before the furni source existed keep their typed room (furni source picked, nothing picked); a stored room id that is not plain digits loads as empty.
 
 ### `wf_act_teleport_to_room`
 
@@ -2585,6 +2620,13 @@ Conventions used in the entries below:
 - **Main settings:** int params `[target, displayType, placeholderType, userSource, furniSource]`. Target: `0` user, `1` furni, `2` context, `3` room. Display: `1` numeric, `2` textual. Type: `1` single, `2` multiple. The string param is `variableToken<TAB>name<TAB>delimiter[<TAB>arrayAddressJson]`. Picked furni are stored for target furni with source 100.
 - **Notes:** the save fails without a valid variable, or with an array address that cannot be reached. Textual display falls back to numeric unless a `wf_xtra_var_text_connector` is attached to the variable (for arrays, to the field). A user target with source 0 or 11 needs an actor.
 
+### `wf_xtra_text_output_global`
+
+- **Class:** `WiredExtraTextOutputGlobal`
+- **Behavior:** a global placeholder (code 2000). It defines a `$(name)` placeholder with a fixed text that every wired text in the room is run through, whichever stack sends it. A stack's own placeholders are applied first, then the room's global ones in item id order (at most 64).
+- **Main settings:** int params `[mode, 0, sourceRoomId]`. Mode `0` uses a typed value, and the string param is `name<TAB>text`. Mode `1` takes the text of a typed global placeholder in another room of the same owner, and the string param is `name<TAB>sourcePlaceholderName`. The name is up to 32 characters (a wrapping `$( )` is stripped) and the text up to 100, without tabs or line breaks. An empty name in mode 1 takes the source's name.
+- **Notes:** the save fails in mode 1 unless the source room belongs to the same owner and holds a typed global placeholder of that name. The editor gets a third tab-separated field with the owner's shared placeholders as JSON, read from the database when the editor opens (at most 100). At firing time a linked placeholder reads its source only when that room is loaded, and otherwise uses the text stored at the last save. Output stays within the usual 16 KB and 512-replacement limits.
+
 ### `wf_xtra_text_input_variable`
 
 - **Class:** `WiredExtraTextInputVariable`
@@ -2694,16 +2736,16 @@ Conventions used in the entries below:
 ### `wf_xtra_mov_curve`
 
 - **Class:** `WiredExtraMovementCurve`
-- **Behavior:** sets the motion curve of this stack's furni moves. Style `7` is Habbo's jump strength: the furni hops to its tile in an arc (100 is one tile high; a negative value dips). Styles `0`-`6` are our easing curves: linear, ease-in, ease-out, ease-in-out, bounce, elastic, drop. A variable strength is read once per firing, not once per moved furni. Move-style hints are batched into one packet per style per firing and sent only to clients that announced the move-style feature. Other clients keep the linear animation.
+- **Behavior:** sets the motion curve of this stack's furni moves. Style `7` is Habbo's jump strength: the furni hops to its tile in an arc (100 is one tile high; a negative value dips). Styles `0`-`6` are our easing curves: linear, ease-in, ease-out, ease-in-out, bounce, elastic, drop. A variable strength is read once per firing, not once per moved furni. The jump also applies to users the stack moves (move user, move/rotate user, user to furni) and to users carried along by a jumping furni. Move-style hints are batched into one packet per style per firing and sent only to clients that announced the move-style feature; avatar jumps only to clients that also announced the trajectory feature. Other clients keep the linear animation.
 - **Main settings:** int params `[curve (0-7; default 7 for a new box), intensity (0-100, default 100, easing only), strength (-1000..1000, default 80), strengthFromVariable (0/1), variableTarget, variableUserSource, variableFurniSource]`. The string param is the variable token. Picked furni are the furni the variable is read from when the furni source is the box's own picks.
 - **Notes:** when the variable cannot be read, the typed strength is used. Old numeric payloads load as a curve id.
 
 ### `wf_xtra_var_time_util`
 
 - **Class:** `WiredExtraTimeUtilities`
-- **Behavior:** stores a time unit for the stack.
-- **Main settings:** int param `[timeUnit]`: `0` ms, `1` seconds (default), `2` minutes, `3` hours. The string param is used when no int is sent.
-- **Notes:** no runtime code reads this unit yet, so it currently has no effect.
+- **Behavior:** placed on the tile of a variable definition, it reads the variable as a point in time and exposes read-only derived sub-variables named `<variable>.<part>`. They can be read in conditions, selectors, placeholders, echoes and as change-variable references. Calendar parts use the room's wired timezone: `millisecond_of_second` (always 0, timestamps are whole seconds), `seconds_of_minute`, `minute_of_hour`, `hour_of_day`, `day_of_week` (1 Monday to 7 Sunday), `day_of_month`, `day_of_year`, `week_of_year` (ISO), `month_of_year`, `year`. Advanced parts count whole units since 1970 (UTC): `millisecond`, `second`, `minute`, `hour`, `day`, `week`, `month`.
+- **Main settings:** int params `[mask, mode]`. Bit `id` of the mask creates a sub-variable: ids 1-10 are the calendar parts in the order above, ids 20-26 the advanced ones. Other bits are dropped. Mode: `0` the value as unix seconds (negative reads as 0), `1` creation time, `2` last update time; anything else becomes `0`. A new box creates nothing.
+- **Notes:** modes 1 and 2 also work on variables without a value; mode 0 needs one. It can share a tile with a level-up or quest box. Values that do not fit an int are clamped, so `millisecond` is capped for any date after late January 1970. A change event fires for a sub-variable when it is created or removed, or, in mode 0, when the value changes it; timestamp changes alone fire none. Sub-variables are only exposed for definitions with an item id below 6,250,000. Old saves (`{timeUnit}` or a plain number) load with nothing selected and keep the unit.
 
 ### `wf_xtra_var_web_api`
 
@@ -2715,9 +2757,23 @@ Conventions used in the entries below:
 ### `wf_xtra_rotate_to_dir`
 
 - **Class:** `WiredExtraProjectile`
-- **Behavior:** a projectile add-on (code 136). When the stack moves one of its furni, it turns the furni to face its direction of travel. At runtime only rotation is applied: param 0 rotate on/off, param 1 directional system, param 10 rotation offset.
-- **Main settings:** 19 int params, clamped on save: `[rotate (0/1, default 1), directionalSystem (0 eight straight, 1 eight diffuse, 2 four prefer vertical, 3 four prefer horizontal), scaleTimeWithDistance, timePerTileIsVariable, timePerTileMs (0-100000), timePerTileVarTarget (0-3), distanceByX, distanceByY, distanceByHeight, speedIncreaseMs (0-100000), rotationOffset (0-7 eighth turns), internalVarMask (0-127), turnShooter, bunnyHop, distanceMode (0 normal / 1 overshoot / 2 fixed), distanceTilesIsVariable, distanceTiles (-64..64), distanceTilesVarTarget (0-3), curveStrength (-1000..1000)]`. Picked furni limit which furni it applies to (none picked = all).
-- **Notes:** the other 16 params are stored and sent back to the editor but have no runtime effect yet. A move with no displacement keeps the rotation from the move effect.
+- **Behavior:** a projectile add-on (code 136). It changes how the stack's moves look for the furni it treats as projectiles (the picked furni, or every furni the stack moves when none are picked):
+  - turns the projectile to face its direction of travel (directional system plus a rotation offset);
+  - bends the flight with the curve strength (sent as the jump style of the move-style hint; a `wf_xtra_mov_curve` in the same stack wins);
+  - lets the animation fly past the target (overshoot, N tiles) or always fly the same distance (fixed: N minus the tiles actually moved; negative falls short). The client lands the furni on its real tile when the animation ends;
+  - scales the animation time with the distance when asked: the distance is the largest measured axis (x and y when none is ticked, height in tiles); each tile takes the time per tile minus the speed increase for every tile already flown (at least 1 ms), a part tile its share; the flight is kept between 50 ms and 60 s. Without scaling the stack's own animation time is used;
+  - turns the shooter (a user source, default the triggering user) to face the flight, once per firing, using the directional system; with bunny hop on, a shooter who has to turn hops on the spot instead (strength 30, 300 ms);
+  - records the flight for the `@projectile.*` furni variables (see below).
+- **Main settings:** 24 int params, clamped on save. The first 19 are Habbo's editor order: `[rotate (0/1, default 1), directionalSystem (0 eight straight, 1 eight diffuse, 2 four prefer vertical, 3 four prefer horizontal), scaleTimeWithDistance, timePerTileIsVariable, timePerTileMs (1-100000, default 500), timePerTileVarTarget, distanceByX, distanceByY, distanceByHeight, speedIncreaseMs (0-100000), rotationOffset (0-7 eighth turns), internalVarMask (0-127), turnShooter, bunnyHop, distanceMode (0 normal / 1 overshoot / 2 fixed), distanceTilesIsVariable, distanceTiles (-64..64), distanceTilesVarTarget, curveStrength (-1000..1000)]`. Then `[timeVarUserSource, timeVarFurniSource, distanceVarUserSource, distanceVarFurniSource, shooterUserSource]`. Variable targets use the shared numbering (0 user, 1 furni, 2 context, 3 room); furni source `101` reads the variable from the picked projectiles. The string param is `timeToken<TAB>distanceToken`.
+- **Variables:** `@projectile.animation.position.x`, `.position.y`, `.position.altitude` (hundredths of a tile), `.is_traveling` (a flag without a value, held only mid-flight), `.tiles_traveled`, `.furni_collisions`, `.user_collisions`. Mask bits 0-6 in that order enable them; a furni never launched holds none. The flight follows the client's animation from the start tile to the target: position and altitude are interpolated, tiles traveled is `floor(progress x (path length - 1))`, and a collision is whatever stood on a path tile (the start tile excluded) when the flight began, counted once the animation reaches it. Each room keeps the last flight per furni (at most 1024, oldest dropped first); a furni leaving the room or the room unloading forgets it.
+- **Notes:** boxes saved before these params were applied carry a time per tile of 0 and only 19 params; they load with the default 500 ms and default sources. A variable nobody holds falls back to the typed time, and leaves the flight as long as the move for the distance. Variables are read once per firing. A move with no displacement keeps the rotation from the move effect.
+
+### `wf_xtra_achievement_enabler`
+
+- **Class:** `WiredExtraAchievementEnabler`
+- **Behavior:** Habbo's achievement enabler add-on (code 151). Names the achievements the room's `wf_act_progress_achievement` boxes may progress. The names it lists that the hotel allows go to visitors in `WiredEnvironment.enabledAchievements` (with the give-achievement boxes' names), which fills the progress box's dropdown and the room-tools achievements button.
+- **Main settings:** string param = names separated by commas, semicolons or white space, at most 2000 characters (a large-payload box); up to 50 distinct names of `[A-Za-z0-9_-]` (1..64), others are dropped. No int params.
+- **Notes:** declares only; nothing is granted unless the hotel allows the name too. Saving needs the reward permission. Saving, placing and picking it up resend `WiredEnvironment` to the room.
 
 ---
 
@@ -2738,6 +2794,13 @@ Variable names are 1-40 characters of `A-Z a-z 0-9 _`, with whitespace turned in
 - **Behavior:** placed on the tile of a step counter, it exposes read-only `current_step` (capped at the total), `total_steps`, `is_complete` and `percent`.
 - **Main settings:** int param `[targetValue]` (the total number of steps), at least 0.
 - **Notes:** steps advance manually, for example by a change-variable effect when a sub-quest completes. It does not read member quests.
+
+### `wf_var_daily_task`
+
+- **Class:** `WiredExtraDailyTask`
+- **Behavior:** a daily task (code 2008). Placed on the tile of a user counter with a value, it makes the counter daily: a value last written before the current day began in the room's wired timezone reads as 0, so every holder starts each day at 0. It exposes the same read-only sub-variables as `wf_var_quest`: `progress`, `target`, `is_complete`, `percent` and `remaining`.
+- **Main settings:** int param `[targetValue]`, at least 0. The string param is the task name, up to 100 characters. When the string holds a tab, only the text after the last tab is kept.
+- **Notes:** nothing runs at midnight. The reset is applied when a value is read or written, using the value's stored update time, so it also holds for users who were away and across restarts, and no variable-changed event fires at the day change. Shared (`wf_var_reference`) readers in other rooms see the stored value. Only user counters are affected, and array variables are not.
 
 ### `wf_var_user`
 
@@ -2922,6 +2985,8 @@ Think about:
 - snapshot restore effects
 
 Movement stacks are where most subtle runtime interactions appear. One effect moving many furni sends one move-style hint per style, not one per furni.
+
+The move-style hint (header 5110) is `int count, int[count] ids, int style, int intensity, int overshootTiles, int kind`. The last two were appended later: a client that stops after the intensity still reads it correctly. `overshootTiles` (-64..64) lets the animation fly past its target; `kind` 0 names floor furni and 1 names room units (avatar jumps). Kind 1 is sent only to clients announcing wired feature bit 4 (trajectory) next to bit 2 (move style). The hint for a user moved by an effect is sent right before that user's movement packet; hints for furni and carried users go out with the firing's batch.
 
 ### 10.3 If the stack uses variables
 

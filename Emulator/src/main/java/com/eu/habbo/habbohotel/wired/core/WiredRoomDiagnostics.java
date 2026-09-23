@@ -452,6 +452,12 @@ public final class WiredRoomDiagnostics {
         }
     }
 
+    /** Timer firings over the room's per-second cap were dropped; logged like any execution cap. */
+    void recordTimerCap(long now, String reason) {
+        rollWindowIfNeeded(now);
+        record(Type.EXECUTION_CAP, now, reason, "timers", 0);
+    }
+
     public void recordKilled(long now, String reason, String sourceLabel, int sourceId) {
         rollWindowIfNeeded(now);
         record(Type.KILLED, now, reason, sourceLabel, sourceId);

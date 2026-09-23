@@ -10,6 +10,7 @@ public final class UserRewardTrackState {
     private int points;
     private boolean premium;
     private final Map<String, Integer> taskProgress = new ConcurrentHashMap<>();
+    private final Map<String, Integer> taskPeaks = new ConcurrentHashMap<>();
     private final Set<String> claimedPrizes = ConcurrentHashMap.newKeySet();
 
     public UserRewardTrackState(String trackId, int points, boolean premium) {
@@ -43,7 +44,18 @@ public final class UserRewardTrackState {
     }
 
     public void setProgress(String taskId, int count) {
-        this.taskProgress.put(taskId, Math.max(0, count));
+        int progress = Math.max(0, count);
+        this.taskProgress.put(taskId, progress);
+        this.taskPeaks.merge(taskId, progress, Math::max);
+    }
+
+    /** The highest count the task ever reached; its levels pay only once, below it nothing pays again. */
+    public int peakOf(String taskId) {
+        return Math.max(this.taskPeaks.getOrDefault(taskId, 0), this.progressOf(taskId));
+    }
+
+    public void setPeak(String taskId, int peak) {
+        this.taskPeaks.merge(taskId, Math.max(0, peak), Math::max);
     }
 
     public boolean isClaimed(String prizeId) {

@@ -742,6 +742,7 @@ public class RoomManager {
                 }
             }
         }
+        PendingRoomEntrySupport.apply(habbo, room, doorLocation == null, System.currentTimeMillis());
 
         habbo.getRoomUnit().setRoomUnitType(RoomUnitType.USER);
         if (room.isBanned(habbo)) {

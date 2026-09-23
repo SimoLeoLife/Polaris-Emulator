@@ -5,6 +5,7 @@ import com.eu.habbo.habbohotel.gameclients.GameClient;
 import com.eu.habbo.habbohotel.items.Item;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredEffect;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredTrigger;
+import com.eu.habbo.habbohotel.items.interactions.wired.WiredRewardPolicy;
 import com.eu.habbo.habbohotel.items.interactions.wired.WiredSettings;
 import com.eu.habbo.habbohotel.rooms.Room;
 import com.eu.habbo.habbohotel.rooms.RoomUnit;
@@ -67,6 +68,11 @@ public class WiredEffectGiveAchievement extends InteractionWiredEffect {
 
     @Override
     public boolean saveData(WiredSettings settings, GameClient gameClient) {
+        // An achievement pays its badge, score and level rewards hotel-wide.
+        if (!WiredRewardPolicy.canConfigure(gameClient)) {
+            return false;
+        }
+
         String nextAchievement = settings.getStringParam();
         if (nextAchievement != null) {
             nextAchievement = nextAchievement.trim();

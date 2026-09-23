@@ -21,7 +21,7 @@ final class WiredFurniRuntimeStatePolicy {
                 || item == null
                 || normalized.isEmpty()
                 || !WiredInternalVariableSupport.canUseFurniReference(normalized)
-                || !WiredInternalVariableSupport.hasFurniValue(item, normalized)) {
+                || !WiredInternalVariableSupport.hasFurniValue(room, item, normalized)) {
             return Result.unsupported();
         }
 

@@ -367,7 +367,7 @@ public abstract class WiredEffectVariableSelectorBase extends InteractionWiredEf
         }
 
         return isInternalVariableToken(this.variableToken)
-                && this.hasFurniInternalVariable(item, getInternalVariableKey(this.variableToken));
+                && this.hasFurniInternalVariable(room, item, getInternalVariableKey(this.variableToken));
     }
 
     private Integer resolveReferenceValue(
@@ -619,8 +619,8 @@ public abstract class WiredEffectVariableSelectorBase extends InteractionWiredEf
         return WiredInternalVariableSupport.hasUserValue(room, roomUnit, key);
     }
 
-    private boolean hasFurniInternalVariable(HabboItem item, String key) {
-        return WiredInternalVariableSupport.hasFurniValue(item, key);
+    private boolean hasFurniInternalVariable(Room room, HabboItem item, String key) {
+        return WiredInternalVariableSupport.hasFurniValue(room, item, key);
     }
 
     private boolean hasUserInternalKey(String key) {

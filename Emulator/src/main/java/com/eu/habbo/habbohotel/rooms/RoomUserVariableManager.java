@@ -7,6 +7,7 @@ import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraVariable
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraVariableReference;
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredVariableReferenceSupport;
 import com.eu.habbo.habbohotel.users.Habbo;
+import com.eu.habbo.habbohotel.wired.core.WiredDailyTaskSupport;
 import com.eu.habbo.habbohotel.wired.core.WiredEvent;
 import com.eu.habbo.habbohotel.wired.core.WiredManager;
 import com.eu.habbo.habbohotel.wired.core.WiredVariableLevelSystemSupport;
@@ -176,8 +177,8 @@ public class RoomUserVariableManager {
         }
 
         boolean overwritten = existingAssignment != null && overrideExisting;
-        boolean valueChanged =
-                existingAssignment == null || !Objects.equals(existingAssignment.getValue(), normalizedValue);
+        boolean valueChanged = existingAssignment == null
+                || !Objects.equals(this.effectiveValue(definitionItemId, existingAssignment), normalizedValue);
         boolean changed = overwritten || valueChanged;
 
         if (existingAssignment == null || overwritten) {
@@ -296,9 +297,9 @@ public class RoomUserVariableManager {
         }
 
         Integer normalizedValue = value;
-        if (Objects.equals(assignment.getValue(), normalizedValue)) {
-            this.emitVariableChangedEvents(
-                    userId, extra, definitionInfo, true, previousValue, true, assignment.getValue());
+        Integer storedValue = this.effectiveValue(definitionItemId, assignment);
+        if (Objects.equals(storedValue, normalizedValue)) {
+            this.emitVariableChangedEvents(userId, extra, definitionInfo, true, previousValue, true, storedValue);
             return false;
         }
 
@@ -335,9 +336,7 @@ public class RoomUserVariableManager {
                 WiredVariableLevelSystemSupport.resolveDerivedDefinition(
                         this.room, WiredVariableLevelSystemSupport.TARGET_USER, definitionItemId);
         if (derivedDefinition != null) {
-            Integer baseValue = this.getRawValue(userId, derivedDefinition.getBaseDefinitionItemId());
-            Integer derivedValue = WiredVariableLevelSystemSupport.getDerivedValue(
-                    derivedDefinition.getLevelSystem(), derivedDefinition.getSubvariableType(), baseValue);
+            Integer derivedValue = this.getDerivedValue(userId, derivedDefinition);
             return (derivedValue != null) ? derivedValue : 0;
         }
 
@@ -358,13 +357,8 @@ public class RoomUserVariableManager {
             return 0;
         }
 
-        VariableAssignment assignment = assignments.get(definitionItemId);
-
-        if (assignment == null || assignment.getValue() == null) {
-            return 0;
-        }
-
-        return assignment.getValue();
+        Integer value = this.effectiveValue(definitionItemId, assignments.get(definitionItemId));
+        return (value != null) ? value : 0;
     }
 
     public int getCreatedAt(int userId, int definitionItemId) {
@@ -574,7 +568,9 @@ public class RoomUserVariableManager {
             VariableAssignment assignment = assignments.remove(definitionItemId);
             if (assignment == null) continue;
 
-            previousValues.put(entry.getKey(), definitionInfo.hasValue() ? assignment.getValue() : null);
+            previousValues.put(
+                    entry.getKey(),
+                    definitionInfo.hasValue() ? this.effectiveValue(definitionItemId, assignment) : null);
             if (assignments.isEmpty()) this.activeAssignmentsByUserId.remove(entry.getKey(), assignments);
         }
 
@@ -728,7 +724,7 @@ public class RoomUserVariableManager {
 
                     assignments.add(new AssignmentEntry(
                             assignmentEntry.getKey(),
-                            assignmentEntry.getValue().getValue(),
+                            this.effectiveValue(assignmentEntry.getKey(), assignmentEntry.getValue()),
                             assignmentEntry.getValue().getCreatedAt(),
                             assignmentEntry.getValue().getUpdatedAt()));
                 }
@@ -1064,9 +1060,32 @@ public class RoomUserVariableManager {
         return (assignments != null) ? assignments.get(definitionItemId) : null;
     }
 
-    private Integer getRawValue(int userId, int definitionItemId) {
-        VariableAssignment assignment = this.getRawAssignment(userId, definitionItemId);
-        return (assignment != null) ? assignment.getValue() : null;
+    private Integer getDerivedValue(int userId, WiredVariableLevelSystemSupport.DerivedDefinition derivedDefinition) {
+        VariableAssignment base = this.getRawAssignment(userId, derivedDefinition.getBaseDefinitionItemId());
+        if (base == null) {
+            return null;
+        }
+
+        return WiredVariableLevelSystemSupport.getDerivedValue(
+                this.room,
+                derivedDefinition.getLevelSystem(),
+                derivedDefinition.getSubvariableType(),
+                this.effectiveValue(derivedDefinition.getBaseDefinitionItemId(), base),
+                base.getCreatedAt(),
+                base.getUpdatedAt());
+    }
+
+    private Integer effectiveValue(int definitionItemId, VariableAssignment assignment) {
+        if (assignment == null) {
+            return null;
+        }
+
+        return WiredDailyTaskSupport.effectiveValue(
+                this.room,
+                this.getDefinitionExtra(definitionItemId),
+                assignment.getValue(),
+                assignment.getUpdatedAt(),
+                this.currentTimestamp.getAsInt());
     }
 
     private void emitVariableChangedEvents(
@@ -1090,6 +1109,9 @@ public class RoomUserVariableManager {
                 existsAfter,
                 currentValue);
 
+        VariableAssignment stamps = null;
+        boolean stampsRead = false;
+
         for (WiredVariableDefinitionInfo derivedDefinition : WiredVariableLevelSystemSupport.getDerivedDefinitions(
                 this.room, WiredVariableLevelSystemSupport.TARGET_USER, definitionExtra, definitionInfo)) {
             WiredVariableLevelSystemSupport.DerivedDefinition resolvedDefinition =
@@ -1100,13 +1122,30 @@ public class RoomUserVariableManager {
                 continue;
             }
 
+            if (!stampsRead) {
+                stamps = this.getRawAssignment(userId, definitionInfo.getItemId());
+                stampsRead = true;
+            }
+
+            int createdAt = (stamps != null) ? stamps.getCreatedAt() : 0;
+            int updatedAt = (stamps != null) ? stamps.getUpdatedAt() : 0;
             Integer derivedPreviousValue = existedBefore
                     ? WiredVariableLevelSystemSupport.getDerivedValue(
-                            resolvedDefinition.getLevelSystem(), resolvedDefinition.getSubvariableType(), previousValue)
+                            this.room,
+                            resolvedDefinition.getLevelSystem(),
+                            resolvedDefinition.getSubvariableType(),
+                            previousValue,
+                            createdAt,
+                            updatedAt)
                     : null;
             Integer derivedCurrentValue = existsAfter
                     ? WiredVariableLevelSystemSupport.getDerivedValue(
-                            resolvedDefinition.getLevelSystem(), resolvedDefinition.getSubvariableType(), currentValue)
+                            this.room,
+                            resolvedDefinition.getLevelSystem(),
+                            resolvedDefinition.getSubvariableType(),
+                            currentValue,
+                            createdAt,
+                            updatedAt)
                     : null;
 
             this.emitVariableChangedEvent(
