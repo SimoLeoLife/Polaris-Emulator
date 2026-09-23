@@ -12,6 +12,7 @@ import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -27,6 +28,9 @@ public final class WiredTextInputCaptureSupport {
     // adjacent placeholders that the adjacency DP path did not already handle,
     // fall back to a literal match instead of an unsafe backtracking pattern.
     private static final int MAX_TEMPLATE_PLACEHOLDERS = 8;
+    private static final int PATTERN_CACHE_MAX = 256;
+    private static final int MAX_CAPTURE_LENGTH = 64;
+    private static final Map<String, TemplatePattern> PATTERN_CACHE = new ConcurrentHashMap<>();
 
     private WiredTextInputCaptureSupport() {}
 
@@ -272,7 +276,10 @@ public final class WiredTextInputCaptureSupport {
                 }
 
                 int minEndIndex = (textIndex < textLength) ? (textIndex + 1) : textIndex;
-                for (int endIndex = minEndIndex; endIndex <= textLength; endIndex++) {
+                // A captured value is a number or a short text entry; bounding its length keeps
+                // this linear in the line instead of trying every substring.
+                int maxEndIndex = Math.min(textLength, textIndex + MAX_CAPTURE_LENGTH);
+                for (int endIndex = minEndIndex; endIndex <= maxEndIndex; endIndex++) {
                     if (reachable[placeholderIndex + 1][endIndex]) {
                         continue;
                     }
@@ -343,8 +350,27 @@ public final class WiredTextInputCaptureSupport {
             return null;
         }
 
+        TemplatePattern cached = PATTERN_CACHE.get(template);
+        if (cached != null) {
+            return cached;
+        }
+
+        TemplatePattern built = compilePattern(template);
+        if (PATTERN_CACHE.size() >= PATTERN_CACHE_MAX) {
+            PATTERN_CACHE.clear();
+        }
+        PATTERN_CACHE.put(template, built);
+        return built;
+    }
+
+    static Pattern templatePattern(String template) {
+        TemplatePattern pattern = buildPattern(template);
+        return (pattern != null) ? pattern.pattern : null;
+    }
+
+    private static TemplatePattern compilePattern(String template) {
         Matcher matcher = PLACEHOLDER_PATTERN.matcher(template);
-        StringBuilder regex = new StringBuilder();
+        List<String> literals = new ArrayList<>();
         List<String> placeholderNames = new ArrayList<>();
         int cursor = 0;
         boolean unsafe = false;
@@ -359,9 +385,7 @@ public final class WiredTextInputCaptureSupport {
                 break;
             }
 
-            regex.append(Pattern.quote(template.substring(cursor, matcher.start())));
-            regex.append(hasPlaceholderAfter(template, matcher.end()) ? "(.+?)" : "(.+)");
-
+            literals.add(template.substring(cursor, matcher.start()));
             String placeholderName =
                     matcher.group(1) != null ? matcher.group(1).trim().toLowerCase() : "";
             placeholderNames.add(placeholderName);
@@ -373,25 +397,28 @@ public final class WiredTextInputCaptureSupport {
             }
         }
 
-        if (unsafe) {
+        if (unsafe || placeholderNames.isEmpty()) {
             // Literal match, no captures — safe and bounded regardless of input.
             return new TemplatePattern(
                     Pattern.compile(Pattern.quote(template), Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE),
                     new ArrayList<>());
         }
 
-        regex.append(Pattern.quote(template.substring(cursor)));
+        literals.add(template.substring(cursor));
 
-        if (placeholderNames.isEmpty()) {
-            regex = new StringBuilder(Pattern.quote(template));
+        // Each value but the last ends at the first following separator, inside an atomic group,
+        // so a line full of separators cannot make the matcher try every split (that took seconds).
+        StringBuilder regex = new StringBuilder(Pattern.quote(literals.get(0)));
+        int last = placeholderNames.size() - 1;
+        for (int index = 0; index < last; index++) {
+            regex.append("(?>(.+?)")
+                    .append(Pattern.quote(literals.get(index + 1)))
+                    .append(')');
         }
+        regex.append("(.+)").append(Pattern.quote(literals.get(last + 1)));
 
         return new TemplatePattern(
                 Pattern.compile(regex.toString(), Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE), placeholderNames);
-    }
-
-    private static boolean hasPlaceholderAfter(String template, int cursor) {
-        return PLACEHOLDER_PATTERN.matcher(template.substring(cursor)).find();
     }
 
     public static void applyToContext(WiredContext ctx, Room room, CaptureResult captureResult) {

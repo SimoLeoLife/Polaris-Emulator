@@ -30,4 +30,10 @@ public class ChestCloseEvent extends MessageHandler {
 
         chest.closeFor(habbo, room);
     }
+
+    @Override
+    public int getRatelimit() {
+        // Closing broadcasts the chest state to the room; alternating open/close must not flood it.
+        return 250;
+    }
 }

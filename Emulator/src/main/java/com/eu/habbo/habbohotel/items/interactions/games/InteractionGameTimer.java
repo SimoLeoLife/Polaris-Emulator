@@ -30,6 +30,8 @@ public class InteractionGameTimer extends HabboItem {
     protected boolean isRunning = false;
     protected boolean isPaused = false;
     protected boolean threadActive = false;
+    /** Bumped when a tick chain starts, so a chain left over from before a pick-up stops. */
+    private int timerChain = 0;
 
     public enum InteractionGameTimerAction {
         START_STOP(1),
@@ -429,6 +431,25 @@ public class InteractionGameTimer extends HabboItem {
             }
 
             this.threadActive = true;
+            this.timerChain++;
+            return true;
+        }
+    }
+
+    public int getTimerChain() {
+        synchronized (this) {
+            return this.timerChain;
+        }
+    }
+
+    /** Frees the tick thread for the chain that owns it; false for a stale chain, which must stop. */
+    public boolean releaseTimerThread(int chain) {
+        synchronized (this) {
+            if (chain != this.timerChain) {
+                return false;
+            }
+
+            this.threadActive = false;
             return true;
         }
     }

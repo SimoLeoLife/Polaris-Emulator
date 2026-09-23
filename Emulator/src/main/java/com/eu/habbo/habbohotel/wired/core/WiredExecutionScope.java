@@ -22,6 +22,11 @@ final class WiredExecutionScope {
         }
     }
 
+    /** Whether a wired effect is running on this thread, so an event raised now comes from wired. */
+    static boolean isExecuting() {
+        return CURRENT.get() != null;
+    }
+
     static void clearForCurrentThread() {
         CURRENT.remove();
     }

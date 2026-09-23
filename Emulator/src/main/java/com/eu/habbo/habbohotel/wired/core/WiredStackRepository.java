@@ -41,8 +41,6 @@ final class WiredStackRepository {
         while (true) {
             SourceCacheKey cacheKey = SourceCacheKey.capture(room, eventType, sourceItemId);
             long epoch = this.publicationEpoch.get();
-            this.removeStaleRoomEntries(cacheKey);
-
             CachedStacks cached = this.sourceStacksByTriggerKey.get(cacheKey);
             if (cached != null) {
                 if (this.canReturn(room, cacheKey, cached, epoch)) {
@@ -50,6 +48,9 @@ final class WiredStackRepository {
                 }
                 continue;
             }
+
+            // The sweep walks every room's entries, so only a cache miss pays for it.
+            this.removeStaleRoomEntries(cacheKey);
 
             List<WiredStack> allStacks = this.index.getStacks(room, eventType);
             List<WiredStack> matching = new ArrayList<>();

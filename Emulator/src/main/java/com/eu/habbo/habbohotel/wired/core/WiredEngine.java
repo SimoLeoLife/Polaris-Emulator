@@ -82,10 +82,10 @@ public final class WiredEngine {
     public static volatile int MONITOR_USAGE_WINDOW_MS = 1000;
 
     /** Monitor execution cap per room window */
-    public static volatile int MONITOR_USAGE_LIMIT = 50000;
+    public static volatile int MONITOR_USAGE_LIMIT = 1000;
 
     /** Maximum delayed events allowed per room at the same time */
-    public static volatile int MONITOR_DELAYED_EVENTS_LIMIT = 50000;
+    public static volatile int MONITOR_DELAYED_EVENTS_LIMIT = 100;
 
     /** Average execution threshold that marks overload */
     public static volatile int MONITOR_OVERLOAD_AVERAGE_MS = 50;
@@ -1080,9 +1080,9 @@ public final class WiredEngine {
      * @param roomId the room ID
      */
     void clearRoomIndexCaches(int roomId) {
-        clearRoomRecursionDepth(roomId);
+        // Not the execution budget, delayed counters or recursion depth either: a stack moving its
+        // own box would otherwise reset them on every firing (and the room log was wiped on save).
         clearRoomSourceStackCache(roomId);
-        clearRoomDiagnostics(roomId);
     }
 
     /**

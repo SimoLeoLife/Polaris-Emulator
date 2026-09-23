@@ -87,9 +87,12 @@ public final class RoomWiredStackIndex implements WiredStackIndex {
                 continue;
             }
 
-            this.removeStaleRoomEntries(key);
-            ConcurrentHashMap<WiredEvent.Type, List<WiredStack>> byType =
-                    this.cache.computeIfAbsent(key, ignored -> new ConcurrentHashMap<>());
+            ConcurrentHashMap<WiredEvent.Type, List<WiredStack>> byType = this.cache.get(key);
+            if (byType == null) {
+                // The sweep walks every room's entries, so it runs once per new generation only.
+                this.removeStaleRoomEntries(key);
+                byType = this.cache.computeIfAbsent(key, ignored -> new ConcurrentHashMap<>());
+            }
             List<WiredStack> result = byType.get(type);
             if (result == null) {
                 List<WiredStack> built = buildStacks(room, type);

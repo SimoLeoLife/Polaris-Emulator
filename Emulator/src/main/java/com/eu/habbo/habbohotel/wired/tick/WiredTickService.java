@@ -36,6 +36,11 @@ public final class WiredTickService {
     public static final int MAX_WORKER_COUNT = 32;
 
     public static final long SLOW_TICKABLE_THRESHOLD_MS = 100L;
+    /** A slow room warns at most this often: at 20 ticks a second it used to flood the log. */
+    private static final long SLOW_WARNING_INTERVAL_MS = 10_000L;
+
+    private static final int MAX_SLOW_WARNING_KEYS = 10_000;
+    private final ConcurrentHashMap<Long, Long> lastSlowWarningMs = new ConcurrentHashMap<>();
     public static final long SLOW_ROOM_THRESHOLD_MS = 50L;
     public static final long SLOW_SHARD_THRESHOLD_MS = 250L;
 
@@ -475,7 +480,7 @@ public final class WiredTickService {
                     processedTickables++;
 
                     long tickableDuration = System.currentTimeMillis() - tickableStart;
-                    if (tickableDuration > SLOW_TICKABLE_THRESHOLD_MS) {
+                    if (tickableDuration > SLOW_TICKABLE_THRESHOLD_MS && shouldWarnSlow(roomId)) {
                         LOGGER.warn(
                                 "Slow wired tickable: shard={}, room={}, tick={}, tickableId={}, class={}, took={}ms",
                                 shardIndex,
@@ -497,7 +502,7 @@ public final class WiredTickService {
             }
 
             long roomDuration = System.currentTimeMillis() - roomStart;
-            if (roomDuration > SLOW_ROOM_THRESHOLD_MS) {
+            if (roomDuration > SLOW_ROOM_THRESHOLD_MS && shouldWarnSlow(roomId)) {
                 LOGGER.warn(
                         "Slow wired room tick: shard={}, room={}, tick={}, tickables={}, took={}ms",
                         shardIndex,
@@ -509,7 +514,7 @@ public final class WiredTickService {
         }
 
         long shardDuration = System.currentTimeMillis() - shardStart;
-        if (shardDuration > SLOW_SHARD_THRESHOLD_MS) {
+        if (shardDuration > SLOW_SHARD_THRESHOLD_MS && shouldWarnSlow(-1L - shardIndex)) {
             LOGGER.warn(
                     "Slow wired shard tick: shard={}, tick={}, rooms={}, tickables={}, took={}ms",
                     shardIndex,
@@ -532,5 +537,18 @@ public final class WiredTickService {
 
     private int getShardIndex(int roomId) {
         return Math.floorMod(roomId, workerCount);
+    }
+
+    private boolean shouldWarnSlow(long key) {
+        long now = System.currentTimeMillis();
+        Long last = this.lastSlowWarningMs.get(key);
+        if (last != null && now - last < SLOW_WARNING_INTERVAL_MS) {
+            return false;
+        }
+        if (this.lastSlowWarningMs.size() >= MAX_SLOW_WARNING_KEYS) {
+            this.lastSlowWarningMs.clear();
+        }
+        this.lastSlowWarningMs.put(key, now);
+        return true;
     }
 }

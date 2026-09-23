@@ -7739,10 +7739,14 @@ METHOD public com.eu.habbo.messages.incoming.wired.WiredArrayInspectionUpdateEve
 
 TYPE public com.eu.habbo.messages.incoming.wired.WiredConditionSaveDataEvent extends com.eu.habbo.messages.incoming.MessageHandler
 CONSTRUCTOR public com.eu.habbo.messages.incoming.wired.WiredConditionSaveDataEvent(-) throws -
+METHOD public com.eu.habbo.messages.incoming.wired.WiredConditionSaveDataEvent#getRatelimit(-):int throws -
+METHOD public com.eu.habbo.messages.incoming.wired.WiredConditionSaveDataEvent#getRatelimitGroup(-):java.lang.String throws -
 METHOD public com.eu.habbo.messages.incoming.wired.WiredConditionSaveDataEvent#handle(-):void throws java.lang.Exception
 
 TYPE public com.eu.habbo.messages.incoming.wired.WiredEffectSaveDataEvent extends com.eu.habbo.messages.incoming.MessageHandler
 CONSTRUCTOR public com.eu.habbo.messages.incoming.wired.WiredEffectSaveDataEvent(-) throws -
+METHOD public com.eu.habbo.messages.incoming.wired.WiredEffectSaveDataEvent#getRatelimit(-):int throws -
+METHOD public com.eu.habbo.messages.incoming.wired.WiredEffectSaveDataEvent#getRatelimitGroup(-):java.lang.String throws -
 METHOD public com.eu.habbo.messages.incoming.wired.WiredEffectSaveDataEvent#handle(-):void throws java.lang.Exception
 
 TYPE public com.eu.habbo.messages.incoming.wired.WiredFeatureCapabilitiesEvent extends com.eu.habbo.messages.incoming.MessageHandler
@@ -7796,6 +7800,8 @@ METHOD public com.eu.habbo.messages.incoming.wired.WiredSaveException#getMessage
 
 TYPE public com.eu.habbo.messages.incoming.wired.WiredTriggerSaveDataEvent extends com.eu.habbo.messages.incoming.MessageHandler
 CONSTRUCTOR public com.eu.habbo.messages.incoming.wired.WiredTriggerSaveDataEvent(-) throws -
+METHOD public com.eu.habbo.messages.incoming.wired.WiredTriggerSaveDataEvent#getRatelimit(-):int throws -
+METHOD public com.eu.habbo.messages.incoming.wired.WiredTriggerSaveDataEvent#getRatelimitGroup(-):java.lang.String throws -
 METHOD public com.eu.habbo.messages.incoming.wired.WiredTriggerSaveDataEvent#handle(-):void throws java.lang.Exception
 
 TYPE public com.eu.habbo.messages.incoming.wired.WiredTriggerSaveException extends java.lang.RuntimeException

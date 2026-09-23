@@ -19,6 +19,12 @@ public class WiredVariableHashesEvent extends MessageHandler {
 
     @Override
     public void handle() throws Exception {
+        Room room = currentRoom();
+
+        if (room == null || !room.canInspectWired(this.client.getHabbo())) {
+            return;
+        }
+
         Map<String, Integer> cachedHashes = new HashMap<>();
         int cachedCount = this.packet.readInt();
 
@@ -26,12 +32,6 @@ public class WiredVariableHashesEvent extends MessageHandler {
             String variableId = this.packet.readString();
             int hash = this.packet.readInt();
             cachedHashes.put(variableId, hash);
-        }
-
-        Room room = currentRoom();
-
-        if (room == null || !room.canInspectWired(this.client.getHabbo())) {
-            return;
         }
 
         List<RoomWiredVariableCatalog.Variable> variables = RoomWiredVariableCatalog.variables(room);
@@ -78,6 +78,6 @@ public class WiredVariableHashesEvent extends MessageHandler {
 
     @Override
     public int getRatelimit() {
-        return 50;
+        return 250;
     }
 }

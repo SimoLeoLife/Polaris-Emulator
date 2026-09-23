@@ -36,7 +36,7 @@ final class RoomItemOperations {
             if (RoomAreaHideSupport.isControllerItem(item)) {
                 RoomAreaHideSupport.sendState(this.room, item);
             }
-            this.room.onFurnitureTopologyChanged();
+            this.room.onFurnitureTopologyChanged(item, true);
         } else if (item.getBaseItem().getType() == FurnitureType.WALL) {
             this.room.sendComposer(new WallItemUpdateComposer(item).compose());
         }
@@ -63,13 +63,15 @@ final class RoomItemOperations {
                 return;
             }
 
-            this.room.updateTiles(this.room
-                    .getLayout()
-                    .getTilesAt(
-                            this.room.currentLayout().getTile(item.getX(), item.getY()),
-                            item.getBaseItem().getWidth(),
-                            item.getBaseItem().getLength(),
-                            item.getRotation()));
+            this.room
+                    .getTileManager()
+                    .refreshTiles(this.room
+                            .getLayout()
+                            .getTilesAt(
+                                    this.room.currentLayout().getTile(item.getX(), item.getY()),
+                                    item.getBaseItem().getWidth(),
+                                    item.getBaseItem().getLength(),
+                                    item.getRotation()));
 
             if (item instanceof InteractionMultiHeight multiHeight) {
                 multiHeight.updateUnitsOnItem(this.room);
@@ -86,7 +88,7 @@ final class RoomItemOperations {
         }
 
         if (item.getBaseItem().getType() == FurnitureType.FLOOR) {
-            this.room.onFurnitureTopologyChanged();
+            this.room.onFurnitureTopologyChanged(item, false);
         }
     }
 }

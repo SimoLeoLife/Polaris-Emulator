@@ -34,7 +34,7 @@ public class WiredVariableHoldersPageEvent extends MessageHandler {
                 room, RoomWiredVariableCatalog.holders(room, variableId), userTypeFilter, sortTypeFilter);
 
         int totalEntries = holders.size();
-        int firstIndex = Math.min((safePage - 1) * safePageSize, totalEntries);
+        int firstIndex = (int) Math.min((long) (safePage - 1) * safePageSize, totalEntries);
         int lastIndex = Math.min(firstIndex + safePageSize, totalEntries);
 
         this.client.sendResponse(new WiredVariableHoldersPageComposer(

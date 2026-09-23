@@ -6,6 +6,7 @@ import java.time.DateTimeException;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -14,6 +15,10 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public final class WiredRoomTime {
     private static final Map<Integer, Long> TIMER_RESETS_MS = new ConcurrentHashMap<>();
+    /** Parsed timezones by the text rooms store; an unknown zone maps to an empty Optional. */
+    private static final Map<String, Optional<ZoneId>> ZONES = new ConcurrentHashMap<>();
+
+    private static final int MAX_CACHED_ZONES = 1_024;
 
     private WiredRoomTime() {}
 
@@ -49,10 +54,22 @@ public final class WiredRoomTime {
             return HotelDateTimeUtil.getZoneId();
         }
 
+        Optional<ZoneId> zone = ZONES.get(timezone);
+        if (zone == null) {
+            zone = parse(timezone);
+            if (ZONES.size() >= MAX_CACHED_ZONES) {
+                ZONES.clear();
+            }
+            ZONES.put(timezone, zone);
+        }
+        return zone.orElseGet(HotelDateTimeUtil::getZoneId);
+    }
+
+    private static Optional<ZoneId> parse(String timezone) {
         try {
-            return ZoneId.of(timezone.trim());
+            return Optional.of(ZoneId.of(timezone.trim()));
         } catch (DateTimeException e) {
-            return HotelDateTimeUtil.getZoneId();
+            return Optional.empty();
         }
     }
 }

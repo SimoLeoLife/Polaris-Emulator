@@ -6,15 +6,20 @@ import com.eu.habbo.habbohotel.users.HabboItem;
 public final class RoomWiredDisableSupport {
     private static final String CONTROLLER_INTERACTION = "wf_conf_wired_disable";
 
-    private RoomWiredDisableSupport() {
-    }
+    private RoomWiredDisableSupport() {}
 
     public static boolean isWiredDisabled(Room room) {
         if (room == null) {
             return false;
         }
 
-        for (HabboItem item : room.getFloorItems()) {
+        // Asked for every wired event, so it reads the indexed controllers, not every floor item.
+        RoomSpecialTypes specialTypes = room.getRoomSpecialTypes();
+        if (specialTypes == null) {
+            return false;
+        }
+
+        for (HabboItem item : specialTypes.getItemsOfType(InteractionWiredDisableControl.class)) {
             if (isActiveController(item)) {
                 return true;
             }

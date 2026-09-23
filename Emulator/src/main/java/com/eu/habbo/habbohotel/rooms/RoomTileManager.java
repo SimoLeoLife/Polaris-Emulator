@@ -38,6 +38,25 @@ public class RoomTileManager {
     }
 
     /**
+     * Recomputes the height and state of tiles whose furni only changed state (a toggle, a gate).
+     * Which furni stand on them did not change, so the tile cache is kept instead of rebuilding it
+     * from every furni in the room, once per tile, on every toggle.
+     */
+    public void refreshTiles(Collection<RoomTile> tiles) {
+        if (tiles == null || tiles.isEmpty()) {
+            return;
+        }
+
+        for (RoomTile tile : tiles) {
+            tile.setStackHeight(this.getStackHeight(tile.x, tile.y, false));
+            tile.setState(this.calculateTileState(tile));
+        }
+
+        this.room.sendComposer(
+                new com.eu.habbo.messages.outgoing.rooms.UpdateStackHeightComposer(this.room, tiles).compose());
+    }
+
+    /**
      * Updates multiple tiles and sends the update to clients.
      */
     public void updateTiles(Collection<RoomTile> tiles) {

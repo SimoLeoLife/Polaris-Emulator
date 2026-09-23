@@ -59,4 +59,15 @@ public class WiredConditionSaveDataEvent extends MessageHandler {
             }
         }
     }
+
+    /** One shared cooldown for every wired save, so alternating box types cannot multiply it. */
+    @Override
+    public int getRatelimit() {
+        return 200;
+    }
+
+    @Override
+    public String getRatelimitGroup() {
+        return "wired.save";
+    }
 }

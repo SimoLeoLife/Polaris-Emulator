@@ -15,16 +15,43 @@ public final class WiredMovementPhysics {
     private final Set<Integer> passThroughFurniIds;
     private final Set<Integer> passThroughUserIds;
     private final Set<Integer> blockingFurniIds;
+    /** The moving furni itself, which never blocks or is passed through; 0 for none. */
+    private final int excludedFurniId;
 
     public WiredMovementPhysics(
             boolean keepAltitude,
             Set<Integer> passThroughFurniIds,
             Set<Integer> passThroughUserIds,
             Set<Integer> blockingFurniIds) {
+        this(
+                keepAltitude,
+                Collections.unmodifiableSet(new HashSet<>(passThroughFurniIds)),
+                Collections.unmodifiableSet(new HashSet<>(passThroughUserIds)),
+                Collections.unmodifiableSet(new HashSet<>(blockingFurniIds)),
+                0);
+    }
+
+    private WiredMovementPhysics(
+            boolean keepAltitude,
+            Set<Integer> passThroughFurniIds,
+            Set<Integer> passThroughUserIds,
+            Set<Integer> blockingFurniIds,
+            int excludedFurniId) {
         this.keepAltitude = keepAltitude;
-        this.passThroughFurniIds = Collections.unmodifiableSet(new HashSet<>(passThroughFurniIds));
-        this.passThroughUserIds = Collections.unmodifiableSet(new HashSet<>(passThroughUserIds));
-        this.blockingFurniIds = Collections.unmodifiableSet(new HashSet<>(blockingFurniIds));
+        this.passThroughFurniIds = passThroughFurniIds;
+        this.passThroughUserIds = passThroughUserIds;
+        this.blockingFurniIds = blockingFurniIds;
+        this.excludedFurniId = excludedFurniId;
+    }
+
+    /** The same physics for moving this furni, sharing the sets instead of copying the room. */
+    WiredMovementPhysics withoutFurni(int itemId) {
+        return new WiredMovementPhysics(
+                this.keepAltitude, this.passThroughFurniIds, this.passThroughUserIds, this.blockingFurniIds, itemId);
+    }
+
+    private boolean hasOtherThanExcluded(Set<Integer> ids) {
+        return ids.size() > 1 || (ids.size() == 1 && !ids.contains(this.excludedFurniId));
     }
 
     public boolean isKeepAltitude() {
@@ -33,23 +60,24 @@ public final class WiredMovementPhysics {
 
     public boolean isActive() {
         return this.keepAltitude
-                || !this.passThroughFurniIds.isEmpty()
+                || hasOtherThanExcluded(this.passThroughFurniIds)
                 || !this.passThroughUserIds.isEmpty()
-                || !this.blockingFurniIds.isEmpty();
+                || hasOtherThanExcluded(this.blockingFurniIds);
     }
 
     public boolean hasBlockingFurni() {
-        return !this.blockingFurniIds.isEmpty();
+        return hasOtherThanExcluded(this.blockingFurniIds);
     }
 
     public boolean shouldIgnoreFurni(HabboItem item) {
         return item != null
+                && item.getId() != this.excludedFurniId
                 && this.passThroughFurniIds.contains(item.getId())
                 && !this.blockingFurniIds.contains(item.getId());
     }
 
     public boolean isBlockingFurni(HabboItem item) {
-        return item != null && this.blockingFurniIds.contains(item.getId());
+        return item != null && item.getId() != this.excludedFurniId && this.blockingFurniIds.contains(item.getId());
     }
 
     public boolean shouldIgnoreUser(RoomUnit roomUnit) {
