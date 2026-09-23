@@ -397,7 +397,7 @@ public class WiredConditionHasVariable extends InteractionWiredCondition {
         }
 
         if (isInternalVariableToken(this.variableToken)) {
-            return this.hasFurniInternalVariable(item, getInternalVariableKey(this.variableToken));
+            return this.hasFurniInternalVariable(room, item, getInternalVariableKey(this.variableToken));
         }
 
         return false;
@@ -442,6 +442,10 @@ public class WiredConditionHasVariable extends InteractionWiredCondition {
 
     protected boolean hasFurniInternalVariable(HabboItem item, String key) {
         return WiredInternalVariableSupport.hasFurniValue(item, key);
+    }
+
+    protected boolean hasFurniInternalVariable(Room room, HabboItem item, String key) {
+        return WiredInternalVariableSupport.hasFurniValue(room, item, key);
     }
 
     protected boolean hasRoomInternalVariable(String key) {

@@ -51,6 +51,7 @@ public class WiredEffectMoveUserTiles extends InteractionWiredEffect {
     public void execute(WiredContext ctx) {
         Room room = ctx.room();
         WiredMovementPhysics movementPhysics = WiredMoveCarryHelper.getUserMovementPhysics(room, this, ctx);
+        int jumpStrength = WiredMoveCarryHelper.getUserJumpStrength(room, this, ctx);
 
         for (RoomUnit roomUnit : WiredSourceUtil.resolveUsers(ctx, this.userSource)) {
             if (roomUnit == null || roomUnit.getRoom() != room) {
@@ -97,7 +98,8 @@ public class WiredEffectMoveUserTiles extends InteractionWiredEffect {
                         targetHeadRotation,
                         animationDuration,
                         noAnimation,
-                        movementPhysics)) {
+                        movementPhysics,
+                        jumpStrength)) {
                     break;
                 }
 

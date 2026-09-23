@@ -129,6 +129,15 @@ final class WiredInternalVariableRegistry {
                 "@dimensions.x",
                 "@dimensions.y");
         builder.register(
+                Capability.FURNI_REFERENCE,
+                WiredProjectileFlight.POSITION_X,
+                WiredProjectileFlight.POSITION_Y,
+                WiredProjectileFlight.POSITION_ALTITUDE,
+                WiredProjectileFlight.IS_TRAVELING,
+                WiredProjectileFlight.TILES_TRAVELED,
+                WiredProjectileFlight.FURNI_COLLISIONS,
+                WiredProjectileFlight.USER_COLLISIONS);
+        builder.register(
                 Capability.FURNI_DESTINATION, "@state", "@position_x", "@position_y", "@rotation", "@altitude");
         builder.registerWhen(
                 ALWAYS_ENABLED, EnumSet.of(Capability.FURNI_REFERENCE, Capability.FURNI_DESTINATION), "@gravity");

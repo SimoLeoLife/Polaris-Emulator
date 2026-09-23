@@ -40,14 +40,16 @@ class WiredExtraIntParamPrecedenceTest {
     }
 
     @Test
-    void timeUtilitiesKeepsTheIntWhenBothAreSent() throws Exception {
+    void timeUtilitiesReadsOnlyTheInts() throws Exception {
         WiredExtraTimeUtilities extra = new WiredExtraTimeUtilities(1, 1, base(), "", 0, 0);
 
-        extra.saveData(new WiredSettings(new int[] {WiredExtraTimeUtilities.UNIT_SECONDS}, "3", new int[0], 0), null);
-        assertEquals(WiredExtraTimeUtilities.UNIT_SECONDS, extra.getTimeUnit());
+        extra.saveData(new WiredSettings(new int[] {1 << 4, 1}, "3", new int[0], 0), null);
+        assertEquals(1 << 4, extra.getSubvariableMask());
+        assertEquals(WiredExtraTimeUtilities.MODE_CREATION_TIME, extra.getMode());
 
         extra.saveData(new WiredSettings(new int[0], "3", new int[0], 0), null);
-        assertEquals(WiredExtraTimeUtilities.UNIT_HOURS, extra.getTimeUnit());
+        assertEquals(0, extra.getSubvariableMask());
+        assertEquals(WiredExtraTimeUtilities.UNIT_SECONDS, extra.getTimeUnit());
     }
 
     @Test

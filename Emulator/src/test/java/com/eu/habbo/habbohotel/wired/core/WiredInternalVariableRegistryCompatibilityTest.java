@@ -86,6 +86,13 @@ class WiredInternalVariableRegistryCompatibilityTest {
                         "@wallitem_offset",
                         "@dimensions.x",
                         "@dimensions.y",
+                        "@projectile.animation.position.x",
+                        "@projectile.animation.position.y",
+                        "@projectile.animation.position.altitude",
+                        "@projectile.animation.is_traveling",
+                        "@projectile.animation.tiles_traveled",
+                        "@projectile.animation.furni_collisions",
+                        "@projectile.animation.user_collisions",
                         "@gravity",
                         "@opacity"),
                 keys(WiredInternalVariableRegistry.Capability.FURNI_REFERENCE));

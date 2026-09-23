@@ -104,6 +104,31 @@ public final class WiredUserMovementHelper {
             int duration,
             boolean noAnimation,
             WiredMovementPhysics movementPhysics) {
+        return moveUser(
+                room,
+                roomUnit,
+                targetTile,
+                targetZ,
+                bodyRotation,
+                headRotation,
+                duration,
+                noAnimation,
+                movementPhysics,
+                0);
+    }
+
+    /** As the others, and a non-zero jump strength makes the avatar hop to its tile in an arc. */
+    public static boolean moveUser(
+            Room room,
+            RoomUnit roomUnit,
+            RoomTile targetTile,
+            double targetZ,
+            RoomUserRotation bodyRotation,
+            RoomUserRotation headRotation,
+            int duration,
+            boolean noAnimation,
+            WiredMovementPhysics movementPhysics,
+            int jumpStrength) {
         if (room == null || roomUnit == null || targetTile == null || room.getLayout() == null) {
             return false;
         }
@@ -172,6 +197,10 @@ public final class WiredUserMovementHelper {
                 resolvedHeadRotation.getValue(),
                 animationDuration));
         suppressStatusComposer(roomUnit, animationDuration);
+        if (jumpStrength != 0) {
+            WiredMoveStyleHelper.sendUnitsNow(
+                    room, List.of(roomUnit.getId()), WiredMoveStyleHelper.STYLE_JUMP, jumpStrength);
+        }
         room.sendComposer(new WiredMovementsComposer(movements).compose());
 
         scheduleTileCallbacks(room, roomUnit, oldLocation, targetTile, oldTopItem, newTopItem, animationDuration);
@@ -242,6 +271,46 @@ public final class WiredUserMovementHelper {
         processTileCallbacks(room, roomUnit, oldLocation, targetTile, oldTopItem, newTopItem);
         clearStatusComposerSuppression(roomUnit);
         room.sendComposer(new RoomUserStatusComposer(roomUnit).compose());
+        return true;
+    }
+
+    /**
+     * A hop on the spot: the avatar stays on its tile and turns, and a client that understands
+     * avatar jumps draws it lifting off and landing again.
+     */
+    public static boolean hopInPlace(
+            Room room,
+            RoomUnit roomUnit,
+            RoomUserRotation bodyRotation,
+            RoomUserRotation headRotation,
+            int strength,
+            int duration) {
+        RoomTile tile = (roomUnit == null) ? null : roomUnit.getCurrentLocation();
+
+        if (room == null || tile == null || roomUnit.isWalking()) {
+            return false;
+        }
+
+        RoomUserRotation resolvedBodyRotation = bodyRotation == null ? roomUnit.getBodyRotation() : bodyRotation;
+        RoomUserRotation resolvedHeadRotation = headRotation == null ? roomUnit.getHeadRotation() : headRotation;
+        int animationDuration = (duration > 0) ? duration : DEFAULT_ANIMATION_DURATION;
+
+        roomUnit.setBodyRotation(resolvedBodyRotation);
+        roomUnit.setHeadRotation(resolvedHeadRotation);
+        suppressStatusComposer(roomUnit, animationDuration);
+        WiredMoveStyleHelper.sendUnitsNow(room, List.of(roomUnit.getId()), WiredMoveStyleHelper.STYLE_JUMP, strength);
+        room.sendComposer(new WiredMovementsComposer(List.of(WiredMovementsComposer.userSlideMovement(
+                        roomUnit.getId(),
+                        tile.x,
+                        tile.y,
+                        tile.x,
+                        tile.y,
+                        roomUnit.getZ(),
+                        roomUnit.getZ(),
+                        resolvedBodyRotation.getValue(),
+                        resolvedHeadRotation.getValue(),
+                        animationDuration)))
+                .compose());
         return true;
     }
 

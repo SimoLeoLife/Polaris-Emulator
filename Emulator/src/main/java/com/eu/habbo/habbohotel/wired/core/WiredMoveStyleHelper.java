@@ -14,7 +14,8 @@ import java.util.Map;
 /**
  * Sends the capability-gated move-style hint (header 5110) ahead of wired movement packets.
  * Clients that never announced {@link GameClient#WIRED_FEATURE_MOVE_STYLE} receive nothing and
- * keep the historical linear animation.
+ * keep the historical linear animation; hints for room units also need
+ * {@link GameClient#WIRED_FEATURE_TRAJECTORY}.
  */
 public final class WiredMoveStyleHelper {
     public static final int STYLE_LINEAR = 0;
@@ -24,14 +25,19 @@ public final class WiredMoveStyleHelper {
 
     public static final int DROP_INTENSITY = 100;
 
+    public static final int KIND_FURNI = 0;
+    public static final int KIND_UNIT = 1;
+
     // Hints raised while a wired firing collects its movements, sent as one packet per style when
     // the collection finishes instead of one packet per moved furni.
     private static final ThreadLocal<PendingHints> PENDING = new ThreadLocal<>();
     private static final int MAX_IDS_PER_HINT = 1_000;
 
+    private record HintKey(int kind, int style, int intensity, int overshoot) {}
+
     private static final class PendingHints {
         private Room room;
-        private final Map<Long, LinkedHashSet<Integer>> idsByStyle = new LinkedHashMap<>();
+        private final Map<HintKey, LinkedHashSet<Integer>> idsByHint = new LinkedHashMap<>();
     }
 
     private WiredMoveStyleHelper() {}
@@ -52,19 +58,40 @@ public final class WiredMoveStyleHelper {
             return;
         }
 
-        for (Map.Entry<Long, LinkedHashSet<Integer>> entry : pending.idsByStyle.entrySet()) {
-            int style = (int) (entry.getKey() >> 32);
-            int intensity = (int) (long) entry.getKey();
+        for (Map.Entry<HintKey, LinkedHashSet<Integer>> entry : pending.idsByHint.entrySet()) {
             List<Integer> ids = new ArrayList<>(entry.getValue());
 
             for (int from = 0; from < ids.size(); from += MAX_IDS_PER_HINT) {
-                send(pending.room, ids.subList(from, Math.min(ids.size(), from + MAX_IDS_PER_HINT)), style, intensity);
+                send(pending.room, ids.subList(from, Math.min(ids.size(), from + MAX_IDS_PER_HINT)), entry.getKey());
             }
         }
     }
 
     public static void broadcast(Room room, Collection<Integer> itemIds, int style, int intensity) {
-        if (room == null || itemIds == null || itemIds.isEmpty() || style == STYLE_LINEAR) {
+        broadcast(room, itemIds, style, intensity, 0);
+    }
+
+    /** A furni hint; a non-zero overshoot lets the animation fly that many tiles past the target. */
+    public static void broadcast(Room room, Collection<Integer> itemIds, int style, int intensity, int overshoot) {
+        queue(room, itemIds, new HintKey(KIND_FURNI, style, intensity, overshoot));
+    }
+
+    /** A hint for room units moved in the same firing; batched like the furni ones. */
+    public static void broadcastUnits(Room room, Collection<Integer> unitIds, int style, int intensity) {
+        queue(room, unitIds, new HintKey(KIND_UNIT, style, intensity, 0));
+    }
+
+    /** A room unit hint sent at once, for a movement packet that is itself about to go out. */
+    public static void sendUnitsNow(Room room, Collection<Integer> unitIds, int style, int intensity) {
+        if (isInert(room, unitIds, style, 0)) {
+            return;
+        }
+
+        send(room, unitIds, new HintKey(KIND_UNIT, style, intensity, 0));
+    }
+
+    private static void queue(Room room, Collection<Integer> ids, HintKey key) {
+        if (isInert(room, ids, key.style(), key.overshoot())) {
             return;
         }
 
@@ -73,25 +100,31 @@ public final class WiredMoveStyleHelper {
                 && WiredMoveCarryHelper.isCollectingMovements()
                 && (pending.room == null || pending.room == room)) {
             pending.room = room;
-            long key = ((long) style << 32) | (intensity & 0xFFFFFFFFL);
-            pending.idsByStyle
+            pending.idsByHint
                     .computeIfAbsent(key, ignored -> new LinkedHashSet<>())
-                    .addAll(itemIds);
+                    .addAll(ids);
             return;
         }
 
-        send(room, itemIds, style, intensity);
+        send(room, ids, key);
     }
 
-    private static void send(Room room, Collection<Integer> itemIds, int style, int intensity) {
-        var message = new WiredFurniMoveStyleComposer(itemIds, style, intensity).compose();
+    private static boolean isInert(Room room, Collection<Integer> ids, int style, int overshoot) {
+        return room == null || ids == null || ids.isEmpty() || (style == STYLE_LINEAR && overshoot == 0);
+    }
+
+    private static void send(Room room, Collection<Integer> ids, HintKey key) {
+        var message = new WiredFurniMoveStyleComposer(ids, key.style(), key.intensity(), key.overshoot(), key.kind())
+                .compose();
+        // A furni hint's trailing overshoot is simply not read by an older client.
+        int feature =
+                (key.kind() == KIND_UNIT) ? GameClient.WIRED_FEATURE_TRAJECTORY : GameClient.WIRED_FEATURE_MOVE_STYLE;
+
         for (Habbo habbo : room.getHabbos()) {
             if (habbo == null || habbo.getClient() == null) {
                 continue;
             }
-            if (habbo.getClient()
-                    .supportsWiredFeature(
-                            GameClient.WIRED_FEATURE_PROTOCOL_VERSION, GameClient.WIRED_FEATURE_MOVE_STYLE)) {
+            if (habbo.getClient().supportsWiredFeature(GameClient.WIRED_FEATURE_PROTOCOL_VERSION, feature)) {
                 habbo.getClient().sendResponse(message);
             }
         }

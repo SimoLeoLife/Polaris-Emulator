@@ -13,6 +13,7 @@ public final class RoomWiredRuntime {
     private final WiredGravityService gravity;
     private final WiredOpacityService opacity;
     private final WiredTradingManager trading;
+    private final WiredProjectileFlights projectiles = new WiredProjectileFlights();
 
     RoomWiredRuntime(Room room) {
         this.gravity = new WiredGravityService(room);
@@ -102,6 +103,17 @@ public final class RoomWiredRuntime {
         return true;
     }
 
+    /** The flights projectile add-ons launched here, read by the {@code @projectile.*} variables. */
+    public WiredProjectileFlights getProjectileFlights() {
+        return this.projectiles;
+    }
+
+    void forgetProjectile(HabboItem item) {
+        if (item != null) {
+            this.projectiles.forget(item.getId());
+        }
+    }
+
     void forgetOpacity(HabboItem item) {
         this.opacity.forgetItem(item);
     }
@@ -113,6 +125,7 @@ public final class RoomWiredRuntime {
     void dispose() {
         this.gravity.dispose();
         this.opacity.dispose();
+        this.projectiles.clear();
         // Every open negotiation is holding somebody's furniture out of their inventory. Letting the
         // room go without handing it back would lose it.
         this.trading.dispose();

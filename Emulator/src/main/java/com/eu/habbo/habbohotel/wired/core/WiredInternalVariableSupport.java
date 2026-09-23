@@ -132,6 +132,19 @@ public final class WiredInternalVariableSupport {
         };
     }
 
+    /** As {@link #hasFurniValue(HabboItem, String)}, and also the projectile variables the room tracks. */
+    public static boolean hasFurniValue(Room room, HabboItem item, String key) {
+        String normalized = normalizeKey(key);
+
+        if (WiredProjectileFlight.isProjectileKey(normalized)) {
+            return room != null
+                    && room.getWiredRuntime() != null
+                    && room.getWiredRuntime().getProjectileFlights().holds(item, normalized);
+        }
+
+        return hasFurniValue(item, normalized);
+    }
+
     public static boolean hasFurniValue(HabboItem item, String key) {
         if (item == null || item.getBaseItem() == null) {
             return false;
@@ -398,6 +411,16 @@ public final class WiredInternalVariableSupport {
             case "@owner_id" -> item.getUserId();
             case "@gravity" -> room.getWiredRuntime().isGravityEnabled(item) ? 1 : 0;
             case "@opacity" -> room.getWiredRuntime().globalOpacity(item);
+            case WiredProjectileFlight.POSITION_X,
+                    WiredProjectileFlight.POSITION_Y,
+                    WiredProjectileFlight.POSITION_ALTITUDE,
+                    WiredProjectileFlight.IS_TRAVELING,
+                    WiredProjectileFlight.TILES_TRAVELED,
+                    WiredProjectileFlight.FURNI_COLLISIONS,
+                    WiredProjectileFlight.USER_COLLISIONS ->
+                (room.getWiredRuntime() != null)
+                        ? room.getWiredRuntime().getProjectileFlights().read(item, normalized)
+                        : null;
             default -> null;
         };
     }

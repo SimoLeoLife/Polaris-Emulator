@@ -29,7 +29,11 @@ public class GameClient {
     // Bit 0 - the client understands per-furniture opacity updates.
     public static final int WIRED_FEATURE_OPACITY = 1;
     public static final int WIRED_FEATURE_MOVE_STYLE = 2;
-    private static final int WIRED_FEATURE_KNOWN_MASK = WIRED_FEATURE_OPACITY | WIRED_FEATURE_MOVE_STYLE;
+    /** The move-style hint's overshoot and avatar jumps (header 5110, trailing fields). */
+    public static final int WIRED_FEATURE_TRAJECTORY = 4;
+
+    private static final int WIRED_FEATURE_KNOWN_MASK =
+            WIRED_FEATURE_OPACITY | WIRED_FEATURE_MOVE_STYLE | WIRED_FEATURE_TRAJECTORY;
 
     private static final Logger LOGGER = LoggerFactory.getLogger(GameClient.class);
 

@@ -93,9 +93,7 @@ public class RoomVariableManager {
                 WiredVariableLevelSystemSupport.resolveDerivedDefinition(
                         this.room, WiredVariableLevelSystemSupport.TARGET_ROOM, definitionItemId);
         if (derivedDefinition != null) {
-            Integer baseValue = this.getRawValue(derivedDefinition.getBaseDefinitionItemId());
-            Integer derivedValue = WiredVariableLevelSystemSupport.getDerivedValue(
-                    derivedDefinition.getLevelSystem(), derivedDefinition.getSubvariableType(), baseValue);
+            Integer derivedValue = this.getDerivedValue(derivedDefinition);
             return (derivedValue != null) ? derivedValue : 0;
         }
 
@@ -733,9 +731,19 @@ public class RoomVariableManager {
         return this.activeAssignmentsByDefinitionId.get(definitionItemId);
     }
 
-    private Integer getRawValue(int definitionItemId) {
-        VariableAssignment assignment = this.getRawAssignment(definitionItemId);
-        return (assignment != null) ? assignment.getValue() : null;
+    private Integer getDerivedValue(WiredVariableLevelSystemSupport.DerivedDefinition derivedDefinition) {
+        VariableAssignment base = this.getRawAssignment(derivedDefinition.getBaseDefinitionItemId());
+        if (base == null) {
+            return null;
+        }
+
+        return WiredVariableLevelSystemSupport.getDerivedValue(
+                this.room,
+                derivedDefinition.getLevelSystem(),
+                derivedDefinition.getSubvariableType(),
+                base.getValue(),
+                base.getCreatedAt(),
+                base.getUpdatedAt());
     }
 
     private void emitVariableChangedEvents(
@@ -750,6 +758,9 @@ public class RoomVariableManager {
         this.emitVariableChangedEvent(
                 definitionInfo.getItemId(), definitionInfo.hasValue(), previousValue, currentValue);
 
+        VariableAssignment stamps = null;
+        boolean stampsRead = false;
+
         for (WiredVariableDefinitionInfo derivedDefinition : WiredVariableLevelSystemSupport.getDerivedDefinitions(
                 this.room, WiredVariableLevelSystemSupport.TARGET_ROOM, definitionExtra, definitionInfo)) {
             WiredVariableLevelSystemSupport.DerivedDefinition resolvedDefinition =
@@ -760,10 +771,31 @@ public class RoomVariableManager {
                 continue;
             }
 
-            Integer derivedPreviousValue = WiredVariableLevelSystemSupport.getDerivedValue(
-                    resolvedDefinition.getLevelSystem(), resolvedDefinition.getSubvariableType(), previousValue);
-            Integer derivedCurrentValue = WiredVariableLevelSystemSupport.getDerivedValue(
-                    resolvedDefinition.getLevelSystem(), resolvedDefinition.getSubvariableType(), currentValue);
+            if (!stampsRead) {
+                stamps = this.getRawAssignment(definitionInfo.getItemId());
+                stampsRead = true;
+            }
+
+            int createdAt = (stamps != null) ? stamps.getCreatedAt() : 0;
+            int updatedAt = (stamps != null) ? stamps.getUpdatedAt() : 0;
+            Integer derivedPreviousValue = (previousValue != null)
+                    ? WiredVariableLevelSystemSupport.getDerivedValue(
+                            this.room,
+                            resolvedDefinition.getLevelSystem(),
+                            resolvedDefinition.getSubvariableType(),
+                            previousValue,
+                            createdAt,
+                            updatedAt)
+                    : null;
+            Integer derivedCurrentValue = (currentValue != null)
+                    ? WiredVariableLevelSystemSupport.getDerivedValue(
+                            this.room,
+                            resolvedDefinition.getLevelSystem(),
+                            resolvedDefinition.getSubvariableType(),
+                            currentValue,
+                            createdAt,
+                            updatedAt)
+                    : null;
 
             this.emitVariableChangedEvent(
                     derivedDefinition.getItemId(), true, derivedPreviousValue, derivedCurrentValue);

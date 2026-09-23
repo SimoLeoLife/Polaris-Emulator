@@ -191,6 +191,10 @@ final class RoomItemRegistry {
         }
         this.room.forgetWiredGravity(item);
         this.room.forgetWiredOpacity(item);
+        RoomWiredRuntime wiredRuntime = this.room.getWiredRuntime();
+        if (wiredRuntime != null) {
+            wiredRuntime.forgetProjectile(item);
+        }
         this.room.onFurnitureTopologyChanged(item, true);
     }
 

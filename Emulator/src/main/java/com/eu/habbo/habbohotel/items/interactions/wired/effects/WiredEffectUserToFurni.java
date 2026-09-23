@@ -52,13 +52,15 @@ public class WiredEffectUserToFurni extends WiredEffectUserFurniBase {
             return;
         }
 
+        int jumpStrength = WiredMoveCarryHelper.getUserJumpStrength(room, this, ctx);
+
         RoomTile targetTile = room.getLayout().getTile(item.getX(), item.getY());
         if (targetTile == null) {
             return;
         }
 
         for (Habbo habbo : this.resolveHabbos(room, ctx)) {
-            this.moveHabboSmooth(room, habbo, item, targetTile, movementPhysics);
+            this.moveHabboSmooth(room, habbo, item, targetTile, movementPhysics, jumpStrength);
         }
     }
 
@@ -230,7 +232,12 @@ public class WiredEffectUserToFurni extends WiredEffectUserFurniBase {
     }
 
     private void moveHabboSmooth(
-            Room room, Habbo habbo, HabboItem item, RoomTile targetTile, WiredMovementPhysics movementPhysics) {
+            Room room,
+            Habbo habbo,
+            HabboItem item,
+            RoomTile targetTile,
+            WiredMovementPhysics movementPhysics,
+            int jumpStrength) {
         if (room == null || habbo == null || item == null || targetTile == null || habbo.getRoomUnit() == null) {
             return;
         }
@@ -259,7 +266,8 @@ public class WiredEffectUserToFurni extends WiredEffectUserFurniBase {
                 roomUnit.getHeadRotation(),
                 animationDuration,
                 noAnimation,
-                movementPhysics)) {
+                movementPhysics,
+                jumpStrength)) {
             return;
         }
 
