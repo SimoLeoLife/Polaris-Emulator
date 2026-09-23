@@ -60,7 +60,12 @@ public class WiredConditionDateRangeActive extends InteractionWiredCondition {
     @Override
     public boolean evaluate(WiredContext ctx) {
         int time = Emulator.getIntUnixTimestamp();
-        return this.startDate < time && this.endDate >= time;
+        if (this.startDate <= 0 && this.endDate <= 0) {
+            return false;
+        }
+
+        // No end date is an open range: active from the start on.
+        return this.startDate <= time && (this.endDate <= 0 || this.endDate >= time);
     }
 
     @Deprecated

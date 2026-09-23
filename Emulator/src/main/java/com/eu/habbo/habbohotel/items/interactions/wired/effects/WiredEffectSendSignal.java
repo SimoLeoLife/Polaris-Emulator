@@ -47,6 +47,9 @@ public class WiredEffectSendSignal extends InteractionWiredEffect {
     private static final String ANTENNA_INTERACTION = "antenna";
     private static final String FORWARD_ITEM_SPLIT_REGEX = "[;,\\t]";
     private static final long ANTENNA_PULSE_MS = 300L;
+    // Users x furni x antennas can multiply; one firing never sends more than this many signals.
+    static final int MAX_SIGNALS_PER_FIRING = 250;
+    static final int MAX_FORWARDED = 100;
     private static final ConcurrentHashMap<Integer, Long> ANTENNA_PULSE_TOKENS = new ConcurrentHashMap<>();
 
     private Set<HabboItem> items;
@@ -106,6 +109,17 @@ public class WiredEffectSendSignal extends InteractionWiredEffect {
                 .filter(this::isAntennaItem)
                 .collect(Collectors.toList());
 
+        // No antenna picked: the stack's selectors can name them instead, as Habbo's box allows.
+        if (resolvedAntennas.isEmpty()
+                && antennaSource == ANTENNA_PICKED
+                && ctx.targets().isItemsModifiedBySelector()) {
+            resolvedAntennas = ctx.targets().items().stream()
+                    .filter(Objects::nonNull)
+                    .filter(this::isAntennaItem)
+                    .limit(WiredManager.MAXIMUM_FURNI_SELECTION)
+                    .collect(Collectors.toList());
+        }
+
         if (resolvedAntennas.isEmpty()) {
             LOGGER.debug(
                     "[SendSignal] No antennas resolved, aborting. antennaSource={}, selectorModified={}",
@@ -117,8 +131,9 @@ public class WiredEffectSendSignal extends InteractionWiredEffect {
 
         RoomUnit triggeringUser =
                 ctx.event().getOriginActor().orElseGet(() -> ctx.actor().orElse(null));
-        List<RoomUnit> forwardedUsers = WiredSourceUtil.resolveUsersRaw(ctx, this.userForward);
-        List<HabboItem> forwardedFurni = WiredSourceUtil.resolveItemsRaw(ctx, this.furniForward, this.forwardItems);
+        List<RoomUnit> forwardedUsers = capped(WiredSourceUtil.resolveUsersRaw(ctx, this.userForward));
+        List<HabboItem> forwardedFurni =
+                capped(WiredSourceUtil.resolveItemsRaw(ctx, this.furniForward, this.forwardItems));
 
         List<RoomUnit> usersToSend;
         if (signalPerUser) {
@@ -161,9 +176,33 @@ public class WiredEffectSendSignal extends InteractionWiredEffect {
                 : (!forwardedUsers.isEmpty() ? forwardedUsers.size() : (triggeringUser != null ? 1 : 0));
         int signalFurniCount = forwardedFurni.size();
 
+        // Each antenna lights up once per firing, however many signals go through it.
+        for (HabboItem antenna : resolvedAntennas) {
+            pulseAntenna(room, antenna);
+        }
+
+        // What each signal passes on: the whole forwarded sets, or just its own user or furni when
+        // the box splits them - so "users/furni from signal" in the receiving stack sees them all.
+        List<RoomUnit> allUsers = !forwardedUsers.isEmpty()
+                ? forwardedUsers
+                : (triggeringUser != null ? List.of(triggeringUser) : List.of());
+
+        int signalsLeft = MAX_SIGNALS_PER_FIRING;
+
         for (RoomUnit user : usersToSend) {
+            List<RoomUnit> usersCarried = signalPerUser ? (user != null ? List.of(user) : List.of()) : allUsers;
+
             for (HabboItem sourceItem : furniToSend) {
+                List<HabboItem> furniCarried =
+                        signalPerFurni ? (sourceItem != null ? List.of(sourceItem) : List.of()) : forwardedFurni;
+
                 for (HabboItem antenna : resolvedAntennas) {
+                    if (signalsLeft-- <= 0) {
+                        LOGGER.debug(
+                                "[SendSignal] Signal cap of {} reached, the rest are dropped", MAX_SIGNALS_PER_FIRING);
+                        return;
+                    }
+
                     fireSignalAtAntenna(
                             ctx,
                             room,
@@ -171,12 +210,22 @@ public class WiredEffectSendSignal extends InteractionWiredEffect {
                             user,
                             triggeringUser,
                             sourceItem,
+                            usersCarried,
+                            furniCarried,
                             signalUserCount,
                             signalFurniCount,
                             nextDepth);
                 }
             }
         }
+    }
+
+    /** At most MAX_FORWARDED of a forwarded set, as one immutable list every signal shares. */
+    private static <T> List<T> capped(List<T> values) {
+        if (values == null || values.isEmpty()) return List.of();
+
+        return List.copyOf(
+                values.stream().filter(Objects::nonNull).limit(MAX_FORWARDED).toList());
     }
 
     private void fireSignalAtAntenna(
@@ -186,14 +235,14 @@ public class WiredEffectSendSignal extends InteractionWiredEffect {
             RoomUnit actor,
             RoomUnit originActor,
             HabboItem sourceItem,
+            List<RoomUnit> usersCarried,
+            List<HabboItem> furniCarried,
             int signalUserCount,
             int signalFurniCount,
             int depth) {
         if (antenna == null) return;
         RoomTile tile = room.getLayout().getTile(antenna.getX(), antenna.getY());
         if (tile == null) return;
-
-        pulseAntenna(room, antenna);
 
         int signalChannel = antenna.getId();
 
@@ -213,6 +262,8 @@ public class WiredEffectSendSignal extends InteractionWiredEffect {
                 .signalChannel(signalChannel)
                 .signalUserCount(signalUserCount)
                 .signalFurniCount(signalFurniCount)
+                .forwardedUsers(usersCarried)
+                .forwardedItems(furniCarried)
                 .contextVariableScope(ctx.contextVariables().copy())
                 .triggeredByEffect(true);
 

@@ -4,6 +4,7 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.EnumMap;
+import java.util.Iterator;
 import java.util.List;
 
 /**
@@ -21,12 +22,42 @@ public final class WiredRoomDiagnostics {
         /** A chain fired and an effect had nothing to act on, so it did nothing and said nothing. */
         NO_TARGETS,
         /** A furni is waiting on something the room has no way of producing. */
-        UNREACHABLE
+        UNREACHABLE,
+        /** A line a "write to logs" box wrote, at the level the box was set to. */
+        WIRED_LOG
     }
 
+    /**
+     * How serious an entry is. {@link #getLogLevel()} is the number the room log window filters and
+     * colours by - Habbo's four levels, debug to error. It is not the ordinal: the two the engine
+     * always used stay first, where they were.
+     */
     public enum Severity {
-        WARNING,
-        ERROR
+        WARNING(2),
+        ERROR(3),
+        DEBUG(0),
+        INFO(1);
+
+        private final int logLevel;
+
+        Severity(int logLevel) {
+            this.logLevel = logLevel;
+        }
+
+        public int getLogLevel() {
+            return this.logLevel;
+        }
+
+        /** The severity for a log level from a box or a filter; anything unknown reads as info. */
+        public static Severity fromLogLevel(int logLevel) {
+            for (Severity severity : values()) {
+                if (severity.logLevel == logLevel) {
+                    return severity;
+                }
+            }
+
+            return INFO;
+        }
     }
 
     public static final class LogEntry {
@@ -440,6 +471,15 @@ public final class WiredRoomDiagnostics {
         record(Type.UNREACHABLE, now, reason, sourceLabel, sourceId);
     }
 
+    /**
+     * A line a wired box asked to write. It lands in the room log at the box's own level, so the log
+     * window shows it next to what the engine noted, filterable like any other entry.
+     */
+    public void recordWiredLog(long now, Severity severity, String message, String sourceLabel, int sourceId) {
+        rollWindowIfNeeded(now);
+        record(Type.WIRED_LOG, severity, now, message, sourceLabel, sourceId);
+    }
+
     public synchronized void clearLogs() {
         for (Type type : Type.values()) {
             LogEntry entry = this.logs.get(type);
@@ -600,14 +640,36 @@ public final class WiredRoomDiagnostics {
 
     private void record(Type type, long now, String reason, String sourceLabel, int sourceId) {
         LogEntry entry = this.logs.get(type);
+        record(type, (entry != null) ? entry.getSeverity() : null, now, reason, sourceLabel, sourceId);
+    }
+
+    // Synchronized with snapshot(): a box can now log every tick, and the history is a plain deque.
+    private synchronized void record(
+            Type type, Severity severity, long now, String reason, String sourceLabel, int sourceId) {
+        LogEntry entry = this.logs.get(type);
         if (entry != null) {
             entry.record(now, reason, sourceLabel, sourceId);
-            this.history.addFirst(new HistoryEntry(type, entry.getSeverity(), now, reason, sourceLabel, sourceId));
+            this.history.addFirst(new HistoryEntry(type, severity, now, reason, sourceLabel, sourceId));
 
             while (this.history.size() > this.maxHistoryEntries) {
-                this.history.removeLast();
+                // A box's own log lines make room among themselves, so a chatty box cannot push the
+                // engine's entries (killed, recursion) out of the history.
+                if (type != Type.WIRED_LOG || !removeOldestWiredLog()) {
+                    this.history.removeLast();
+                }
             }
         }
+    }
+
+    private boolean removeOldestWiredLog() {
+        Iterator<HistoryEntry> iterator = this.history.descendingIterator();
+        while (iterator.hasNext()) {
+            if (iterator.next().getType() == Type.WIRED_LOG) {
+                iterator.remove();
+                return true;
+            }
+        }
+        return false;
     }
 
     private String buildExecutionCapReason(int normalizedCost, String reason, int currentUsage) {
@@ -669,6 +731,10 @@ public final class WiredRoomDiagnostics {
     }
 
     private Severity defaultSeverity(Type type) {
+        if (type == Type.WIRED_LOG) {
+            return Severity.INFO;
+        }
+
         // Neither of these is the engine failing; they describe a setup, so they read as warnings.
         return (type == Type.MARKED_AS_HEAVY || type == Type.NO_TARGETS || type == Type.UNREACHABLE)
                 ? Severity.WARNING

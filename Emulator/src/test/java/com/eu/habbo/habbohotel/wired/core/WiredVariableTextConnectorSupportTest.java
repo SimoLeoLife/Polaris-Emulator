@@ -2,6 +2,8 @@ package com.eu.habbo.habbohotel.wired.core;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -22,7 +24,19 @@ class WiredVariableTextConnectorSupportTest {
         when(connector.getId()).thenReturn(id);
         when(connector.getZ()).thenReturn(z);
         when(connector.getMappings()).thenReturn(mappings);
+        when(connector.appliesToField(0)).thenReturn(true);
+        // The real connector resolves through its own table and falls back to the plain number, which is
+        // what makes the first connector naming a value win in toText.
+        when(connector.resolveText(any(Integer.class)))
+                .thenAnswer(invocation -> resolveText(mappings, invocation.getArgument(0)));
+        when(connector.resolveText(anyLong()))
+                .thenAnswer(invocation -> resolveText(mappings, invocation.getArgument(0)));
         return connector;
+    }
+
+    private static String resolveText(Map<Integer, String> mappings, Number value) {
+        String mapped = mappings.get(value.intValue());
+        return (mapped != null) ? mapped : String.valueOf(value);
     }
 
     private static Room roomWithDefinition(int definitionItemId, Set<InteractionWiredExtra> extrasOnTile) {

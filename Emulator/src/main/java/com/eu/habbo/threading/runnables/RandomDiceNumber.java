@@ -29,14 +29,15 @@ public class RandomDiceNumber implements Runnable {
 
     @Override
     public void run() {
-        if (this.result <= 0)
-            this.result = (Emulator.getRandom().nextInt(this.maxNumber) + 1);
+        if (this.result <= 0) this.result = (Emulator.getRandom().nextInt(this.maxNumber) + 1);
 
         this.item.setExtradata(this.result + "");
         this.item.needsUpdate(true);
         Emulator.getThreading().run(this.item);
 
         this.room.updateItem(this.item);
+
+        WiredManager.triggerFurniStateUpdated(this.room, null, this.item, false);
 
         if (this.item instanceof InteractionDice) {
             WiredManager.triggerDiceRolled(this.room, this.item);

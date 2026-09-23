@@ -13,6 +13,7 @@ import com.eu.habbo.habbohotel.wired.core.WiredBotSourceUtil;
 import com.eu.habbo.habbohotel.wired.core.WiredContext;
 import com.eu.habbo.habbohotel.wired.core.WiredManager;
 import com.eu.habbo.messages.ServerMessage;
+import com.eu.habbo.messages.incoming.rooms.items.RoomItemInputGuard;
 import com.eu.habbo.messages.incoming.wired.WiredSaveException;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -65,6 +66,10 @@ public class WiredEffectBotClothes extends InteractionWiredEffect {
 
         if (data.length != 2) throw new WiredSaveException("Malformed data string. Invalid data length");
 
+        // The look goes straight onto the bot and out to everyone in the room; a malformed one is
+        // refused here rather than broadcast.
+        if (!RoomItemInputGuard.isValidFigure(data[1])) throw new WiredSaveException("Invalid figure");
+
         this.botSource = (settings.getIntParams().length > 0)
                 ? WiredBotSourceUtil.normalizeBotSource(settings.getIntParams()[0])
                 : WiredBotSourceUtil.SOURCE_BOT_NAME;
@@ -83,6 +88,8 @@ public class WiredEffectBotClothes extends InteractionWiredEffect {
 
     @Override
     public void execute(WiredContext ctx) {
+        if (!RoomItemInputGuard.isValidFigure(this.botLook)) return;
+
         Room room = ctx.room();
         List<Bot> bots = WiredBotSourceUtil.resolveBots(ctx, room, this.botSource, this.botName);
 
@@ -110,7 +117,7 @@ public class WiredEffectBotClothes extends InteractionWiredEffect {
         if (jsonData != null) {
             this.setDelay(WiredEffectPayloadGuard.delay(jsonData.delay));
             this.botName = WiredEffectPayloadGuard.text(jsonData.bot_name);
-            this.botLook = jsonData.look != null ? jsonData.look : "";
+            this.botLook = RoomItemInputGuard.isValidFigure(jsonData.look) ? jsonData.look : "";
             this.botSource = (jsonData.botSource != null)
                     ? WiredBotSourceUtil.normalizeBotSource(jsonData.botSource)
                     : WiredBotSourceUtil.SOURCE_BOT_NAME;
@@ -120,7 +127,7 @@ public class WiredEffectBotClothes extends InteractionWiredEffect {
             if (data.length >= 3) {
                 this.setDelay(WiredEffectPayloadGuard.parseDelay(data[0]));
                 this.botName = WiredEffectPayloadGuard.text(data[1]);
-                this.botLook = data[2];
+                this.botLook = RoomItemInputGuard.isValidFigure(data[2]) ? data[2] : "";
             }
 
             this.needsUpdate(true);

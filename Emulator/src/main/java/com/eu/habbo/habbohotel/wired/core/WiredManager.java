@@ -302,6 +302,21 @@ public final class WiredManager {
         engine.noteUnreachable(roomId, reason, sourceLabel, sourceId);
     }
 
+    /** A line a "write to logs" box wrote. Silent when the engine is not up. */
+    public static void noteWiredLog(
+            int roomId, WiredRoomDiagnostics.Severity severity, String message, String sourceLabel, int sourceId) {
+        if (engine == null) {
+            return;
+        }
+
+        engine.noteWiredLog(roomId, severity, message, sourceLabel, sourceId);
+    }
+
+    public static boolean tryConsumeArrayWork(Room room, int cost, int sourceId) {
+        WiredEngine currentEngine = getEngine();
+        return room != null && (currentEngine == null || currentEngine.tryConsumeArrayWork(room, cost, sourceId));
+    }
+
     public static void clearDiagnosticsLogs(int roomId) {
         if (engine == null) {
             return;
@@ -397,6 +412,10 @@ public final class WiredManager {
         if (deferredEvents == null) {
             deferredEvents = new ArrayDeque<>();
             DEFERRED_EFFECT_EVENTS.set(deferredEvents);
+        }
+
+        if (deferredEvents.size() >= MAX_DEFERRED_EVENTS) {
+            return false;
         }
 
         deferredEvents.addLast(new DeferredEffectEvent(event, negateConditions));
@@ -598,14 +617,26 @@ public final class WiredManager {
             boolean created,
             boolean deleted,
             WiredEvent.VariableChangeKind changeKind) {
+        return triggerUserVariableChanged(room, userId, definitionItemId, created, deleted, changeKind, 0L, 0L);
+    }
+
+    public static boolean triggerUserVariableChanged(
+            Room room,
+            int userId,
+            int definitionItemId,
+            boolean created,
+            boolean deleted,
+            WiredEvent.VariableChangeKind changeKind,
+            long previousValue,
+            long currentValue) {
         if (!isEnabled() || room == null || definitionItemId <= 0) {
             return false;
         }
 
         Habbo habbo = room.getHabbo(userId);
         RoomUnit roomUnit = (habbo != null) ? habbo.getRoomUnit() : null;
-        WiredEvent event =
-                WiredEvents.userVariableChanged(room, roomUnit, definitionItemId, created, deleted, changeKind);
+        WiredEvent event = WiredEvents.userVariableChanged(
+                room, roomUnit, definitionItemId, created, deleted, changeKind, previousValue, currentValue);
         return handleEvent(event);
     }
 
@@ -616,22 +647,45 @@ public final class WiredManager {
             boolean created,
             boolean deleted,
             WiredEvent.VariableChangeKind changeKind) {
+        return triggerFurniVariableChanged(room, furniId, definitionItemId, created, deleted, changeKind, 0L, 0L);
+    }
+
+    public static boolean triggerFurniVariableChanged(
+            Room room,
+            int furniId,
+            int definitionItemId,
+            boolean created,
+            boolean deleted,
+            WiredEvent.VariableChangeKind changeKind,
+            long previousValue,
+            long currentValue) {
         if (!isEnabled() || room == null || furniId <= 0 || definitionItemId <= 0) {
             return false;
         }
 
         HabboItem item = room.getHabboItem(furniId);
-        WiredEvent event = WiredEvents.furniVariableChanged(room, item, definitionItemId, created, deleted, changeKind);
+        WiredEvent event = WiredEvents.furniVariableChanged(
+                room, item, definitionItemId, created, deleted, changeKind, previousValue, currentValue);
         return handleEvent(event);
     }
 
     public static boolean triggerRoomVariableChanged(
             Room room, int definitionItemId, WiredEvent.VariableChangeKind changeKind) {
+        return triggerRoomVariableChanged(room, definitionItemId, changeKind, 0L, 0L);
+    }
+
+    public static boolean triggerRoomVariableChanged(
+            Room room,
+            int definitionItemId,
+            WiredEvent.VariableChangeKind changeKind,
+            long previousValue,
+            long currentValue) {
         if (!isEnabled() || room == null || definitionItemId <= 0) {
             return false;
         }
 
-        WiredEvent event = WiredEvents.roomVariableChanged(room, definitionItemId, changeKind);
+        WiredEvent event =
+                WiredEvents.roomVariableChanged(room, definitionItemId, changeKind, previousValue, currentValue);
         return handleEvent(event);
     }
 
@@ -732,11 +786,16 @@ public final class WiredManager {
      * Trigger bot collision.
      */
     public static boolean triggerBotCollision(Room room, RoomUnit botUnit) {
+        return triggerBotCollision(room, botUnit, null);
+    }
+
+    /** A furni moved by wired ran into a user; the furni is the event's source item. */
+    public static boolean triggerBotCollision(Room room, RoomUnit botUnit, HabboItem collidingFurni) {
         if (!isEnabled() || room == null || botUnit == null) {
             return false;
         }
 
-        WiredEvent event = WiredEvents.botCollision(room, botUnit);
+        WiredEvent event = WiredEvents.botCollision(room, botUnit, collidingFurni);
         return handleEvent(event);
     }
 
@@ -1145,6 +1204,7 @@ public final class WiredManager {
         getTickService().resetRoomTimers(room);
 
         room.setLastTimerReset(Emulator.getIntUnixTimestamp());
+        WiredRoomTime.markTimersReset(room, System.currentTimeMillis());
     }
 
     // ========== Effect Execution ==========
@@ -1188,6 +1248,64 @@ public final class WiredManager {
 
         return true;
     }
+
+    /**
+     * Runs the stacks on the given tiles as a call-stacks box asks: each through its own
+     * selectors, add-ons and conditions, with the caller's users and furni handed on. A positive
+     * call runs the actions a stack would run for its conditions' outcome; a negative one runs
+     * them as if the conditions had come out the other way. The caller's own tile is left out.
+     *
+     * @return true when at least one called stack ran
+     */
+    public static boolean callStacksAtTiles(
+            Collection<RoomTile> tiles,
+            Room room,
+            RoomUnit actor,
+            Collection<RoomUnit> users,
+            Collection<HabboItem> items,
+            RoomTile callerTile,
+            int callStackDepth,
+            boolean negative) {
+        if (tiles == null || tiles.isEmpty() || room == null || engine == null || stackIndex == null) {
+            return false;
+        }
+
+        WiredEvent event = WiredEvent.builder(WiredEvent.Type.CUSTOM, room)
+                .actor(actor)
+                .callStackDepth(callStackDepth)
+                .forwardedUsers(users)
+                .forwardedItems(items)
+                .stackCall(true)
+                .triggeredByEffect(true)
+                .build();
+
+        boolean handled = false;
+        int tilesLeft = MAX_CALLED_TILES;
+        int stacksLeft = MAX_CALLED_STACKS;
+
+        for (RoomTile tile : tiles) {
+            if (tile == null || (callerTile != null && tile.x == callerTile.x && tile.y == callerTile.y)) {
+                continue;
+            }
+            if (tilesLeft-- <= 0) {
+                break;
+            }
+
+            for (WiredStack stack : stackIndex.getStacksAtTile(room, tile)) {
+                if (stacksLeft-- <= 0 || !engine.tryAdmitStackCall(room, 0)) {
+                    return handled;
+                }
+                handled = engine.executeDirectStack(stack, event, negative) || handled;
+            }
+        }
+
+        return handled;
+    }
+
+    private static final int MAX_CALLED_TILES = 20;
+    private static final int MAX_CALLED_STACKS = 20;
+    // Events raised while a chain runs wait here; past this many the rest are dropped.
+    private static final int MAX_DEFERRED_EVENTS = 1_000;
 
     public static boolean executeNegatedStacksAtTiles(
             Collection<RoomTile> tiles, final RoomUnit roomUnit, final Room room, final int callStackDepth) {

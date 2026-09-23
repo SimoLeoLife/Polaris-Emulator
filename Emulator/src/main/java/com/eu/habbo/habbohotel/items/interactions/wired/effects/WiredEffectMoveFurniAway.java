@@ -70,48 +70,61 @@ public class WiredEffectMoveFurniAway extends InteractionWiredEffect {
                     .min(Comparator.comparingDouble(a -> a.getCurrentLocation().distance(t)))
                     .orElse(null);
 
-            if (target != null) {
-                if (target.getCurrentLocation().distance(t) <= 1) {
-                    Emulator.getThreading()
-                            .run(
-                                    () -> {
-                                        WiredManager.triggerBotCollision(room, target);
-                                    },
-                                    500);
-                    continue;
-                }
+            if (target == null) continue;
 
-                int x = 0;
-                int y = 0;
+            // Someone right next to the furni still counts as bumping into it, and it still
+            // flees: before, it stood still and let itself be caught.
+            if (target.getCurrentLocation().distance(t) <= 1) {
+                Emulator.getThreading()
+                        .run(
+                                () -> {
+                                    WiredManager.triggerBotCollision(room, target, item);
+                                },
+                                500);
+            }
 
-                if (target.getX() == item.getX()) {
-                    if (item.getY() < target.getY()) y--;
-                    else y++;
-                } else if (target.getY() == item.getY()) {
-                    if (item.getX() < target.getX()) x--;
-                    else x++;
-                } else if (target.getX() - item.getX() > target.getY() - item.getY()) {
-                    if (target.getX() - item.getX() > 0) x--;
-                    else x++;
-                } else {
-                    if (target.getY() - item.getY() > 0) y--;
-                    else y++;
-                }
+            RoomTile oldLocation = room.getLayout().getTile(item.getX(), item.getY());
 
-                RoomTile newLocation = room.getLayout().getTile((short) (item.getX() + x), (short) (item.getY() + y));
-                RoomTile oldLocation = room.getLayout().getTile(item.getX(), item.getY());
+            // The step straight away along the longer axis first, then along the other one, so a
+            // wall or a furni in the way no longer leaves the furni standing still.
+            for (int[] step : stepsAway(item.getX(), item.getY(), target.getX(), target.getY())) {
+                RoomTile newLocation =
+                        room.getLayout().getTile((short) (item.getX() + step[0]), (short) (item.getY() + step[1]));
 
                 if (newLocation != null
                         && newLocation.state != RoomTileState.INVALID
                         && newLocation != oldLocation
                         && WiredMoveCarryHelper.getMovementError(room, this, item, newLocation, item.getRotation(), ctx)
+                                == FurnitureMovementError.NONE
+                        && WiredMoveCarryHelper.moveFurni(
+                                        room, this, item, newLocation, item.getRotation(), null, false, ctx)
                                 == FurnitureMovementError.NONE) {
-                    if (WiredMoveCarryHelper.moveFurni(
-                                    room, this, item, newLocation, item.getRotation(), null, false, ctx)
-                            == FurnitureMovementError.NONE) {}
+                    break;
                 }
             }
         }
+    }
+
+    /**
+     * The straight steps that take a furni at (x, y) further from (awayX, awayY): along the axis
+     * with more distance between them first, then the other. Someone on the furni's own tile
+     * leaves no direction, so no steps.
+     */
+    static List<int[]> stepsAway(int x, int y, int awayX, int awayY) {
+        int dx = Integer.signum(x - awayX);
+        int dy = Integer.signum(y - awayY);
+        List<int[]> steps = new ArrayList<>(2);
+        int[] alongX = {dx, 0};
+        int[] alongY = {0, dy};
+
+        boolean xFirst = Math.abs(x - awayX) >= Math.abs(y - awayY);
+        for (int[] step : xFirst ? new int[][] {alongX, alongY} : new int[][] {alongY, alongX}) {
+            if (step[0] != 0 || step[1] != 0) {
+                steps.add(step);
+            }
+        }
+
+        return steps;
     }
 
     @Deprecated
@@ -137,30 +150,25 @@ public class WiredEffectMoveFurniAway extends InteractionWiredEffect {
                     .min(Comparator.comparingDouble(a -> a.getCurrentLocation().distance(t)))
                     .orElse(null);
 
-            if (target != null && target.getCurrentLocation().distance(t) > 1) {
-                int x = 0;
-                int y = 0;
+            if (target == null) continue;
 
-                if (target.getX() == currentPos.x) {
-                    y = currentPos.y < target.getY() ? -1 : 1;
-                } else if (target.getY() == currentPos.y) {
-                    x = currentPos.x < target.getX() ? -1 : 1;
-                } else if (target.getX() - currentPos.x > target.getY() - currentPos.y) {
-                    x = target.getX() - currentPos.x > 0 ? -1 : 1;
-                } else {
-                    y = target.getY() - currentPos.y > 0 ? -1 : 1;
+            List<int[]> steps = stepsAway(currentPos.x, currentPos.y, target.getX(), target.getY());
+            if (steps.isEmpty()) continue;
+
+            boolean moved = false;
+            for (int[] step : steps) {
+                short newX = (short) (currentPos.x + step[0]);
+                short newY = (short) (currentPos.y + step[1]);
+
+                if (simulation.isTileValidForItem(newX, newY, item)
+                        && simulation.moveItem(item, newX, newY, currentPos.z, currentPos.rotation)) {
+                    moved = true;
+                    break;
                 }
+            }
 
-                short newX = (short) (currentPos.x + x);
-                short newY = (short) (currentPos.y + y);
-
-                if (!simulation.isTileValidForItem(newX, newY, item)) {
-                    return false;
-                }
-
-                if (!simulation.moveItem(item, newX, newY, currentPos.z, currentPos.rotation)) {
-                    return false;
-                }
+            if (!moved) {
+                return false;
             }
         }
 

@@ -3,6 +3,7 @@ package com.eu.habbo.habbohotel.wired.core;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -39,6 +40,22 @@ class WiredMoveStyleHelperTest {
         WiredMoveStyleHelper.broadcast(null, List.of(101), WiredMoveStyleHelper.STYLE_DROP, 100);
 
         verify(capable.getClient(), never()).sendResponse(any(ServerMessage.class));
+    }
+
+    @Test
+    void hintsRaisedDuringOneFiringGoOutAsOnePacketWhenItFinishes() {
+        Room room = mock(Room.class);
+        Habbo capable = habbo(true);
+        when(room.getHabbos()).thenReturn(List.of(capable));
+
+        WiredMoveCarryHelper.beginMovementCollection();
+        for (int id = 1; id <= 300; id++) {
+            WiredMoveStyleHelper.broadcast(room, List.of(id), WiredMoveStyleHelper.STYLE_JUMP, 80);
+        }
+        verify(capable.getClient(), never()).sendResponse(any(ServerMessage.class));
+
+        WiredMoveCarryHelper.finishMovementCollection();
+        verify(capable.getClient(), times(1)).sendResponse(any(ServerMessage.class));
     }
 
     private static Habbo habbo(boolean capable) {

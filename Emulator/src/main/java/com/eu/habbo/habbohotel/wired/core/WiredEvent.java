@@ -6,6 +6,10 @@ import com.eu.habbo.habbohotel.rooms.RoomUnit;
 import com.eu.habbo.habbohotel.users.HabboItem;
 import com.eu.habbo.habbohotel.wired.WiredTriggerType;
 import com.eu.habbo.habbohotel.wired.WiredVariableChangeOrigin;
+import com.eu.habbo.habbohotel.wired.arrays.WiredArrayChange;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -205,12 +209,20 @@ public final class WiredEvent {
     private final int chatStyle; // bubble style for USER_SAYS
     private final int signalUserCount; // forwarded users in SIGNAL_RECEIVED
     private final int signalFurniCount; // forwarded furni in SIGNAL_RECEIVED
+    // The whole sets a signal or a stack call passed on; empty when it passed on nothing.
+    private final List<RoomUnit> forwardedUsers;
+    private final List<HabboItem> forwardedItems;
+    private final boolean stackCall; // raised by a call-stacks box rather than by the stack's trigger
     private final int variableTargetType;
     private final int variableDefinitionItemId;
+    private final String internalVariableKey;
     private final boolean variableCreated;
     private final boolean variableDeleted;
     private final VariableChangeKind variableChangeKind;
     private final int variableChangeOrigin;
+    private final WiredArrayChange arrayChange;
+    private final long oldVariableValue;
+    private final long newVariableValue;
     private final WiredContextVariableScope contextVariableScope;
     private final long createdAtMs;
 
@@ -234,12 +246,19 @@ public final class WiredEvent {
         this.chatStyle = builder.chatStyle;
         this.signalUserCount = builder.signalUserCount;
         this.signalFurniCount = builder.signalFurniCount;
+        this.forwardedUsers = builder.forwardedUsers;
+        this.forwardedItems = builder.forwardedItems;
+        this.stackCall = builder.stackCall;
         this.variableTargetType = builder.variableTargetType;
         this.variableDefinitionItemId = builder.variableDefinitionItemId;
+        this.internalVariableKey = builder.internalVariableKey;
         this.variableCreated = builder.variableCreated;
         this.variableDeleted = builder.variableDeleted;
         this.variableChangeKind = builder.variableChangeKind;
         this.variableChangeOrigin = builder.variableChangeOrigin;
+        this.arrayChange = builder.arrayChange;
+        this.oldVariableValue = builder.oldVariableValue;
+        this.newVariableValue = builder.newVariableValue;
         this.contextVariableScope = builder.contextVariableScope;
         this.createdAtMs = builder.createdAtMs;
     }
@@ -378,6 +397,21 @@ public final class WiredEvent {
         return signalFurniCount;
     }
 
+    /** The users a signal or a stack call passed on, in order; empty when it passed on none. */
+    public List<RoomUnit> getForwardedUsers() {
+        return forwardedUsers;
+    }
+
+    /** The furni a signal or a stack call passed on, in order; empty when it passed on none. */
+    public List<HabboItem> getForwardedItems() {
+        return forwardedItems;
+    }
+
+    /** Whether a call-stacks box raised this, so the called stack runs without its trigger. */
+    public boolean isStackCall() {
+        return stackCall;
+    }
+
     public int getVariableTargetType() {
         return variableTargetType;
     }
@@ -399,8 +433,28 @@ public final class WiredEvent {
     }
 
     /** One of the {@link WiredVariableChangeOrigin} codes; only meaningful for VARIABLE_CHANGED. */
+    public String getInternalVariableKey() {
+        return this.internalVariableKey;
+    }
+
     public int getVariableChangeOrigin() {
         return this.variableChangeOrigin;
+    }
+
+    public boolean isScalarVariableChange() {
+        return this.type == Type.VARIABLE_CHANGED && this.arrayChange == null;
+    }
+
+    public long getOldVariableValue() {
+        return this.oldVariableValue;
+    }
+
+    public long getNewVariableValue() {
+        return this.newVariableValue;
+    }
+
+    public WiredArrayChange getArrayChange() {
+        return this.arrayChange;
     }
 
     public WiredContextVariableScope getContextVariableScope() {
@@ -468,13 +522,20 @@ public final class WiredEvent {
         private int chatStyle = -1;
         private int signalUserCount;
         private int signalFurniCount;
+        private List<RoomUnit> forwardedUsers = List.of();
+        private List<HabboItem> forwardedItems = List.of();
+        private boolean stackCall;
         private int variableTargetType = -1;
         private int variableDefinitionItemId;
+        private String internalVariableKey = "";
         private boolean variableCreated;
         private boolean variableDeleted;
         private VariableChangeKind variableChangeKind = VariableChangeKind.NONE;
         // Read when the builder is made, on the thread that performed the write.
         private int variableChangeOrigin = WiredVariableChangeOrigin.current();
+        private WiredArrayChange arrayChange;
+        private long oldVariableValue;
+        private long newVariableValue;
         private WiredContextVariableScope contextVariableScope;
         private long createdAtMs = System.currentTimeMillis();
 
@@ -483,6 +544,39 @@ public final class WiredEvent {
             if (room == null) throw new IllegalArgumentException("Room cannot be null");
             this.type = type;
             this.room = room;
+        }
+
+        /** Marks the event as a call-stacks box's call. */
+        public Builder stackCall(boolean stackCall) {
+            this.stackCall = stackCall;
+            return this;
+        }
+
+        /** The users a signal or a stack call passes on (nulls are skipped). */
+        public Builder forwardedUsers(Collection<RoomUnit> users) {
+            this.forwardedUsers = immutableWithoutNulls(users);
+            return this;
+        }
+
+        /** The furni a signal or a stack call passes on (nulls are skipped). */
+        public Builder forwardedItems(Collection<HabboItem> items) {
+            this.forwardedItems = immutableWithoutNulls(items);
+            return this;
+        }
+
+        // One immutable list shared by every signal a box sends, not a copy per signal.
+        private static <T> List<T> immutableWithoutNulls(Collection<T> values) {
+            if (values == null || values.isEmpty()) return List.of();
+
+            try {
+                return List.copyOf(values);
+            } catch (NullPointerException containsNull) {
+                List<T> kept = new ArrayList<>(values.size());
+                for (T value : values) {
+                    if (value != null) kept.add(value);
+                }
+                return List.copyOf(kept);
+            }
         }
 
         /**
@@ -642,6 +736,22 @@ public final class WiredEvent {
 
         public Builder variableChangeOrigin(int variableChangeOrigin) {
             this.variableChangeOrigin = WiredVariableChangeOrigin.normalize(variableChangeOrigin);
+            return this;
+        }
+
+        public Builder internalVariableKey(String key) {
+            this.internalVariableKey = key == null ? "" : WiredInternalVariableSupport.normalizeKey(key);
+            return this;
+        }
+
+        public Builder variableValues(long previousValue, long currentValue) {
+            this.oldVariableValue = previousValue;
+            this.newVariableValue = currentValue;
+            return this;
+        }
+
+        public Builder arrayChange(WiredArrayChange arrayChange) {
+            this.arrayChange = arrayChange;
             return this;
         }
 

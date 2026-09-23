@@ -29,7 +29,7 @@ public class WiredConditionNotMatchStatePosition extends WiredConditionMatchStat
         this.refresh();
 
         if (this.getMatchFurniSettings().isEmpty()) {
-            return false;
+            return true;
         }
 
         if (this.getQuantifier() == QUANTIFIER_ANY) {

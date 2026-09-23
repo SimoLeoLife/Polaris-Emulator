@@ -129,7 +129,8 @@ public class WiredConditionMatchStatePosition extends InteractionWiredCondition
 
         this.refresh();
 
-        if (this.settings.isEmpty()) return true;
+        // An empty snapshot matches nothing, as in Habbo.
+        if (this.settings.isEmpty()) return false;
 
         if (this.quantifier == QUANTIFIER_ANY) {
             return this.evaluateAnyTargetMatches(ctx);

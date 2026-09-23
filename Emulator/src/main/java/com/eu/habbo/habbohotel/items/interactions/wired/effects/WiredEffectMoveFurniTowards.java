@@ -156,7 +156,7 @@ public class WiredEffectMoveFurniTowards extends InteractionWiredEffect {
                             target = roomUnitsAtTile.iterator().next();
                             if (i == 0) { // i = 0 means right next to it
                                 collided = true;
-                                Emulator.getThreading().run(new WiredCollissionRunnable(target, room));
+                                Emulator.getThreading().run(new WiredCollissionRunnable(target, room, item));
                             }
                             break;
                         }

@@ -146,6 +146,7 @@ import com.eu.habbo.habbohotel.items.interactions.wired.chest.InteractionWiredCh
 import com.eu.habbo.habbohotel.items.interactions.wired.chest.InteractionWiredChestFurni;
 import com.eu.habbo.habbohotel.items.interactions.wired.conditions.WiredConditionActorDir;
 import com.eu.habbo.habbohotel.items.interactions.wired.conditions.WiredConditionBattleBanzaiRunning;
+import com.eu.habbo.habbohotel.items.interactions.wired.conditions.WiredConditionCheckArray;
 import com.eu.habbo.habbohotel.items.interactions.wired.conditions.WiredConditionChestHasItemType;
 import com.eu.habbo.habbohotel.items.interactions.wired.conditions.WiredConditionChestHasItems;
 import com.eu.habbo.habbohotel.items.interactions.wired.conditions.WiredConditionCounterTimeMatches;
@@ -283,6 +284,7 @@ import com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectLog;
 import com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectMakeFastWalk;
 import com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectMakeUserSay;
 import com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectMatchFurni;
+import com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectModifyArray;
 import com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectMoveFurniAsGroup;
 import com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectMoveFurniAway;
 import com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectMoveFurniTo;
@@ -325,6 +327,7 @@ import com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectWalkT
 import com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectWhisper;
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredBlob;
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraAnimationTime;
+import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraArrayCaptureVariable;
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraContextVariable;
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraExecuteInOrder;
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraExecutionLimit;
@@ -338,6 +341,7 @@ import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraMoveNoAn
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraMovePhysics;
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraMovementCurve;
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraOrEval;
+import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraProjectile;
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraQuest;
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraQuestChain;
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraRandom;
@@ -775,6 +779,7 @@ public class ItemManager {
         this.interactionsList.add(new ItemInteraction("wf_act_give_var", WiredEffectGiveVariable.class));
         this.interactionsList.add(new ItemInteraction("wf_act_remove_var", WiredEffectRemoveVariable.class));
         this.interactionsList.add(new ItemInteraction("wf_act_change_var_val", WiredEffectChangeVariableValue.class));
+        this.interactionsList.add(new ItemInteraction("wf_act_modify_array", WiredEffectModifyArray.class));
 
         this.interactionsList.add(new ItemInteraction("wf_cnd_has_furni_on", WiredConditionFurniHaveFurni.class));
         this.interactionsList.add(new ItemInteraction("wf_cnd_furnis_hv_avtrs", WiredConditionFurniHaveHabbo.class));
@@ -838,6 +843,7 @@ public class ItemManager {
         this.interactionsList.add(new ItemInteraction("wf_cnd_neg_has_var", WiredConditionNotHasVariable.class));
         this.interactionsList.add(new ItemInteraction("wf_cnd_var_val_match", WiredConditionVariableValueMatch.class));
         this.interactionsList.add(new ItemInteraction("wf_cnd_var_age_match", WiredConditionVariableAgeMatch.class));
+        this.interactionsList.add(new ItemInteraction("wf_cnd_check_array", WiredConditionCheckArray.class));
         // Player-facing wired chest (Scrigno) — currency + furni storage
         this.interactionsList.add(new ItemInteraction("wf_storage_coins1", InteractionWiredChestCurrency.class));
         this.interactionsList.add(new ItemInteraction("wf_storage_coins2", InteractionWiredChestCurrency.class));
@@ -931,14 +937,20 @@ public class ItemManager {
                 new ItemInteraction("wf_xtra_text_input_variable", WiredExtraTextInputVariable.class));
         this.interactionsList.add(
                 new ItemInteraction("wf_xtra_var_text_connector", WiredExtraVariableTextConnector.class));
-        // Variable fx: what a variable box's values look like over the avatars and furni that hold them.
+        this.interactionsList.add(new ItemInteraction("wf_xtra_varfx_hp", WiredExtraVariableFxHealthPoints.class));
         this.interactionsList.add(new ItemInteraction("wf_xtra_var_fx_health", WiredExtraVariableFxHealthPoints.class));
+        this.interactionsList.add(new ItemInteraction("wf_xtra_varfx_prog", WiredExtraVariableFxProgressBar.class));
         this.interactionsList.add(
                 new ItemInteraction("wf_xtra_var_fx_progress", WiredExtraVariableFxProgressBar.class));
         this.interactionsList.add(
+                new ItemInteraction("wf_xtra_varfx_levelling", WiredExtraVariableFxLevellingProgress.class));
+        this.interactionsList.add(
                 new ItemInteraction("wf_xtra_var_fx_level", WiredExtraVariableFxLevellingProgress.class));
+        this.interactionsList.add(new ItemInteraction("wf_xtra_varfx_status", WiredExtraVariableFxStatusBar.class));
         this.interactionsList.add(new ItemInteraction("wf_xtra_var_fx_status", WiredExtraVariableFxStatusBar.class));
+        this.interactionsList.add(new ItemInteraction("wf_xtra_varfx_boss", WiredExtraVariableFxBossBar.class));
         this.interactionsList.add(new ItemInteraction("wf_xtra_var_fx_boss", WiredExtraVariableFxBossBar.class));
+        this.interactionsList.add(new ItemInteraction("wf_xtra_varfx_number", WiredExtraVariableFxNumberDisplay.class));
         this.interactionsList.add(
                 new ItemInteraction("wf_xtra_var_fx_number", WiredExtraVariableFxNumberDisplay.class));
         this.interactionsList.add(
@@ -949,6 +961,8 @@ public class ItemManager {
         this.interactionsList.add(new ItemInteraction("wf_var_context", WiredExtraContextVariable.class));
         this.interactionsList.add(new ItemInteraction("wf_var_reference", WiredExtraVariableReference.class));
         this.interactionsList.add(new ItemInteraction("wf_var_echo", WiredExtraVariableEcho.class));
+        this.interactionsList.add(
+                new ItemInteraction("wf_xtra_array_capture_variable", WiredExtraArrayCaptureVariable.class));
 
         // ---- Inert-furni group: Group A/B + Phase-A aliases + advanced add-ons ----
         this.interactionsList.add(new ItemInteraction("wf_act_dont_chase", WiredEffectMoveFurniAway.class));
@@ -1077,6 +1091,9 @@ public class ItemManager {
 
         this.interactionsList.add(new ItemInteraction("wf_highscore", InteractionWiredHighscore.class));
         this.interactionsList.add(new ItemInteraction("wf_act_change_opacity", WiredEffectChangeOpacity.class));
+        // Last among the wired ones so no registered wired interaction changes position.
+        // Habbo sells the projectile add-on under this name; it turns what the stack moves to face its flight.
+        this.interactionsList.add(new ItemInteraction("wf_xtra_rotate_to_dir", WiredExtraProjectile.class));
 
         this.interactionsList.add(new ItemInteraction("battlebanzai_tile", InteractionBattleBanzaiTile.class));
         this.interactionsList.add(

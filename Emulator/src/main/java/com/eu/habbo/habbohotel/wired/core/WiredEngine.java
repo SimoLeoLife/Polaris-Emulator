@@ -4,6 +4,7 @@ import com.eu.habbo.Emulator;
 import com.eu.habbo.WiredPlatform;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredEffect;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredExtra;
+import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraArrayCaptureVariable;
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraExecutionLimit;
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraRandom;
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraUnseen;
@@ -24,6 +25,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ThreadLocalRandom;
@@ -60,6 +62,7 @@ import org.slf4j.LoggerFactory;
  * @see WiredStackIndex
  */
 public final class WiredEngine {
+    private static final int STACK_CALL_COST = 10;
 
     private static final Logger LOGGER = LoggerFactory.getLogger(WiredEngine.class);
 
@@ -187,6 +190,11 @@ public final class WiredEngine {
                     }
 
                     @Override
+                    public void captureArrayEntries(Room room, WiredStack stack, WiredContext context) {
+                        WiredEngine.this.captureArrayEntries(room, stack, context);
+                    }
+
+                    @Override
                     public void finalizeSelectors(
                             List<InteractionWiredEffect> executedSelectors, WiredContext context, long currentTime) {
                         WiredEngine.this.finalizeSelectors(executedSelectors, context, currentTime);
@@ -233,6 +241,20 @@ public final class WiredEngine {
         return this.eventDispatcher.dispatchForSourceItem(event, sourceItemId);
     }
 
+    /**
+     * Whether a call-stacks box may run one more stack: not while the room's wired is banned, and
+     * each call is charged to the room's execution budget before the called stack does any work.
+     */
+    public boolean tryAdmitStackCall(Room room, int sourceId) {
+        if (room == null || this.executionGuard.isRoomBanned(room.getId())) {
+            return false;
+        }
+
+        return getDiagnostics(room.getId())
+                .tryConsumeExecutionBudget(
+                        STACK_CALL_COST, System.currentTimeMillis(), "call_stacks", sourceId, "stack call");
+    }
+
     public boolean executeDirectStack(WiredStack stack, WiredEvent event, boolean negateConditions) {
         return this.stackExecutor.executeDirect(stack, event, negateConditions);
     }
@@ -269,6 +291,7 @@ public final class WiredEngine {
             return false;
         }
 
+        captureArrayEntries(room, stack, ctx);
         boolean conditionsPassedForExecution =
                 this.conditionEvaluator.outcomeForExecution(stack, ctx, negateConditions);
         List<IWiredEffect> executableEffects =
@@ -308,6 +331,7 @@ public final class WiredEngine {
             return false;
         }
 
+        captureArrayEntries(room, stack, ctx);
         boolean conditionsPassedForExecution = this.conditionEvaluator.outcomeForExecution(stack, ctx, false);
         if (!conditionsPassedForExecution) {
             return false;
@@ -830,6 +854,57 @@ public final class WiredEngine {
         LOGGER.debug("[WiredEngine][Room {}] {}", room.getId(), message);
     }
 
+    /** Publishes array captures before conditions so every consumer observes one immutable run scope. */
+    private void captureArrayEntries(Room room, WiredStack stack, WiredContext ctx) {
+        if (room == null
+                || stack == null
+                || stack.triggerItem() == null
+                || room.getRoomSpecialTypes() == null
+                || ctx == null) {
+            return;
+        }
+
+        List<WiredExtraArrayCaptureVariable> capturers = new ArrayList<>();
+        for (InteractionWiredExtra extra : WiredExecutionOrderUtil.sort(room.getRoomSpecialTypes()
+                .getExtras(stack.triggerItem().getX(), stack.triggerItem().getY()))) {
+            if (extra instanceof WiredExtraArrayCaptureVariable capturer) {
+                capturers.add(capturer);
+            }
+        }
+        if (capturers.isEmpty()) {
+            return;
+        }
+
+        Map<String, Integer> aliasCounts = new HashMap<>();
+        for (WiredExtraArrayCaptureVariable capturer : capturers) {
+            String alias = capturer.getCaptureAlias(room);
+            if (alias != null && !alias.isBlank()) {
+                aliasCounts.merge(alias.toLowerCase(Locale.ROOT), 1, Integer::sum);
+            }
+        }
+
+        for (WiredExtraArrayCaptureVariable capturer : capturers) {
+            String alias = capturer.getCaptureAlias(room);
+            if (alias == null || alias.isBlank()) {
+                continue;
+            }
+            ctx.state().step();
+            if (aliasCounts.getOrDefault(alias.toLowerCase(Locale.ROOT), 0) > 1) {
+                capturer.publishMissing(ctx);
+                debug(room, "Skipped duplicate array capture alias {}", alias);
+                continue;
+            }
+            try {
+                capturer.capture(ctx);
+            } catch (WiredLimitException exception) {
+                throw exception;
+            } catch (RuntimeException exception) {
+                capturer.publishMissing(ctx);
+                LOGGER.warn("Error capturing array entry for item {}", capturer.getId(), exception);
+            }
+        }
+    }
+
     private WiredExtraRandom getRandomExtra(Room room, WiredStack stack) {
         InteractionWiredExtra extra = getStackExtra(room, stack, WiredExtraRandom.class);
 
@@ -945,6 +1020,7 @@ public final class WiredEngine {
      */
     public void clearRoomDiagnostics(int roomId) {
         this.executionGuard.clearRoomDiagnostics(roomId);
+        WiredRoomTime.forgetRoom(roomId);
     }
 
     /**
@@ -1055,6 +1131,14 @@ public final class WiredEngine {
                 .recordUnreachable(System.currentTimeMillis(), reason, sourceLabel, sourceId);
     }
 
+    /** A line a "write to logs" box wrote, into the room log at the box's level. */
+    public void noteWiredLog(
+            int roomId, WiredRoomDiagnostics.Severity severity, String message, String sourceLabel, int sourceId) {
+        this.executionGuard
+                .diagnostics(roomId)
+                .recordWiredLog(System.currentTimeMillis(), severity, message, sourceLabel, sourceId);
+    }
+
     private void handleRateLimit(
             Room room,
             WiredEvent.Type eventType,
@@ -1126,6 +1210,11 @@ public final class WiredEngine {
                 room.getId(),
                 currentDepth);
         debug(room, "RECURSION LIMIT REACHED - aborting to prevent crash");
+    }
+
+    boolean tryConsumeArrayWork(Room room, int cost, int sourceId) {
+        return getDiagnostics(room.getId())
+                .tryConsumeExecutionBudget(cost, System.currentTimeMillis(), "array", sourceId, "array work budget");
     }
 
     private WiredRoomDiagnostics getDiagnostics(int roomId) {

@@ -6,6 +6,7 @@ import com.eu.habbo.habbohotel.items.Item;
 import com.eu.habbo.habbohotel.rooms.Room;
 import com.eu.habbo.habbohotel.rooms.RoomTile;
 import com.eu.habbo.habbohotel.rooms.RoomUnit;
+import com.eu.habbo.habbohotel.wired.core.WiredManager;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.Collection;
@@ -95,8 +96,15 @@ public class InteractionPressurePlate extends InteractionDefault {
             }
         }
 
-        this.setExtradata(occupied ? "1" : "0");
+        String state = occupied ? "1" : "0";
+        boolean changed = !state.equals(this.getExtradata());
+
+        this.setExtradata(state);
         room.updateItemState(this);
+
+        if (changed) {
+            WiredManager.triggerFurniStateUpdated(room, null, this, false);
+        }
     }
 
     @Override

@@ -1,5 +1,7 @@
 package com.eu.habbo.habbohotel.items.interactions.wired.conditions;
 
+import com.eu.habbo.habbohotel.games.Game;
+import com.eu.habbo.habbohotel.games.GameTeam;
 import com.eu.habbo.habbohotel.games.GameTeamColors;
 import com.eu.habbo.habbohotel.items.Item;
 import com.eu.habbo.habbohotel.items.interactions.wired.WiredSettings;
@@ -12,7 +14,6 @@ import com.eu.habbo.habbohotel.wired.core.WiredSourceUtil;
 import com.eu.habbo.messages.ServerMessage;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.util.List;
 
 public class WiredConditionTeamHasScore extends WiredConditionTeamGameBase {
     public static final WiredConditionType type = WiredConditionType.TEAM_HAS_SCORE;
@@ -34,10 +35,18 @@ public class WiredConditionTeamHasScore extends WiredConditionTeamGameBase {
 
     @Override
     public boolean evaluate(WiredContext ctx) {
-        Room room = ctx.room();
-        List<RoomUnit> users = this.resolveUsers(ctx, this.userSource);
+        // The score of the named team in the room's game, as Habbo asks it: whoever set the stack
+        // off, and also when nobody did (a timer, a game ending). Before, the box went through the
+        // users and failed without one, or for anyone who was not in that team.
+        Game game = this.resolveActiveRoomGame(ctx.room());
+        if (game == null) {
+            return false;
+        }
 
-        return this.matchesQuantifier(users, this.quantifier, roomUnit -> this.matchesUser(room, roomUnit));
+        GameTeam team = game.getTeam(this.resolveConfiguredTeamColor(this.teamType));
+        int score = (team != null) ? team.getTotalScore() : 0;
+
+        return this.compareValue(score, this.score, this.comparison);
     }
 
     @Deprecated
@@ -121,20 +130,6 @@ public class WiredConditionTeamHasScore extends WiredConditionTeamGameBase {
         if (params.length > 4) this.quantifier = this.normalizeQuantifier(params[4]);
 
         return true;
-    }
-
-    private boolean matchesUser(Room room, RoomUnit roomUnit) {
-        UserGameContext context = this.resolveUserGameContext(room, roomUnit);
-        if (context == null) {
-            return false;
-        }
-
-        GameTeamColors requiredTeam = this.resolveConfiguredTeamColor(this.teamType);
-        if (context.team.teamColor != requiredTeam) {
-            return false;
-        }
-
-        return this.compareValue(context.team.getTotalScore(), this.score, this.comparison);
     }
 
     private void resetSettings() {

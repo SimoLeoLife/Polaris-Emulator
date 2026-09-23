@@ -7,7 +7,8 @@ public final class WiredDateRangeInputGuard {
         int start = normalizeTimestamp(startDate);
         int end = normalizeTimestamp(endDate);
 
-        if (start > end) {
+        // An end of 0 is an open range, not one that ended before it began.
+        if (end > 0 && start > end) {
             return new int[] {0, 0};
         }
 

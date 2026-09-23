@@ -6,6 +6,7 @@ import com.eu.habbo.habbohotel.games.GamePlayer;
 import com.eu.habbo.habbohotel.games.GameTeam;
 import com.eu.habbo.habbohotel.games.GameTeamColors;
 import com.eu.habbo.habbohotel.items.FurnitureType;
+import com.eu.habbo.habbohotel.items.Item;
 import com.eu.habbo.habbohotel.pets.Pet;
 import com.eu.habbo.habbohotel.rooms.FurnitureMovementError;
 import com.eu.habbo.habbohotel.rooms.Room;
@@ -19,6 +20,7 @@ import com.eu.habbo.habbohotel.users.DanceType;
 import com.eu.habbo.habbohotel.users.Habbo;
 import com.eu.habbo.habbohotel.users.HabboGender;
 import com.eu.habbo.habbohotel.users.HabboItem;
+import com.eu.habbo.habbohotel.wired.arrays.WiredArrayRuntimeSupport;
 import com.eu.habbo.util.HotelDateTimeUtil;
 import java.time.ZonedDateTime;
 import java.time.temporal.WeekFields;
@@ -26,6 +28,11 @@ import java.util.Locale;
 
 public final class WiredInternalVariableSupport {
     private static final ThreadLocal<Boolean> USER_MOVE_INSTANT_OVERRIDE = new ThreadLocal<>();
+    private static final ThreadLocal<FurniMoveOrigin> FURNI_MOVE_ORIGIN = new ThreadLocal<>();
+
+    /** The box and stack a furni placement write comes from, so it moves like any wired move. */
+    private record FurniMoveOrigin(HabboItem stackItem, WiredContext ctx) {}
+
     private static final ThreadLocal<UserMoveBatch> USER_MOVE_BATCH = new ThreadLocal<>();
     private static final ThreadLocal<Integer> USER_MOVE_BATCH_DEPTH = new ThreadLocal<>();
 
@@ -60,9 +67,16 @@ public final class WiredInternalVariableSupport {
                 key, WiredInternalVariableRegistry.Capability.ROOM_REFERENCE);
     }
 
-    public static boolean canUseContextReference(String key) {
+    public static boolean canUseRoomDestination(String key) {
         return WiredInternalVariableRegistry.DEFAULT.supports(
-                key, WiredInternalVariableRegistry.Capability.CONTEXT_REFERENCE);
+                key, WiredInternalVariableRegistry.Capability.ROOM_DESTINATION);
+    }
+
+    public static boolean canUseContextReference(String key) {
+        String normalized = normalizeKey(key);
+        return WiredArrayRuntimeSupport.isValidCaptureProjectionPath(normalized)
+                || WiredInternalVariableRegistry.DEFAULT.supports(
+                        normalized, WiredInternalVariableRegistry.Capability.CONTEXT_REFERENCE);
     }
 
     public static boolean hasUserValue(Room room, RoomUnit roomUnit, String key) {
@@ -97,6 +111,10 @@ public final class WiredInternalVariableSupport {
             case "@is_trading" -> habbo != null && room.getActiveTradeForHabbo(habbo) != null;
             case "@is_frozen" -> WiredFreezeUtil.isFrozen(roomUnit);
             case "@effect_id" -> roomUnit.getEffectId() > 0;
+            case "@player_score" ->
+                habbo != null
+                        && habbo.getHabboInfo() != null
+                        && habbo.getHabboInfo().getGamePlayer() != null;
             case "@team_score", "@team_color", "@team_type" -> getTeamEffectData(roomUnit.getEffectId()) != null;
             case "@sign" -> roomUnit.hasStatus(RoomUnitStatus.SIGN);
             case "@dance" -> roomUnit.getDanceType() != null && roomUnit.getDanceType() != DanceType.NONE;
@@ -185,6 +203,12 @@ public final class WiredInternalVariableSupport {
             case "@is_frozen" -> WiredFreezeUtil.isFrozen(roomUnit) ? 1 : 0;
             case "@effect_id" -> roomUnit.getEffectId();
             case "@team_score" -> getUserTeamScore(room, habbo);
+            case "@player_score" ->
+                habbo == null
+                                || habbo.getHabboInfo() == null
+                                || habbo.getHabboInfo().getGamePlayer() == null
+                        ? null
+                        : habbo.getHabboInfo().getGamePlayer().getScore();
             case "@team_color" -> getTeamColorId(roomUnit.getEffectId());
             case "@team_type" -> getTeamTypeId(roomUnit.getEffectId());
             case "@sign" -> parseStatusInteger(roomUnit, RoomUnitStatus.SIGN);
@@ -234,12 +258,62 @@ public final class WiredInternalVariableSupport {
             return true;
         }
 
+        Integer previousValue = readUserValue(room, roomUnit, normalized);
+        boolean written = applyUserValue(room, roomUnit, normalized, value, animationDuration, noAnimation);
+        if (written)
+            emitUserChange(room, roomUnit, normalized, previousValue, readUserValue(room, roomUnit, normalized));
+        return written;
+    }
+
+    private static boolean applyUserValue(
+            Room room, RoomUnit roomUnit, String normalized, int value, int animationDuration, boolean noAnimation) {
         return switch (normalized) {
             case "@position_x" -> moveUserTo(room, roomUnit, value, roomUnit.getY(), animationDuration, noAnimation);
             case "@position_y" -> moveUserTo(room, roomUnit, roomUnit.getX(), value, animationDuration, noAnimation);
             case "@direction" -> {
                 RoomUserRotation rotation = RoomUserRotation.fromValue(value);
                 yield WiredUserMovementHelper.updateUserDirection(room, roomUnit, rotation, rotation);
+            }
+            case "@altitude" -> {
+                roomUnit.setZ(value / 100.0);
+                roomUnit.setPreviousLocationZ(value / 100.0);
+                roomUnit.statusUpdate(true);
+                room.sendComposer(
+                        new com.eu.habbo.messages.outgoing.rooms.users.RoomUserStatusComposer(roomUnit).compose());
+                yield true;
+            }
+            case "@effect_id" -> {
+                if (value < 0) yield false;
+                room.giveEffect(roomUnit, value, Integer.MAX_VALUE);
+                yield true;
+            }
+            case "@handitem_id" -> {
+                Habbo habbo = room.getHabbo(roomUnit);
+                if (value < 0) yield false;
+                if (habbo == null) room.giveHandItem(roomUnit, value);
+                else room.giveHandItem(habbo, value);
+                yield true;
+            }
+            case "@player_score" -> {
+                Habbo habbo = room.getHabbo(roomUnit);
+                GamePlayer player = habbo == null || habbo.getHabboInfo() == null
+                        ? null
+                        : habbo.getHabboInfo().getGamePlayer();
+                if (player == null || value < 0 || habbo.getHabboInfo().getCurrentGame() == null) yield false;
+                synchronized (player) {
+                    long difference = (long) value - player.getScore();
+                    if (difference < Integer.MIN_VALUE || difference > Integer.MAX_VALUE) yield false;
+                    player.addScore((int) difference, true);
+                    yield player.getScore() == value;
+                }
+            }
+            case "@team_score" -> {
+                Habbo habbo = room.getHabbo(roomUnit);
+                Game game = resolveTeamGame(room, habbo);
+                GamePlayer player = habbo == null || habbo.getHabboInfo() == null
+                        ? null
+                        : habbo.getHabboInfo().getGamePlayer();
+                yield game != null && player != null && setTeamScore(game.getTeam(player.getTeamColor()), value);
             }
             default -> false;
         };
@@ -249,6 +323,17 @@ public final class WiredInternalVariableSupport {
         Boolean previousValue = USER_MOVE_INSTANT_OVERRIDE.get();
         USER_MOVE_INSTANT_OVERRIDE.set(instant);
         return new UserMoveInstantScope(previousValue);
+    }
+
+    /**
+     * Placement writes (@position.x/y, @rotation, @altitude) made inside this scope move the furni
+     * through the wired movement path of the given box: animated, with the stack's carry, physics,
+     * animation time and curve add-ons. Outside it they place the furni directly.
+     */
+    public static FurniMoveScope beginWiredFurniMove(HabboItem stackItem, WiredContext ctx) {
+        FurniMoveOrigin previous = FURNI_MOVE_ORIGIN.get();
+        FURNI_MOVE_ORIGIN.set((stackItem != null && ctx != null) ? new FurniMoveOrigin(stackItem, ctx) : null);
+        return new FurniMoveScope(previous);
     }
 
     public static UserMoveBatchScope beginUserMoveBatch() {
@@ -265,6 +350,7 @@ public final class WiredInternalVariableSupport {
 
     static void clearThreadLocalsForCurrentThread() {
         USER_MOVE_INSTANT_OVERRIDE.remove();
+        FURNI_MOVE_ORIGIN.remove();
         USER_MOVE_BATCH.remove();
         USER_MOVE_BATCH_DEPTH.remove();
     }
@@ -281,10 +367,8 @@ public final class WiredInternalVariableSupport {
             case "@id" -> item.getId();
             case "@class_id" ->
                 (item.getBaseItem() != null) ? item.getBaseItem().getId() : null;
-            case "@height" ->
-                (item.getBaseItem() != null)
-                        ? (int) Math.round(item.getBaseItem().getHeight() * 100)
-                        : null;
+            // The height it has now: a multi-height furni's current setting, not its base height.
+            case "@height" -> (item.getBaseItem() != null) ? (int) Math.round(Item.getCurrentHeight(item) * 100) : null;
             case "@state" -> parseInteger(item.getExtradata());
             case "@position_x" -> (int) item.getX();
             case "@position_y" -> (int) item.getY();
@@ -319,6 +403,15 @@ public final class WiredInternalVariableSupport {
     }
 
     public static boolean writeFurniValue(Room room, HabboItem item, String key, int value) {
+        if (room == null || !hasFurniValue(item, key)) return false;
+
+        Integer previousValue = readFurniValue(room, item, key);
+        boolean written = applyFurniValue(room, item, key, value);
+        if (written) emitInternalChange(room, null, item, 1, key, previousValue, readFurniValue(room, item, key));
+        return written;
+    }
+
+    private static boolean applyFurniValue(Room room, HabboItem item, String key, int value) {
         if (room == null || item == null) {
             return false;
         }
@@ -355,7 +448,7 @@ public final class WiredInternalVariableSupport {
             return null;
         }
 
-        ZonedDateTime now = HotelDateTimeUtil.now();
+        ZonedDateTime now = WiredRoomTime.now(room);
         String normalized = normalizeKey(key);
 
         return switch (normalized) {
@@ -373,7 +466,7 @@ public final class WiredInternalVariableSupport {
             case "@team_yellow_size" -> getTeamMetric(room, GameTeamColors.YELLOW, false);
             case "@room_id" -> room.getId();
             case "@group_id" -> room.getGuildId();
-            case "@timezone_server" -> now.getOffset().getTotalSeconds() / 60;
+            case "@timezone_server" -> HotelDateTimeUtil.now().getOffset().getTotalSeconds() / 60;
             case "@timezone_client" -> 0;
             case "@current_time" -> (int) now.toEpochSecond();
             case "@current_time.millisecond_of_second" -> now.getNano() / 1_000_000;
@@ -398,6 +491,18 @@ public final class WiredInternalVariableSupport {
 
         String normalized = normalizeKey(key);
 
+        if (normalized.startsWith("@event.variable_update.")) {
+            Long value = readVariableUpdate(ctx, normalized);
+            return value == null || value < Integer.MIN_VALUE || value > Integer.MAX_VALUE ? null : value.intValue();
+        }
+
+        Long arrayValue = readArrayContextValue(ctx, normalized);
+        if (arrayValue != null || normalized.startsWith("@array.")) {
+            return arrayValue == null
+                    ? null
+                    : (int) Math.max(Integer.MIN_VALUE, Math.min(Integer.MAX_VALUE, arrayValue));
+        }
+
         return switch (normalized) {
             case "@selector_furni_count" ->
                 countIterable(ctx.targets() != null ? ctx.targets().items() : null);
@@ -408,6 +513,121 @@ public final class WiredInternalVariableSupport {
             case "@antenna_id" -> ctx.event().getSignalChannel();
             case "@chat_type" -> ctx.event().getChatType();
             case "@chat_style" -> ctx.event().getChatStyle();
+            default -> null;
+        };
+    }
+
+    /** Returns context values without narrowing 64-bit array field values used by text output. */
+    public static Long readContextLongValue(WiredContext ctx, String key) {
+        if (ctx == null) return null;
+
+        String normalized = normalizeKey(key);
+        if (normalized.startsWith("@event.variable_update.")) return readVariableUpdate(ctx, normalized);
+        Long arrayValue = readArrayContextValue(ctx, normalized);
+        if (arrayValue != null || normalized.startsWith("@array.")) return arrayValue;
+
+        Integer value = readContextValue(ctx, normalized);
+        return value != null ? value.longValue() : null;
+    }
+
+    private static Long readVariableUpdate(WiredContext ctx, String key) {
+        WiredEvent event = ctx.event();
+        if (event == null || !event.isScalarVariableChange()) return null;
+        return switch (key) {
+            case "@event.variable_update.box_id" ->
+                ctx.triggerItem() == null ? null : (long) ctx.triggerItem().getId();
+            case "@event.variable_update.change_type" ->
+                event.isVariableCreated() ? 0L : event.isVariableDeleted() ? 2L : 1L;
+            case "@event.variable_update.old_value" -> event.getOldVariableValue();
+            case "@event.variable_update.new_value" -> event.getNewVariableValue();
+            case "@event.variable_update.difference" -> event.getNewVariableValue() - event.getOldVariableValue();
+            case "@event.variable_update.change_origin" -> (long) event.getVariableChangeOrigin();
+            default -> null;
+        };
+    }
+
+    public static boolean writeRoomValue(Room room, String key, int value) {
+        Integer previousValue = readRoomValue(room, key);
+        boolean written = applyRoomValue(room, key, value);
+        if (written) emitInternalChange(room, null, null, 3, key, previousValue, readRoomValue(room, key));
+        return written;
+    }
+
+    private static boolean applyRoomValue(Room room, String key, int value) {
+        if (room == null || !canUseRoomDestination(key)) return false;
+        GameTeamColors color =
+                switch (normalizeKey(key)) {
+                    case "@team_red_score" -> GameTeamColors.RED;
+                    case "@team_green_score" -> GameTeamColors.GREEN;
+                    case "@team_blue_score" -> GameTeamColors.BLUE;
+                    case "@team_yellow_score" -> GameTeamColors.YELLOW;
+                    default -> null;
+                };
+        Game game = resolveTeamGame(room, null);
+        return game != null && color != null && setTeamScore(game.getTeam(color), value);
+    }
+
+    /** Emits explicit variable writes, including Give/Remove rights, without observing unrelated room updates. */
+    public static void emitUserChange(
+            Room room, RoomUnit unit, String key, Integer previousValue, Integer currentValue) {
+        emitInternalChange(room, unit, null, 0, key, previousValue, currentValue);
+    }
+
+    private static void emitInternalChange(
+            Room room,
+            RoomUnit unit,
+            HabboItem item,
+            int targetType,
+            String key,
+            Integer previousValue,
+            Integer currentValue) {
+        if (room == null || previousValue == null || currentValue == null) return;
+        WiredEvent.VariableChangeKind kind = currentValue.equals(previousValue)
+                ? WiredEvent.VariableChangeKind.UNCHANGED
+                : currentValue > previousValue
+                        ? WiredEvent.VariableChangeKind.INCREASED
+                        : WiredEvent.VariableChangeKind.DECREASED;
+        WiredManager.dispatchEffectTriggeredEvent(WiredEvent.builder(WiredEvent.Type.VARIABLE_CHANGED, room)
+                .actor(unit)
+                .sourceItem(item)
+                .variableTargetType(targetType)
+                .internalVariableKey(key)
+                .variableChangeKind(kind)
+                .variableValues(previousValue, currentValue)
+                .triggeredByEffect(true)
+                .build());
+    }
+
+    private static boolean setTeamScore(GameTeam team, int value) {
+        if (team == null || value < 0) return false;
+        synchronized (team) {
+            long difference = (long) value - team.getTotalScore();
+            long teamScore = (long) team.getTeamScore() + difference;
+            if (difference < Integer.MIN_VALUE
+                    || difference > Integer.MAX_VALUE
+                    || teamScore < Integer.MIN_VALUE
+                    || teamScore > Integer.MAX_VALUE) return false;
+            team.addTeamScore((int) difference);
+            return true;
+        }
+    }
+
+    private static Long readArrayContextValue(WiredContext ctx, String normalized) {
+        Long captured = ctx.contextVariables().readArrayCapture(normalized, ctx);
+        if (captured != null || WiredArrayRuntimeSupport.isValidCaptureProjectionPath(normalized)) return captured;
+        if (ctx.event() == null || ctx.event().getArrayChange() == null) return null;
+
+        var change = ctx.event().getArrayChange();
+        return switch (normalized) {
+            case "@array.change_type" -> (long) change.changeType();
+            case "@array.index" -> (long) change.index();
+            case "@array.source_index" -> (long) change.sourceIndex();
+            case "@array.destination_index" -> (long) change.destinationIndex();
+            case "@array.field_index" -> (long) (change.fieldId() > 0 ? change.fieldId() : -1);
+            case "@array.old_value" -> change.oldValue();
+            case "@array.new_value" -> change.newValue();
+            case "@array.old_length" -> (long) change.oldLength();
+            case "@array.new_length" -> (long) change.newLength();
             default -> null;
         };
     }
@@ -643,7 +863,11 @@ public final class WiredInternalVariableSupport {
 
         double targetZ = WiredUserMovementHelper.resolveUserTargetZ(entry.room, targetTile);
 
-        WiredUserMovementHelper.moveUser(
+        int previousX = entry.roomUnit.getX();
+        int previousY = entry.roomUnit.getY();
+        boolean xChanged = entry.xDirty;
+        boolean yChanged = entry.yDirty;
+        boolean written = WiredUserMovementHelper.moveUser(
                 entry.room,
                 entry.roomUnit,
                 targetTile,
@@ -657,6 +881,8 @@ public final class WiredInternalVariableSupport {
         entry.targetY = entry.roomUnit.getY();
         entry.xDirty = false;
         entry.yDirty = false;
+        if (written && xChanged) emitUserChange(entry.room, entry.roomUnit, "@position_x", previousX, entry.targetX);
+        if (written && yChanged) emitUserChange(entry.room, entry.roomUnit, "@position_y", previousY, entry.targetY);
     }
 
     private static boolean moveFurniTo(Room room, HabboItem item, int x, int y, int rotation, double z) {
@@ -669,7 +895,11 @@ public final class WiredInternalVariableSupport {
             return false;
         }
 
-        FurnitureMovementError error = room.moveFurniTo(item, targetTile, rotation, z, null, true, true);
+        FurniMoveOrigin origin = FURNI_MOVE_ORIGIN.get();
+        FurnitureMovementError error = (origin != null)
+                ? WiredMoveCarryHelper.moveFurni(
+                        room, origin.stackItem(), item, targetTile, rotation, z, null, true, origin.ctx())
+                : room.moveFurniTo(item, targetTile, rotation, z, null, true, true);
         return error == FurnitureMovementError.NONE;
     }
 
@@ -720,6 +950,23 @@ public final class WiredInternalVariableSupport {
         TeamEffectData(int colorId, int typeId) {
             this.colorId = colorId;
             this.typeId = typeId;
+        }
+    }
+
+    public static final class FurniMoveScope implements AutoCloseable {
+        private final FurniMoveOrigin previous;
+
+        private FurniMoveScope(FurniMoveOrigin previous) {
+            this.previous = previous;
+        }
+
+        @Override
+        public void close() {
+            if (this.previous == null) {
+                FURNI_MOVE_ORIGIN.remove();
+            } else {
+                FURNI_MOVE_ORIGIN.set(this.previous);
+            }
         }
     }
 

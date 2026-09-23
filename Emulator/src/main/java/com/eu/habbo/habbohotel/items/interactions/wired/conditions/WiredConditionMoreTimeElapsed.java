@@ -1,6 +1,5 @@
 package com.eu.habbo.habbohotel.items.interactions.wired.conditions;
 
-import com.eu.habbo.Emulator;
 import com.eu.habbo.habbohotel.items.Item;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredCondition;
 import com.eu.habbo.habbohotel.items.interactions.wired.WiredSettings;
@@ -9,6 +8,7 @@ import com.eu.habbo.habbohotel.rooms.RoomUnit;
 import com.eu.habbo.habbohotel.wired.WiredConditionType;
 import com.eu.habbo.habbohotel.wired.core.WiredContext;
 import com.eu.habbo.habbohotel.wired.core.WiredManager;
+import com.eu.habbo.habbohotel.wired.core.WiredRoomTime;
 import com.eu.habbo.messages.ServerMessage;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -30,7 +30,8 @@ public class WiredConditionMoreTimeElapsed extends InteractionWiredCondition {
 
     @Override
     public boolean evaluate(WiredContext ctx) {
-        return (Emulator.getIntUnixTimestamp() - ctx.room().getLastTimerReset()) / 0.5 > this.cycles;
+        // Half-seconds since the timers were reset, counted in milliseconds rather than whole seconds.
+        return WiredRoomTime.millisSinceTimerReset(ctx.room(), System.currentTimeMillis()) / 500.0 > this.cycles;
     }
 
     @Deprecated

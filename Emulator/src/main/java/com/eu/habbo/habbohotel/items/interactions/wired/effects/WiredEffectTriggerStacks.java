@@ -155,8 +155,24 @@ public class WiredEffectTriggerStacks extends InteractionWiredEffect {
         }
 
         Set<RoomTile> usedTiles = collectTargetTiles(room, ctx);
+        RoomTile ownTile = (room.getLayout() != null) ? room.getLayout().getTile(this.getX(), this.getY()) : null;
 
-        WiredManager.executeEffectsAtTiles(usedTiles, roomUnit, room, currentDepth + 1);
+        // The called stacks run through their own selectors, add-ons and conditions, and start
+        // from this stack's selection: what its selectors picked, else its triggering user and furni.
+        List<RoomUnit> users = ctx.targets().isUsersModifiedBySelector()
+                ? new ArrayList<>(ctx.targets().users())
+                : ctx.actor().map(List::of).orElse(List.of());
+        List<HabboItem> furni = ctx.targets().isItemsModifiedBySelector()
+                ? new ArrayList<>(ctx.targets().items())
+                : ctx.sourceItem().map(List::of).orElse(List.of());
+
+        WiredManager.callStacksAtTiles(
+                usedTiles, room, roomUnit, users, furni, ownTile, currentDepth + 1, this.isNegativeCall());
+    }
+
+    /** A negative call runs the called stacks as if their conditions had come out the other way. */
+    protected boolean isNegativeCall() {
+        return false;
     }
 
     @Deprecated

@@ -211,16 +211,28 @@ public abstract class InteractionWiredEffect extends InteractionWired implements
         LinkedHashSet<T> matched = toLinkedHashSet(matchedTargets);
         LinkedHashSet<T> base = filterExisting ? toLinkedHashSet(existingTargets) : toLinkedHashSet(availableTargets);
 
+        if (filterExisting) {
+            if (invert) {
+                base.removeAll(matched);
+                return base;
+            }
+
+            matched.retainAll(base);
+            return matched;
+        }
+
+        // An ordinary selector adds to what the stack's earlier selectors picked, as in Habbo;
+        // it used to replace it, so only the last selector in a stack counted.
+        LinkedHashSet<T> result = toLinkedHashSet(existingTargets);
+
         if (invert) {
             base.removeAll(matched);
-            return base;
+            result.addAll(base);
+        } else {
+            result.addAll(matched);
         }
 
-        if (filterExisting) {
-            matched.retainAll(base);
-        }
-
-        return matched;
+        return result;
     }
 
     protected LinkedHashSet<HabboItem> getSelectableFloorItems(Room room) {

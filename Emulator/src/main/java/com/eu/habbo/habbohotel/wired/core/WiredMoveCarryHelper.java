@@ -7,6 +7,7 @@ import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraMoveCarr
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraMoveNoAnimation;
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraMovePhysics;
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraMovementCurve;
+import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraProjectile;
 import com.eu.habbo.habbohotel.rooms.FurnitureMovementError;
 import com.eu.habbo.habbohotel.rooms.Room;
 import com.eu.habbo.habbohotel.rooms.RoomTile;
@@ -192,6 +193,8 @@ public final class WiredMoveCarryHelper {
             return FurnitureMovementError.INVALID_MOVE;
         }
 
+        rotation = resolveProjectileRotation(room, stackItem, movingItem, targetTile, rotation);
+
         if (!hasMovementBehaviorExtra(room, stackItem)) {
             return moveFurniLegacy(room, movingItem, targetTile, rotation, z, actor, sendUpdates);
         }
@@ -271,7 +274,7 @@ public final class WiredMoveCarryHelper {
                 applyInstantCarryState(room, movingItem, targetTile, rotation, carryContext);
             } else if (oldLocation != null) {
                 room.getWiredRuntime().markFurnitureMoving(movingItem, animationDuration);
-                sendMoveStyleHint(room, stackItem, movingItem);
+                sendMoveStyleHint(room, stackItem, movingItem, ctx);
                 sendAnimatedMove(
                         room,
                         movingItem,
@@ -385,6 +388,7 @@ public final class WiredMoveCarryHelper {
         if (currentDepth == null || currentDepth <= 0) {
             COLLECTED_MOVEMENTS.set(new ArrayList<>());
             MOVEMENT_COLLECTION_DEPTH.set(1);
+            WiredMoveStyleHelper.beginCollection();
             return;
         }
 
@@ -402,6 +406,8 @@ public final class WiredMoveCarryHelper {
         List<WiredMovementsComposer.MovementData> movements = COLLECTED_MOVEMENTS.get();
         COLLECTED_MOVEMENTS.remove();
         MOVEMENT_COLLECTION_DEPTH.remove();
+        // The style hints go out first: the client must know the style before the movement starts.
+        WiredMoveStyleHelper.finishCollection();
 
         if (movements == null || movements.isEmpty()) {
             return null;
@@ -410,10 +416,16 @@ public final class WiredMoveCarryHelper {
         return new WiredMovementsComposer(movements).compose();
     }
 
+    static boolean isCollectingMovements() {
+        Integer depth = MOVEMENT_COLLECTION_DEPTH.get();
+        return depth != null && depth > 0;
+    }
+
     static void clearThreadLocalsForCurrentThread() {
         SUPPRESSED_STATUS_ROOM_UNIT_IDS.remove();
         COLLECTED_MOVEMENTS.remove();
         MOVEMENT_COLLECTION_DEPTH.remove();
+        WiredMoveStyleHelper.discardCollection();
     }
 
     public static void registerUserFollower(
@@ -760,6 +772,23 @@ public final class WiredMoveCarryHelper {
         if (removeEmpty && followers.isEmpty()) {
             ACTIVE_USER_FOLLOWERS.remove(roomUnitId, followers);
         }
+    }
+
+    static int resolveProjectileRotation(
+            Room room, HabboItem stackItem, HabboItem movingItem, RoomTile targetTile, int rotation) {
+        Collection<InteractionWiredExtra> extras = getMovementExtras(room, stackItem);
+        if (extras == null) {
+            return rotation;
+        }
+
+        for (InteractionWiredExtra extra : extras) {
+            if (extra instanceof WiredExtraProjectile projectile && projectile.appliesTo(movingItem)) {
+                return projectile.resolveRotation(
+                        movingItem.getX(), movingItem.getY(), targetTile.x, targetTile.y, rotation);
+            }
+        }
+
+        return rotation;
     }
 
     private static boolean hasMovementBehaviorExtra(Room room, HabboItem stackItem) {
@@ -1241,7 +1270,7 @@ public final class WiredMoveCarryHelper {
         return null;
     }
 
-    private static void sendMoveStyleHint(Room room, HabboItem stackItem, HabboItem movingItem) {
+    private static void sendMoveStyleHint(Room room, HabboItem stackItem, HabboItem movingItem, WiredContext ctx) {
         Collection<InteractionWiredExtra> extras = getMovementExtras(room, stackItem);
         if (extras == null) {
             return;
@@ -1251,7 +1280,7 @@ public final class WiredMoveCarryHelper {
             if (extra instanceof WiredExtraMovementCurve curve
                     && curve.getCurveType() != WiredExtraMovementCurve.CURVE_LINEAR) {
                 WiredMoveStyleHelper.broadcast(
-                        room, List.of(movingItem.getId()), curve.getCurveType(), curve.getIntensity());
+                        room, List.of(movingItem.getId()), curve.getCurveType(), curve.getStyleIntensity(ctx));
                 return;
             }
         }

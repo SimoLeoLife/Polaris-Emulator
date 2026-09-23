@@ -41,7 +41,11 @@ public class WiredEffectUsersHandItem extends InteractionWiredEffect {
         Set<RoomUnit> result = new LinkedHashSet<>();
 
         for (RoomUnit roomUnit : room.getRoomUnits()) {
-            if (roomUnit != null && roomUnit.getHandItem() == this.handItemId) {
+            // 0 is any hand item, as in Habbo; empty hands are that one inverted.
+            if (roomUnit != null
+                    && (this.handItemId == 0
+                            ? roomUnit.getHandItem() > 0
+                            : roomUnit.getHandItem() == this.handItemId)) {
                 result.add(roomUnit);
             }
         }

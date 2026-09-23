@@ -9,6 +9,7 @@ import static com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffe
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -26,13 +27,13 @@ import org.junit.jupiter.api.Test;
 import org.mockito.MockedStatic;
 
 /**
- * "Bot follows user" looked at the first resolved user only, and saved the user source raw while
- * its load normalised it, so a save and a reload could disagree.
+ * "Bot follows user" hands each bot one user in turn and stops without needing a user, and it saves
+ * the user source the way its load normalises it, so a save and a reload agree.
  */
 class WiredEffectBotFollowHabboTest {
 
     @Test
-    void everyResolvedUserIsHandedToTheBot() throws Exception {
+    void eachBotFollowsOneUserHandedOutInTurn() throws Exception {
         Room room = mock(Room.class);
         RoomUnit first = mock(RoomUnit.class);
         RoomUnit second = mock(RoomUnit.class);
@@ -40,8 +41,9 @@ class WiredEffectBotFollowHabboTest {
         Habbo secondHabbo = habbo("second", second);
         when(room.getHabbo(first)).thenReturn(firstHabbo);
         when(room.getHabbo(second)).thenReturn(secondHabbo);
-        Bot bot = mock(Bot.class);
-        when(room.getBots("Frank")).thenReturn(List.of(bot));
+        Bot frank = mock(Bot.class);
+        Bot joe = mock(Bot.class);
+        when(room.getBots("Frank")).thenReturn(List.of(frank, joe));
 
         WiredEffectBotFollowHabbo box = new WiredEffectBotFollowHabbo(1, 1, base(), "", 0, 0);
         box.loadWiredData(
@@ -56,8 +58,32 @@ class WiredEffectBotFollowHabboTest {
             box.execute(ctx);
         }
 
-        verify(bot).startFollowingHabbo(firstHabbo);
-        verify(bot).startFollowingHabbo(secondHabbo);
+        // Every bot used to be told to follow every user, so all of them ended up on the last one.
+        verify(frank).startFollowingHabbo(firstHabbo);
+        verify(joe).startFollowingHabbo(secondHabbo);
+        verify(frank, never()).startFollowingHabbo(secondHabbo);
+    }
+
+    @Test
+    void stoppingNeedsNoUser() throws Exception {
+        Room room = mock(Room.class);
+        Bot frank = mock(Bot.class);
+        when(room.getBots("Frank")).thenReturn(List.of(frank));
+
+        WiredEffectBotFollowHabbo box = new WiredEffectBotFollowHabbo(1, 1, base(), "", 0, 0);
+        box.loadWiredData(
+                row("{\"bot_name\":\"Frank\",\"mode\":0,\"delay\":0,\"userSource\":0,\"botSource\":100}"), room);
+
+        WiredContext ctx = context(room);
+
+        try (MockedStatic<WiredSourceUtil> sources = mockStatic(WiredSourceUtil.class)) {
+            sources.when(() -> WiredSourceUtil.resolveUsers(ctx, WiredSourceUtil.SOURCE_TRIGGER))
+                    .thenReturn(List.of());
+
+            box.execute(ctx);
+        }
+
+        verify(frank).stopFollowingHabbo();
     }
 
     @Test

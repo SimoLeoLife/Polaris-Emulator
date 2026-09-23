@@ -110,24 +110,28 @@ public class WiredEffectBotFollowHabbo extends InteractionWiredEffect {
     @Override
     public void execute(WiredContext ctx) {
         Room room = ctx.room();
-        List<RoomUnit> targets = WiredSourceUtil.resolveUsers(ctx, this.userSource);
-        if (targets.isEmpty()) return;
-
         List<Bot> bots = WiredBotSourceUtil.resolveBots(ctx, room, this.botSource, this.botName);
         if (bots.isEmpty()) return;
 
-        // Every resolved user is handed to the bots; the box used to look at the first one only.
-        for (RoomUnit roomUnit : targets) {
-            Habbo habbo = room.getHabbo(roomUnit);
-            if (habbo == null) continue;
-
+        // Stopping needs nobody to follow: before, a stop with no user resolved did nothing.
+        if (this.mode != 1) {
             for (Bot bot : bots) {
-                if (this.mode == 1) {
-                    bot.startFollowingHabbo(habbo);
-                } else {
-                    bot.stopFollowingHabbo();
-                }
+                bot.stopFollowingHabbo();
             }
+            return;
+        }
+
+        List<Habbo> habbos = new ArrayList<>();
+        for (RoomUnit roomUnit : WiredSourceUtil.resolveUsers(ctx, this.userSource)) {
+            Habbo habbo = room.getHabbo(roomUnit);
+            if (habbo != null) habbos.add(habbo);
+        }
+        if (habbos.isEmpty()) return;
+
+        // Each bot follows one user, handed out in turn, so several bots can spread over several
+        // users. Before, every bot was told to follow every user and ended up on the last one.
+        for (int index = 0; index < bots.size(); index++) {
+            bots.get(index).startFollowingHabbo(habbos.get(index % habbos.size()));
         }
     }
 

@@ -237,6 +237,18 @@ public final class WiredEvents {
             boolean created,
             boolean deleted,
             WiredEvent.VariableChangeKind changeKind) {
+        return userVariableChanged(room, user, definitionItemId, created, deleted, changeKind, 0L, 0L);
+    }
+
+    public static WiredEvent userVariableChanged(
+            Room room,
+            RoomUnit user,
+            int definitionItemId,
+            boolean created,
+            boolean deleted,
+            WiredEvent.VariableChangeKind changeKind,
+            long previousValue,
+            long currentValue) {
         return WiredEvent.builder(WiredEvent.Type.VARIABLE_CHANGED, room)
                 .actor(user)
                 .tile((user != null) ? user.getCurrentLocation() : null)
@@ -245,6 +257,7 @@ public final class WiredEvents {
                 .variableCreated(created)
                 .variableDeleted(deleted)
                 .variableChangeKind(changeKind)
+                .variableValues(previousValue, currentValue)
                 .build();
     }
 
@@ -255,6 +268,18 @@ public final class WiredEvents {
             boolean created,
             boolean deleted,
             WiredEvent.VariableChangeKind changeKind) {
+        return furniVariableChanged(room, item, definitionItemId, created, deleted, changeKind, 0L, 0L);
+    }
+
+    public static WiredEvent furniVariableChanged(
+            Room room,
+            HabboItem item,
+            int definitionItemId,
+            boolean created,
+            boolean deleted,
+            WiredEvent.VariableChangeKind changeKind,
+            long previousValue,
+            long currentValue) {
         RoomTile tile = (item != null) ? room.getLayout().getTile(item.getX(), item.getY()) : null;
 
         return WiredEvent.builder(WiredEvent.Type.VARIABLE_CHANGED, room)
@@ -265,17 +290,28 @@ public final class WiredEvents {
                 .variableCreated(created)
                 .variableDeleted(deleted)
                 .variableChangeKind(changeKind)
+                .variableValues(previousValue, currentValue)
                 .build();
     }
 
     public static WiredEvent roomVariableChanged(
             Room room, int definitionItemId, WiredEvent.VariableChangeKind changeKind) {
+        return roomVariableChanged(room, definitionItemId, changeKind, 0L, 0L);
+    }
+
+    public static WiredEvent roomVariableChanged(
+            Room room,
+            int definitionItemId,
+            WiredEvent.VariableChangeKind changeKind,
+            long previousValue,
+            long currentValue) {
         return WiredEvent.builder(WiredEvent.Type.VARIABLE_CHANGED, room)
                 .variableTargetType(3)
                 .variableDefinitionItemId(definitionItemId)
                 .variableCreated(false)
                 .variableDeleted(false)
                 .variableChangeKind(changeKind)
+                .variableValues(previousValue, currentValue)
                 .build();
     }
 
@@ -412,10 +448,19 @@ public final class WiredEvents {
      * @return the event
      */
     public static WiredEvent botCollision(Room room, RoomUnit botUnit) {
-        return WiredEvent.builder(WiredEvent.Type.BOT_COLLISION, room)
+        return botCollision(room, botUnit, null);
+    }
+
+    public static WiredEvent botCollision(Room room, RoomUnit botUnit, HabboItem collidingFurni) {
+        WiredEvent.Builder builder = WiredEvent.builder(WiredEvent.Type.BOT_COLLISION, room)
                 .actor(botUnit)
-                .tile(botUnit.getCurrentLocation())
-                .build();
+                .tile(botUnit.getCurrentLocation());
+
+        if (collidingFurni != null) {
+            builder.sourceItem(collidingFurni);
+        }
+
+        return builder.build();
     }
 
     /**

@@ -46,6 +46,8 @@ import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraVariable
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraVariableReference;
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraVariableTextConnector;
 import com.eu.habbo.habbohotel.users.HabboItem;
+import com.eu.habbo.habbohotel.wired.arrays.WiredArrayVariableDefinition;
+import com.eu.habbo.habbohotel.wired.arrays.WiredArrayVariableType;
 import com.eu.habbo.habbohotel.wired.core.WiredContextVariableSupport;
 import com.eu.habbo.habbohotel.wired.core.WiredManager;
 import com.eu.habbo.habbohotel.wired.tick.WiredTickable;
@@ -132,6 +134,7 @@ final class RoomItemRegistry {
         boolean cleanedSignalAntennaReferences =
                 isAntennaItem(item) && specialTypes.unlinkSignalAntennaReferences(item.getId());
         this.room.getFurniVariableManager().removeAssignmentsForFurni(item.getId());
+        this.room.getArrayVariableManager().removeOwner(WiredArrayVariableType.FURNI.code(), item.getId());
 
         boolean wiredItem = false;
         if (item instanceof WiredTickable tickable) {
@@ -152,8 +155,8 @@ final class RoomItemRegistry {
             specialTypes.removeCondition(condition);
             wiredItem = true;
         } else if (item instanceof InteractionWiredExtra extra) {
-            boolean broadcastDefinitions = this.removeExtraDefinitions(item);
             specialTypes.removeExtra(extra);
+            boolean broadcastDefinitions = this.removeExtraDefinitions(item);
             if (broadcastDefinitions) {
                 WiredContextVariableSupport.broadcastDefinitions(this.room);
             }
@@ -225,6 +228,9 @@ final class RoomItemRegistry {
 
     private boolean removeExtraDefinitions(HabboItem item) {
         boolean broadcastDefinitions = false;
+        if (item instanceof WiredArrayVariableDefinition) {
+            this.room.getArrayVariableManager().removeDefinition(item.getId());
+        }
         if (item instanceof WiredExtraUserVariable) {
             this.room.getUserVariableManager().removeDefinition(item.getId());
         } else if (item instanceof WiredExtraFurniVariable) {

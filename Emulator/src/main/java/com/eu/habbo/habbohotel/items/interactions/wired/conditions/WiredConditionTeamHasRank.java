@@ -1,5 +1,6 @@
 package com.eu.habbo.habbohotel.items.interactions.wired.conditions;
 
+import com.eu.habbo.habbohotel.games.Game;
 import com.eu.habbo.habbohotel.games.GameTeam;
 import com.eu.habbo.habbohotel.games.GameTeamColors;
 import com.eu.habbo.habbohotel.items.Item;
@@ -35,6 +36,16 @@ public class WiredConditionTeamHasRank extends WiredConditionTeamGameBase {
     @Override
     public boolean evaluate(WiredContext ctx) {
         Room room = ctx.room();
+
+        // A named team: its place in the room's game, whoever set the stack off or nobody. Only
+        // "the triggering user's team" is about users.
+        if (this.teamType != TEAM_TRIGGERER) {
+            Game game = this.resolveActiveRoomGame(room);
+            GameTeam team = (game != null) ? game.getTeam(this.resolveConfiguredTeamColor(this.teamType)) : null;
+
+            return team != null && this.getTeamRank(game, team) == this.placement;
+        }
+
         List<RoomUnit> users = this.resolveUsers(ctx, this.userSource);
 
         return this.matchesQuantifier(users, this.quantifier, roomUnit -> this.matchesUser(ctx, room, roomUnit));

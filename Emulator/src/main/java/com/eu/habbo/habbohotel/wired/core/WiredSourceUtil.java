@@ -4,12 +4,14 @@ import com.eu.habbo.WiredCompatibilityDiagnostics;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredEffect;
 import com.eu.habbo.habbohotel.rooms.Room;
 import com.eu.habbo.habbohotel.rooms.RoomUnit;
+import com.eu.habbo.habbohotel.rooms.RoomUnitType;
 import com.eu.habbo.habbohotel.users.HabboItem;
 import com.eu.habbo.habbohotel.wired.api.IWiredEffect;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
+import java.util.Optional;
 
 public final class WiredSourceUtil {
     public static final int SOURCE_TRIGGER = 0;
@@ -265,6 +267,12 @@ public final class WiredSourceUtil {
                         : Collections.emptyList();
             case SOURCE_SIGNAL:
                 if (ctx.eventType() == WiredEvent.Type.SIGNAL_RECEIVED) {
+                    // Everything the signal passed on; a signal from before the sets were carried
+                    // still names its one furni.
+                    List<HabboItem> forwarded = ctx.event().getForwardedItems();
+                    if (!forwarded.isEmpty()) {
+                        return new ArrayList<>(forwarded);
+                    }
                     return ctx.sourceItem().map(Collections::singletonList).orElse(Collections.emptyList());
                 }
                 return Collections.emptyList();
@@ -281,7 +289,7 @@ public final class WiredSourceUtil {
 
         switch (sourceType) {
             case SOURCE_TRIGGER:
-                return ctx.actor().map(Collections::singletonList).orElse(Collections.emptyList());
+                return triggeringUsers(ctx);
             case SOURCE_CLICKED_USER:
                 if (ctx.eventType() == WiredEvent.Type.USER_CLICKS_USER) {
                     return ctx.event()
@@ -299,12 +307,37 @@ public final class WiredSourceUtil {
                         : Collections.emptyList();
             case SOURCE_SIGNAL:
                 if (ctx.eventType() == WiredEvent.Type.SIGNAL_RECEIVED) {
+                    List<RoomUnit> forwarded = ctx.event().getForwardedUsers();
+                    if (!forwarded.isEmpty()) {
+                        return new ArrayList<>(forwarded);
+                    }
                     return ctx.actor().map(Collections::singletonList).orElse(Collections.emptyList());
                 }
                 return Collections.emptyList();
             default:
-                return ctx.actor().map(Collections::singletonList).orElse(Collections.emptyList());
+                return triggeringUsers(ctx);
         }
+    }
+
+    /**
+     * The triggering user. When a bot reaches a user, that is the user it reached, as in Habbo:
+     * the event's actor is the bot, and a stack about "the user the bot reached" had no source that
+     * named them.
+     */
+    private static List<RoomUnit> triggeringUsers(WiredContext ctx) {
+        // Only when a bot did the reaching: a user walking to hand someone an item raises the same
+        // event, and must not get to pick who the stack acts on.
+        if (ctx.eventType() == WiredEvent.Type.BOT_REACHED_HABBO
+                && ctx.actor()
+                        .map(actor -> actor.getRoomUnitType() == RoomUnitType.BOT)
+                        .orElse(false)) {
+            Optional<RoomUnit> reached = ctx.event().getTargetUnit();
+            if (reached.isPresent()) {
+                return Collections.singletonList(reached.get());
+            }
+        }
+
+        return ctx.actor().map(Collections::singletonList).orElse(Collections.emptyList());
     }
 
     private static List<HabboItem> resolveTriggerItems(WiredContext ctx, boolean allowTriggerItemFallback) {

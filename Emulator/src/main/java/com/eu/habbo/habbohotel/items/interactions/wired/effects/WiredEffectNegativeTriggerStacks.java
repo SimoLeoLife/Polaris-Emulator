@@ -24,6 +24,11 @@ public class WiredEffectNegativeTriggerStacks extends WiredEffectTriggerStacks {
     }
 
     @Override
+    protected boolean isNegativeCall() {
+        return true;
+    }
+
+    @Override
     public WiredEffectType getType() {
         return type;
     }

@@ -36,6 +36,8 @@ final class WiredStackExecutor {
 
         boolean selectorsHaveRequiredTargets(List<InteractionWiredEffect> executedSelectors, WiredContext context);
 
+        void captureArrayEntries(Room room, WiredStack stack, WiredContext context);
+
         void finalizeSelectors(List<InteractionWiredEffect> executedSelectors, WiredContext context, long currentTime);
 
         void executeEffects(WiredStack stack, List<IWiredEffect> effects, WiredContext context, long currentTime);
@@ -103,7 +105,11 @@ final class WiredStackExecutor {
             }
         }
 
-        if (stack.trigger().requiresActor() && event.getActor().isEmpty()) {
+        // A called stack runs without its trigger firing, so a trigger that needs a user is no
+        // reason to skip it: the call passes on whoever the caller had.
+        if (!event.isStackCall()
+                && stack.trigger().requiresActor()
+                && event.getActor().isEmpty()) {
             return false;
         }
         if (!stackHasExecutableOutcome(stack, event)) {
@@ -115,6 +121,7 @@ final class WiredStackExecutor {
         if (captureResult != null) {
             WiredTextInputCaptureSupport.applyToContext(context, room, captureResult);
         }
+        seedStackCallSelection(event, context);
         WiredRoomDiagnostics roomDiagnostics = this.executionGuard.diagnostics(room.getId());
         state.step();
 
@@ -132,6 +139,7 @@ final class WiredStackExecutor {
             return false;
         }
 
+        this.hooks.captureArrayEntries(room, stack, context);
         boolean conditionsPassed = this.conditionEvaluator.outcomeForExecution(stack, context, negateConditions);
         List<IWiredEffect> executableEffects = this.effectPlanner.executableEffects(stack, conditionsPassed);
         boolean hasSpecialOutcome = conditionsPassed && hasSpecialTriggerOutcome(stack, event);
@@ -320,6 +328,25 @@ final class WiredStackExecutor {
                     : WiredTextInputCaptureSupport.CaptureResult.noMatch();
         }
         return WiredTextInputCaptureSupport.resolve(stack, event);
+    }
+
+    /**
+     * A stack call hands the called stack the caller's selection, as Habbo does: whatever the
+     * caller's selectors picked (or its triggering user and furni) is what the called stack's
+     * "selected" sources start from. The called stack's own selectors still run after this.
+     */
+    private static void seedStackCallSelection(WiredEvent event, WiredContext context) {
+        if (!event.isStackCall()) {
+            return;
+        }
+
+        if (!event.getForwardedUsers().isEmpty()) {
+            context.targets().setUsers(event.getForwardedUsers());
+        }
+
+        if (!event.getForwardedItems().isEmpty()) {
+            context.targets().setItems(event.getForwardedItems());
+        }
     }
 
     private static boolean stackHasExecutableOutcome(WiredStack stack, WiredEvent event) {
