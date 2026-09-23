@@ -7,7 +7,9 @@ public enum QuestGoalType {
     PLACE_FURNI,
     GIVE_RESPECT,
     COMPLETE_QUEST,
-    CLAIM_DAILY_TASK;
+    CLAIM_DAILY_TASK,
+    /** Moved only by the reward-track wired boxes, never by play. */
+    WIRED;
 
     /** Accepts the enum name or the official reward-track action name (chat_with_someone, place_item...). */
     public static QuestGoalType fromCode(String code) {
@@ -41,6 +43,7 @@ public enum QuestGoalType {
             case GIVE_RESPECT -> "give_respect";
             case COMPLETE_QUEST -> "complete_quest";
             case CLAIM_DAILY_TASK -> "claim_daily_task";
+            case WIRED -> "wired";
         };
     }
 }

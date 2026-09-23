@@ -14,6 +14,7 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -228,12 +229,14 @@ public class RewardTrackManager {
                 }
             }
             try (PreparedStatement statement = connection.prepareStatement(
-                    "SELECT task_id, progress_count FROM users_reward_track_tasks WHERE user_id = ? AND track_id = ?")) {
+                    "SELECT task_id, progress_count, peak_count FROM users_reward_track_tasks"
+                            + " WHERE user_id = ? AND track_id = ?")) {
                 statement.setInt(1, userId);
                 statement.setString(2, trackId);
                 try (ResultSet set = statement.executeQuery()) {
                     while (set.next()) {
                         state.setProgress(set.getString("task_id"), set.getInt("progress_count"));
+                        state.setPeak(set.getString("task_id"), set.getInt("peak_count"));
                     }
                 }
             }
@@ -276,18 +279,24 @@ public class RewardTrackManager {
     }
 
     protected void saveTaskProgress(int userId, String trackId, String taskId, int count) {
+        this.saveTaskProgress(userId, trackId, taskId, count, count);
+    }
+
+    protected void saveTaskProgress(int userId, String trackId, String taskId, int count, int peak) {
         if (!this.persistent) {
             return;
         }
         Emulator.getThreading().run(() -> {
             try (Connection connection = Emulator.getDatabase().getDataSource().getConnection();
                     PreparedStatement statement = connection.prepareStatement(
-                            "INSERT INTO users_reward_track_tasks (user_id, track_id, task_id, progress_count)"
-                                    + " VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE progress_count = VALUES(progress_count)")) {
+                            "INSERT INTO users_reward_track_tasks (user_id, track_id, task_id, progress_count, peak_count)"
+                                    + " VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE progress_count ="
+                                    + " VALUES(progress_count), peak_count = GREATEST(peak_count, VALUES(peak_count))")) {
                 statement.setInt(1, userId);
                 statement.setString(2, trackId);
                 statement.setString(3, taskId);
                 statement.setInt(4, count);
+                statement.setInt(5, Math.max(count, peak));
                 statement.execute();
             } catch (SQLException exception) {
                 LOGGER.error("Could not save reward track task {}/{} of user {}", trackId, taskId, userId, exception);
@@ -438,19 +447,68 @@ public class RewardTrackManager {
                 if (task.isComplete(before)) {
                     continue;
                 }
-                int after = before + amount;
-                state.setProgress(task.getId(), after);
-                int points = track.pointsFor(task, before, after, state.isPremium());
-                if (points > 0) {
-                    state.addPoints(points);
-                    this.saveTrack(habbo.getHabboInfo().getId(), state);
-                }
-                this.saveTaskProgress(habbo.getHabboInfo().getId(), track.getId(), task.getId(), after);
-                habbo.getClient()
-                        .sendResponse(
-                                new RewardTrackProgressComposer(track.getId(), task.getId(), after, state.getPoints()));
+                this.moveTask(habbo, track, state, task, (int) Math.min(Integer.MAX_VALUE, (long) before + amount));
             }
         }
+    }
+
+    /**
+     * Wired: moves one task's progress to {@code target}. Levels pay only past the highest count the
+     * task ever reached, so lowering or resetting it and climbing again pays nothing twice. A premium
+     * task does not move for a user without the pass. Returns the progress afterwards.
+     */
+    public int setTaskProgress(Habbo habbo, RewardTrack track, RewardTrack.Task task, int target) {
+        if (habbo == null || track == null || task == null) {
+            return 0;
+        }
+        UserRewardTrackState state = this.stateFor(habbo, track);
+        if (task.isPremium() && !state.isPremium()) {
+            return state.progressOf(task.getId());
+        }
+        return this.moveTask(habbo, track, state, task, Math.max(0, target));
+    }
+
+    /** Wired: puts the tasks back to zero. Points, claims and the levels already paid stay. */
+    public void resetTasks(Habbo habbo, RewardTrack track, Collection<RewardTrack.Task> tasks) {
+        if (habbo == null || track == null || tasks == null) {
+            return;
+        }
+        UserRewardTrackState state = this.stateFor(habbo, track);
+        for (RewardTrack.Task task : tasks) {
+            if (state.progressOf(task.getId()) > 0) {
+                this.moveTask(habbo, track, state, task, 0);
+            }
+        }
+    }
+
+    private int moveTask(Habbo habbo, RewardTrack track, UserRewardTrackState state, RewardTrack.Task task, int after) {
+        int points;
+        int peak;
+        int total;
+        // Wired firings run on worker threads; one move at a time per user and track pays a level once.
+        synchronized (state) {
+            int before = state.progressOf(task.getId());
+            if (after == before) {
+                return after;
+            }
+            int previousPeak = state.peakOf(task.getId());
+            state.setProgress(task.getId(), after);
+            points = after > previousPeak ? track.pointsFor(task, previousPeak, after, state.isPremium()) : 0;
+            if (points > 0) {
+                state.addPoints(points);
+            }
+            peak = state.peakOf(task.getId());
+            total = state.getPoints();
+        }
+        int userId = habbo.getHabboInfo().getId();
+        if (points > 0) {
+            this.saveTrack(userId, state);
+        }
+        this.saveTaskProgress(userId, track.getId(), task.getId(), after, peak);
+        if (habbo.getClient() != null) {
+            habbo.getClient().sendResponse(new RewardTrackProgressComposer(track.getId(), task.getId(), after, total));
+        }
+        return after;
     }
 
     /** ClaimRewardTrackPrize(trackId, rewardId). */

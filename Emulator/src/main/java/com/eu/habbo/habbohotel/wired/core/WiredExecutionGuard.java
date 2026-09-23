@@ -147,6 +147,7 @@ final class WiredExecutionGuard {
             new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, EventRateTracker> eventRateLimiters = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<PlayerEventKey, long[]> playerEventWindows = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Integer, long[]> timerEventWindows = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Integer, Long> bannedRooms = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Integer, WiredRoomDiagnostics> roomDiagnostics = new ConcurrentHashMap<>();
     private volatile ActiveRoomCache recentActiveRoom;
@@ -212,7 +213,14 @@ final class WiredExecutionGuard {
             }
         }
 
-        if (isRateLimited(roomId, room, eventType, now, player == null)) {
+        // Timers fire at the rate their owner set, bounded by the repeaters placed, so they are not a
+        // flood: one 50 ms repeater alone used to cross the event limit and ban its own room. They get
+        // a per-room cap instead, over which firings are dropped without a ban.
+        if (kind == EntryKind.SOURCE_ITEM) {
+            if (!admitTimerEvent(roomId, now)) {
+                return false;
+            }
+        } else if (isRateLimited(roomId, room, eventType, now, player == null)) {
             return false;
         }
 
@@ -330,6 +338,7 @@ final class WiredExecutionGuard {
         String prefix = roomId + ":";
         this.eventRateLimiters.keySet().removeIf(key -> key.startsWith(prefix));
         this.playerEventWindows.keySet().removeIf(key -> key.roomId() == roomId);
+        this.timerEventWindows.remove(roomId);
         RateTrackerCache cached = this.recentRateTracker;
         if (cached != null && cached.roomId() == roomId) {
             this.recentRateTracker = null;
@@ -339,6 +348,7 @@ final class WiredExecutionGuard {
     void clearAllRateLimiters() {
         this.eventRateLimiters.clear();
         this.playerEventWindows.clear();
+        this.timerEventWindows.clear();
         this.recentRateTracker = null;
     }
 
@@ -395,6 +405,32 @@ final class WiredExecutionGuard {
     }
 
     private record PlayerEventKey(int roomId, int roomUnitId, WiredEvent.Type eventType) {}
+
+    /** Timer firings a room may run per second, all repeaters together. */
+    static final int TIMER_EVENTS_PER_SECOND = 200;
+
+    private boolean admitTimerEvent(int roomId, long now) {
+        long[] window = this.timerEventWindows.computeIfAbsent(roomId, ignored -> new long[] {now, 0L});
+        boolean admitted;
+        boolean firstDrop;
+        synchronized (window) {
+            if (now - window[0] >= 1_000L) {
+                window[0] = now;
+                window[1] = 0L;
+            }
+            window[1]++;
+            admitted = window[1] <= TIMER_EVENTS_PER_SECOND;
+            firstDrop = window[1] == TIMER_EVENTS_PER_SECOND + 1L;
+        }
+        if (firstDrop) {
+            diagnostics(roomId)
+                    .recordTimerCap(
+                            now,
+                            "More than " + TIMER_EVENTS_PER_SECOND
+                                    + " timer firings in one second; the rest of this second is skipped");
+        }
+        return admitted;
+    }
 
     private boolean isRateLimited(int roomId, Room room, WiredEvent.Type eventType, long now, boolean mayBan) {
         long windowMs = rateLimitWindowMs();

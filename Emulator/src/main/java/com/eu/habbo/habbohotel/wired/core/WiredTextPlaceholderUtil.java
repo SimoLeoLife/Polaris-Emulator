@@ -10,6 +10,7 @@ import com.eu.habbo.habbohotel.games.freeze.FreezeGame;
 import com.eu.habbo.habbohotel.games.wired.WiredGame;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredExtra;
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraTextOutputFurniName;
+import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraTextOutputGlobal;
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraTextOutputUsername;
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraTextOutputVariable;
 import com.eu.habbo.habbohotel.pets.Pet;
@@ -24,6 +25,8 @@ import com.eu.habbo.habbohotel.wired.arrays.WiredArrayVariableType;
 import com.eu.habbo.habbohotel.wired.arrays.WiredArrayView;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
 
@@ -31,6 +34,7 @@ public final class WiredTextPlaceholderUtil {
     private static final char PRESERVED_SPACE = '\u00A0';
     private static final int MAX_PLACEHOLDER_EXPANSION_LENGTH = 16384;
     private static final int MAX_PLACEHOLDER_REPLACEMENTS = 512;
+    private static final int MAX_GLOBAL_PLACEHOLDERS = 64;
 
     private WiredTextPlaceholderUtil() {}
 
@@ -42,13 +46,18 @@ public final class WiredTextPlaceholderUtil {
         Room room = ctx.room();
         HabboItem triggerItem = ctx.triggerItem();
 
-        if (room == null || triggerItem == null || room.getRoomSpecialTypes() == null) {
+        if (room == null || room.getRoomSpecialTypes() == null) {
             return text;
         }
 
-        Collection<InteractionWiredExtra> extras =
-                room.getRoomSpecialTypes().getExtras(triggerItem.getX(), triggerItem.getY());
-        if (extras == null || extras.isEmpty()) {
+        Collection<InteractionWiredExtra> extras = (triggerItem != null)
+                ? room.getRoomSpecialTypes().getExtras(triggerItem.getX(), triggerItem.getY())
+                : null;
+        List<InteractionWiredExtra> stackExtras =
+                (extras != null && !extras.isEmpty()) ? WiredExecutionOrderUtil.sort(extras) : List.of();
+        List<WiredExtraTextOutputGlobal> globals =
+                text.contains("$(") ? collectGlobalPlaceholders(room) : Collections.emptyList();
+        if (stackExtras.isEmpty() && globals.isEmpty()) {
             return text;
         }
 
@@ -56,7 +65,7 @@ public final class WiredTextPlaceholderUtil {
 
         int replacementCount = 0;
 
-        for (InteractionWiredExtra extra : WiredExecutionOrderUtil.sort(extras)) {
+        for (InteractionWiredExtra extra : stackExtras) {
             if (extra instanceof WiredExtraTextOutputUsername) {
                 WiredExtraTextOutputUsername usernameExtra = (WiredExtraTextOutputUsername) extra;
                 String placeholderToken = usernameExtra.getPlaceholderToken();
@@ -107,7 +116,34 @@ public final class WiredTextPlaceholderUtil {
             }
         }
 
+        for (WiredExtraTextOutputGlobal global : globals) {
+            if (shouldStopPlaceholderExpansion(resolvedText, replacementCount)) {
+                break;
+            }
+
+            String placeholderToken = global.getPlaceholderToken();
+            if (!placeholderToken.isEmpty() && resolvedText.contains(placeholderToken)) {
+                resolvedText = replaceWithBudget(resolvedText, placeholderToken, global.resolveText(room));
+                replacementCount++;
+            }
+        }
+
         return preserveRepeatedSpaces(resolvedText);
+    }
+
+    /** The room's global placeholders by item id, capped; a stack's own placeholders are applied first. */
+    static List<WiredExtraTextOutputGlobal> collectGlobalPlaceholders(Room room) {
+        List<WiredExtraTextOutputGlobal> result = new ArrayList<>();
+
+        for (InteractionWiredExtra extra : room.getRoomSpecialTypes().getExtras()) {
+            if (extra instanceof WiredExtraTextOutputGlobal global
+                    && !global.getPlaceholderName().isEmpty()) {
+                result.add(global);
+            }
+        }
+
+        result.sort(Comparator.comparingInt(WiredExtraTextOutputGlobal::getId));
+        return (result.size() > MAX_GLOBAL_PLACEHOLDERS) ? result.subList(0, MAX_GLOBAL_PLACEHOLDERS) : result;
     }
 
     private static boolean shouldStopPlaceholderExpansion(String resolvedText, int replacementCount) {

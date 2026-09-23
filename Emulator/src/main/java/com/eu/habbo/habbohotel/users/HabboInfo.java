@@ -10,6 +10,7 @@ import com.eu.habbo.habbohotel.navigation.NavigatorSavedSearch;
 import com.eu.habbo.habbohotel.permissions.Rank;
 import com.eu.habbo.habbohotel.pets.PetTasks;
 import com.eu.habbo.habbohotel.pets.RideablePet;
+import com.eu.habbo.habbohotel.rooms.PendingRoomEntry;
 import com.eu.habbo.habbohotel.rooms.Room;
 import com.eu.habbo.habbohotel.rooms.RoomTile;
 import com.eu.habbo.habbohotel.rooms.RoomUnit;
@@ -55,6 +56,8 @@ public class HabboInfo implements Runnable {
     private Room currentRoom;
     private String roomEntryMethod = "door";
     private int roomEntryTeleportId = 0;
+    private PendingRoomEntry pendingRoomEntry;
+    private long lastRoomForwardAt;
     private int roomQueueId;
     private RideablePet riding;
     private Class<? extends Game> currentGame;
@@ -643,6 +646,26 @@ public class HabboInfo implements Runnable {
 
     public void setRoomEntryTeleportId(int roomEntryTeleportId) {
         this.roomEntryTeleportId = roomEntryTeleportId;
+    }
+
+    public synchronized void setPendingRoomEntry(PendingRoomEntry entry) {
+        this.pendingRoomEntry = entry;
+    }
+
+    /** The arrival told for this room, if it is still fresh. Any pending arrival is cleared. */
+    public synchronized PendingRoomEntry takePendingRoomEntry(int roomId, long now) {
+        PendingRoomEntry entry = this.pendingRoomEntry;
+        this.pendingRoomEntry = null;
+        return (entry != null && entry.appliesTo(roomId, now)) ? entry : null;
+    }
+
+    /** Admits one furni-driven room forward per interval for this user. */
+    public synchronized boolean tryAcquireRoomForward(long now, long intervalMs) {
+        if (this.lastRoomForwardAt != 0 && now - this.lastRoomForwardAt < intervalMs) {
+            return false;
+        }
+        this.lastRoomForwardAt = now;
+        return true;
     }
 
     public int getRoomQueueId() {

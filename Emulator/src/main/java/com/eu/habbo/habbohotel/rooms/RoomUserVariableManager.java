@@ -7,6 +7,7 @@ import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraVariable
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraVariableReference;
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredVariableReferenceSupport;
 import com.eu.habbo.habbohotel.users.Habbo;
+import com.eu.habbo.habbohotel.wired.core.WiredDailyTaskSupport;
 import com.eu.habbo.habbohotel.wired.core.WiredEvent;
 import com.eu.habbo.habbohotel.wired.core.WiredManager;
 import com.eu.habbo.habbohotel.wired.core.WiredVariableLevelSystemSupport;
@@ -176,8 +177,8 @@ public class RoomUserVariableManager {
         }
 
         boolean overwritten = existingAssignment != null && overrideExisting;
-        boolean valueChanged =
-                existingAssignment == null || !Objects.equals(existingAssignment.getValue(), normalizedValue);
+        boolean valueChanged = existingAssignment == null
+                || !Objects.equals(this.effectiveValue(definitionItemId, existingAssignment), normalizedValue);
         boolean changed = overwritten || valueChanged;
 
         if (existingAssignment == null || overwritten) {
@@ -296,9 +297,9 @@ public class RoomUserVariableManager {
         }
 
         Integer normalizedValue = value;
-        if (Objects.equals(assignment.getValue(), normalizedValue)) {
-            this.emitVariableChangedEvents(
-                    userId, extra, definitionInfo, true, previousValue, true, assignment.getValue());
+        Integer storedValue = this.effectiveValue(definitionItemId, assignment);
+        if (Objects.equals(storedValue, normalizedValue)) {
+            this.emitVariableChangedEvents(userId, extra, definitionInfo, true, previousValue, true, storedValue);
             return false;
         }
 
@@ -356,13 +357,8 @@ public class RoomUserVariableManager {
             return 0;
         }
 
-        VariableAssignment assignment = assignments.get(definitionItemId);
-
-        if (assignment == null || assignment.getValue() == null) {
-            return 0;
-        }
-
-        return assignment.getValue();
+        Integer value = this.effectiveValue(definitionItemId, assignments.get(definitionItemId));
+        return (value != null) ? value : 0;
     }
 
     public int getCreatedAt(int userId, int definitionItemId) {
@@ -572,7 +568,9 @@ public class RoomUserVariableManager {
             VariableAssignment assignment = assignments.remove(definitionItemId);
             if (assignment == null) continue;
 
-            previousValues.put(entry.getKey(), definitionInfo.hasValue() ? assignment.getValue() : null);
+            previousValues.put(
+                    entry.getKey(),
+                    definitionInfo.hasValue() ? this.effectiveValue(definitionItemId, assignment) : null);
             if (assignments.isEmpty()) this.activeAssignmentsByUserId.remove(entry.getKey(), assignments);
         }
 
@@ -726,7 +724,7 @@ public class RoomUserVariableManager {
 
                     assignments.add(new AssignmentEntry(
                             assignmentEntry.getKey(),
-                            assignmentEntry.getValue().getValue(),
+                            this.effectiveValue(assignmentEntry.getKey(), assignmentEntry.getValue()),
                             assignmentEntry.getValue().getCreatedAt(),
                             assignmentEntry.getValue().getUpdatedAt()));
                 }
@@ -1072,9 +1070,22 @@ public class RoomUserVariableManager {
                 this.room,
                 derivedDefinition.getLevelSystem(),
                 derivedDefinition.getSubvariableType(),
-                base.getValue(),
+                this.effectiveValue(derivedDefinition.getBaseDefinitionItemId(), base),
                 base.getCreatedAt(),
                 base.getUpdatedAt());
+    }
+
+    private Integer effectiveValue(int definitionItemId, VariableAssignment assignment) {
+        if (assignment == null) {
+            return null;
+        }
+
+        return WiredDailyTaskSupport.effectiveValue(
+                this.room,
+                this.getDefinitionExtra(definitionItemId),
+                assignment.getValue(),
+                assignment.getUpdatedAt(),
+                this.currentTimestamp.getAsInt());
     }
 
     private void emitVariableChangedEvents(

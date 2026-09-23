@@ -3,6 +3,7 @@ package com.eu.habbo.habbohotel.items.interactions.wired.effects;
 import com.eu.habbo.Emulator;
 import com.eu.habbo.habbohotel.gameclients.GameClient;
 import com.eu.habbo.habbohotel.games.Game;
+import com.eu.habbo.habbohotel.games.GameTeam;
 import com.eu.habbo.habbohotel.games.GameTeamColors;
 import com.eu.habbo.habbohotel.games.battlebanzai.BattleBanzaiGame;
 import com.eu.habbo.habbohotel.games.freeze.FreezeGame;
@@ -24,8 +25,22 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ThreadLocalRandom;
 
+/**
+ * Puts the selected users in a team of the wired, banzai or freeze game. The join mode picks the
+ * team: the chosen one, the one with the fewest members, or a random one.
+ *
+ * <p>Int params {@code [game, team, user source, join mode]}; boxes saved with {@code [team, user
+ * source]} or without the join mode join the chosen team.
+ */
 public class WiredEffectJoinTeam extends InteractionWiredEffect {
+    static final int MODE_CHOSEN = 0;
+    static final int MODE_SMALLEST = 1;
+    static final int MODE_RANDOM = 2;
+    private static final GameTeamColors[] TEAMS = {
+        GameTeamColors.RED, GameTeamColors.GREEN, GameTeamColors.BLUE, GameTeamColors.YELLOW
+    };
     private static final int TEAM_TYPE_WIRED = 0;
     private static final int TEAM_TYPE_BANZAI = 1;
     private static final int TEAM_TYPE_FREEZE = 2;
@@ -34,6 +49,7 @@ public class WiredEffectJoinTeam extends InteractionWiredEffect {
     private GameTeamColors teamColor = GameTeamColors.RED;
     private int teamType = TEAM_TYPE_WIRED;
     private int userSource = WiredSourceUtil.SOURCE_TRIGGER;
+    private int joinMode = MODE_CHOSEN;
 
     public WiredEffectJoinTeam(ResultSet set, Item baseItem) throws SQLException {
         super(set, baseItem);
@@ -57,10 +73,12 @@ public class WiredEffectJoinTeam extends InteractionWiredEffect {
                 currentGame = room.getGame(habbo.getHabboInfo().getCurrentGame());
             }
 
+            GameTeamColors team = this.resolveTeam(room.getGame(targetGameType), habbo);
+
             if (habbo.getHabboInfo().getGamePlayer() != null
                     && habbo.getHabboInfo().getCurrentGame() != null
                     && (habbo.getHabboInfo().getCurrentGame() != targetGameType
-                            || habbo.getHabboInfo().getGamePlayer().getTeamColor() != this.teamColor)
+                            || habbo.getHabboInfo().getGamePlayer().getTeamColor() != team)
                     && currentGame != null) {
                 currentGame.removeHabbo(habbo);
             }
@@ -70,9 +88,46 @@ public class WiredEffectJoinTeam extends InteractionWiredEffect {
                 if (game == null) {
                     continue;
                 }
-                game.addHabbo(habbo, this.teamColor);
+                game.addHabbo(habbo, team);
             }
         }
+    }
+
+    GameTeamColors resolveTeam(Game game, Habbo habbo) {
+        return switch (this.joinMode) {
+            case MODE_SMALLEST -> smallestTeam(game, habbo);
+            case MODE_RANDOM -> TEAMS[ThreadLocalRandom.current().nextInt(TEAMS.length)];
+            default -> this.teamColor;
+        };
+    }
+
+    /**
+     * The team with the fewest other members. A tie keeps the user in their own team, otherwise the
+     * first of red, green, blue and yellow wins, so a room fills its teams in turn.
+     */
+    static GameTeamColors smallestTeam(Game game, Habbo habbo) {
+        GameTeamColors current = null;
+        if (game != null
+                && habbo != null
+                && habbo.getHabboInfo().getGamePlayer() != null
+                && habbo.getHabboInfo().getCurrentGame() == game.getClass()) {
+            current = habbo.getHabboInfo().getGamePlayer().getTeamColor();
+        }
+
+        GameTeamColors best = null;
+        int bestSize = Integer.MAX_VALUE;
+        for (GameTeamColors color : TEAMS) {
+            GameTeam team = (game != null) ? game.getTeam(color) : null;
+            int size = (team != null) ? team.getMembers().size() : 0;
+            if (color == current) {
+                size--;
+            }
+            if (size < bestSize || (size == bestSize && color == current)) {
+                best = color;
+                bestSize = size;
+            }
+        }
+        return best;
     }
 
     @Deprecated
@@ -84,7 +139,7 @@ public class WiredEffectJoinTeam extends InteractionWiredEffect {
     @Override
     public String getWiredData() {
         return WiredManager.getGson()
-                .toJson(new JsonData(this.teamColor, this.teamType, this.getDelay(), this.userSource));
+                .toJson(new JsonData(this.teamColor, this.teamType, this.getDelay(), this.userSource, this.joinMode));
     }
 
     @Override
@@ -99,6 +154,7 @@ public class WiredEffectJoinTeam extends InteractionWiredEffect {
             this.teamColor = (data.team != null) ? data.team : GameTeamColors.RED;
             this.teamType = this.normalizeTeamType(data.teamType);
             this.userSource = data.userSource;
+            this.joinMode = normalizeJoinMode(data.joinMode);
         } else {
             String[] data = set.getString("wired_data").split("\t");
 
@@ -113,6 +169,7 @@ public class WiredEffectJoinTeam extends InteractionWiredEffect {
             this.needsUpdate(true);
             this.teamType = TEAM_TYPE_WIRED;
             this.userSource = WiredSourceUtil.SOURCE_TRIGGER;
+            this.joinMode = MODE_CHOSEN;
         }
     }
 
@@ -121,6 +178,7 @@ public class WiredEffectJoinTeam extends InteractionWiredEffect {
         this.teamColor = GameTeamColors.RED;
         this.teamType = TEAM_TYPE_WIRED;
         this.userSource = WiredSourceUtil.SOURCE_TRIGGER;
+        this.joinMode = MODE_CHOSEN;
         this.setDelay(0);
     }
 
@@ -137,10 +195,11 @@ public class WiredEffectJoinTeam extends InteractionWiredEffect {
         message.appendInt(this.getBaseItem().getSpriteId());
         message.appendInt(this.getId());
         message.appendString("");
-        message.appendInt(3);
+        message.appendInt(4);
         message.appendInt(this.teamType);
         message.appendInt(this.teamColor.type);
         message.appendInt(this.userSource);
+        message.appendInt(this.joinMode);
         message.appendInt(0);
         message.appendInt(this.getType().code);
         message.appendInt(this.getDelay());
@@ -165,12 +224,18 @@ public class WiredEffectJoinTeam extends InteractionWiredEffect {
     public boolean saveData(WiredSettings settings, GameClient gameClient) throws WiredSaveException {
         if (settings.getIntParams().length < 2) throw new WiredSaveException("invalid data");
 
+        int teamType;
+        int userSource;
+        int joinMode = MODE_CHOSEN;
         if (settings.getIntParams().length > 2) {
-            this.teamType = this.normalizeTeamType(settings.getIntParams()[0]);
-            this.userSource = settings.getIntParams()[2];
+            teamType = this.normalizeTeamType(settings.getIntParams()[0]);
+            userSource = settings.getIntParams()[2];
+            if (settings.getIntParams().length > 3) {
+                joinMode = normalizeJoinMode(settings.getIntParams()[3]);
+            }
         } else {
-            this.teamType = TEAM_TYPE_WIRED;
-            this.userSource = settings.getIntParams()[1];
+            teamType = TEAM_TYPE_WIRED;
+            userSource = settings.getIntParams()[1];
         }
 
         int team = (settings.getIntParams().length > 2) ? settings.getIntParams()[1] : settings.getIntParams()[0];
@@ -182,6 +247,9 @@ public class WiredEffectJoinTeam extends InteractionWiredEffect {
         if (delay > Emulator.getConfig().getInt("hotel.wired.max_delay", 20))
             throw new WiredSaveException("Delay too long");
 
+        this.teamType = teamType;
+        this.userSource = WiredMovementPayloadGuard.userSource(userSource);
+        this.joinMode = joinMode;
         this.teamColor = GameTeamColors.fromType(team);
         this.setDelay(delay);
 
@@ -191,6 +259,10 @@ public class WiredEffectJoinTeam extends InteractionWiredEffect {
     @Override
     public boolean requiresTriggeringUser() {
         return this.userSource == WiredSourceUtil.SOURCE_TRIGGER;
+    }
+
+    static int normalizeJoinMode(int value) {
+        return (value == MODE_SMALLEST || value == MODE_RANDOM) ? value : MODE_CHOSEN;
     }
 
     private int normalizeTeamType(int value) {
@@ -217,12 +289,14 @@ public class WiredEffectJoinTeam extends InteractionWiredEffect {
         int teamType;
         int delay;
         int userSource;
+        int joinMode;
 
-        public JsonData(GameTeamColors team, int teamType, int delay, int userSource) {
+        public JsonData(GameTeamColors team, int teamType, int delay, int userSource, int joinMode) {
             this.team = team;
             this.teamType = teamType;
             this.delay = delay;
             this.userSource = userSource;
+            this.joinMode = joinMode;
         }
     }
 }

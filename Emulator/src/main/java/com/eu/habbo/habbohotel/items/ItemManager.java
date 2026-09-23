@@ -301,6 +301,8 @@ import com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectOpenH
 import com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectOverrideHeight;
 import com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectPlaceFurni;
 import com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectPlayYoutube;
+import com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectProgressAchievement;
+import com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectProgressRewardTrack;
 import com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectQuickBopper;
 import com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectRelativeMove;
 import com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectRemoveBadge;
@@ -308,6 +310,7 @@ import com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectRemov
 import com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectRemoveTag;
 import com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectRemoveVariable;
 import com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectResetHighscores;
+import com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectResetRewardTrack;
 import com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectResetTimers;
 import com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectRollDice;
 import com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectSayCommand;
@@ -326,9 +329,11 @@ import com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectUserT
 import com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectWalkToFurni;
 import com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectWhisper;
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredBlob;
+import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraAchievementEnabler;
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraAnimationTime;
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraArrayCaptureVariable;
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraContextVariable;
+import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraDailyTask;
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraExecuteInOrder;
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraExecutionLimit;
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraFilterFurni;
@@ -348,6 +353,7 @@ import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraRandom;
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraRoomVariable;
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraTextInputVariable;
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraTextOutputFurniName;
+import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraTextOutputGlobal;
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraTextOutputUsername;
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraTextOutputVariable;
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraTimeUtilities;
@@ -1094,6 +1100,15 @@ public class ItemManager {
         // Last among the wired ones so no registered wired interaction changes position.
         // Habbo sells the projectile add-on under this name; it turns what the stack moves to face its flight.
         this.interactionsList.add(new ItemInteraction("wf_xtra_rotate_to_dir", WiredExtraProjectile.class));
+        this.interactionsList.add(
+                new ItemInteraction("wf_act_progress_achievement", WiredEffectProgressAchievement.class));
+        this.interactionsList.add(
+                new ItemInteraction("wf_xtra_achievement_enabler", WiredExtraAchievementEnabler.class));
+        this.interactionsList.add(
+                new ItemInteraction("wf_act_progress_reward_track", WiredEffectProgressRewardTrack.class));
+        this.interactionsList.add(new ItemInteraction("wf_act_reset_reward_track", WiredEffectResetRewardTrack.class));
+        this.interactionsList.add(new ItemInteraction("wf_xtra_text_output_global", WiredExtraTextOutputGlobal.class));
+        this.interactionsList.add(new ItemInteraction("wf_var_daily_task", WiredExtraDailyTask.class));
 
         this.interactionsList.add(new ItemInteraction("battlebanzai_tile", InteractionBattleBanzaiTile.class));
         this.interactionsList.add(

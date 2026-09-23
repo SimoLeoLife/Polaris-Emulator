@@ -125,7 +125,15 @@ public enum WiredEffectType {
     // Habbo's "write to logs" action: a message at a log level, into the room's wired log. It had
     // borrowed EFFECT_MESSAGE's chat composer, which has no level. 130-136 are the variable fx and
     // projectile extras, so this takes the next seat.
-    WRITE_TO_LOGS(137);
+    WRITE_TO_LOGS(137),
+    // Habbo's "teleport to room": a typed room id, or the room a picked room link or teleporter
+    // leads to. It had borrowed EFFECT_ID's text box, which cannot pick furni.
+    TELEPORT_TO_ROOM(138),
+    // Habbo's achievement and reward-track actions. They get their own dialogs; 151 is the
+    // achievement enabler add-on between them.
+    PROGRESS_ACHIEVEMENT(150),
+    PROGRESS_REWARD_TRACK(152),
+    RESET_REWARD_TRACK(153);
 
     public final int code;
 
