@@ -173,6 +173,24 @@ abstract class WiredConditionTeamGameBase extends InteractionWiredCondition {
         return rank;
     }
 
+    /**
+     * The team game running in the room, for boxes about a named team rather than about a user:
+     * such a box asks about the room's game, whoever set it off - or nobody, on a timer.
+     */
+    protected Game resolveActiveRoomGame(Room room) {
+        if (room == null || room.getGames() == null) {
+            return null;
+        }
+
+        for (Game game : room.getGames()) {
+            if (this.isSupportedGame(game)) {
+                return game;
+            }
+        }
+
+        return null;
+    }
+
     private boolean isSupportedGame(Game game) {
         return game != null
                 && game.getState() != GameState.IDLE

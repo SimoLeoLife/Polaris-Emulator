@@ -12,6 +12,7 @@ import com.eu.habbo.habbohotel.wired.WiredEffectType;
 import com.eu.habbo.habbohotel.wired.core.WiredContext;
 import com.eu.habbo.habbohotel.wired.core.WiredManager;
 import com.eu.habbo.habbohotel.wired.core.WiredSourceUtil;
+import com.eu.habbo.habbohotel.wired.core.WiredState;
 import com.eu.habbo.messages.ServerMessage;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -59,6 +60,10 @@ public class WiredEffectRemoteSelector extends InteractionWiredEffect {
             return;
         }
 
+        if (this.runPickedSelectors(ctx, room)) {
+            return;
+        }
+
         boolean includeWiredItems = this.includeWiredTargets(ctx);
 
         Set<HabboItem> matched = new LinkedHashSet<>();
@@ -85,6 +90,63 @@ public class WiredEffectRemoteSelector extends InteractionWiredEffect {
                 this.filterExisting,
                 this.invert);
         ctx.targets().setItems(result);
+    }
+
+    /**
+     * Picked selector boxes are run, as Habbo's remote selection does, and what they pick - furni,
+     * users or both - is this box's result. False when no selector box is picked, so the box keeps
+     * its signal / picked-furni behaviour.
+     */
+    private boolean runPickedSelectors(WiredContext ctx, Room room) {
+        List<InteractionWiredEffect> selectors = new ArrayList<>();
+        for (Integer id : this.pickedFurniIds) {
+            HabboItem item = room.getHabboItem(id);
+            if (item instanceof InteractionWiredEffect effect
+                    && effect.isSelector()
+                    && !(effect instanceof WiredEffectRemoteSelector)) {
+                selectors.add(effect);
+            }
+        }
+
+        if (selectors.isEmpty()) {
+            return false;
+        }
+
+        Set<HabboItem> items = new LinkedHashSet<>();
+        Set<RoomUnit> users = new LinkedHashSet<>();
+        boolean pickedItems = false;
+        boolean pickedUsers = false;
+
+        for (InteractionWiredEffect selector : selectors) {
+            WiredContext scratch = new WiredContext(ctx.event(), ctx.triggerItem(), ctx.services(), new WiredState(20));
+            selector.execute(scratch);
+
+            if (scratch.targets().isItemsModifiedBySelector()) {
+                pickedItems = true;
+                items.addAll(scratch.targets().items());
+            }
+            if (scratch.targets().isUsersModifiedBySelector()) {
+                pickedUsers = true;
+                users.addAll(scratch.targets().users());
+            }
+        }
+
+        if (pickedItems) {
+            ctx.targets()
+                    .setItems(this.applySelectorModifiers(
+                            items,
+                            this.getSelectableFloorItems(room, ctx),
+                            ctx.targets().items(),
+                            this.filterExisting,
+                            this.invert));
+        }
+        if (pickedUsers) {
+            ctx.targets()
+                    .setUsers(this.applySelectorModifiers(
+                            users, room.getRoomUnits(), ctx.targets().users(), this.filterExisting, this.invert));
+        }
+
+        return true;
     }
 
     @Override

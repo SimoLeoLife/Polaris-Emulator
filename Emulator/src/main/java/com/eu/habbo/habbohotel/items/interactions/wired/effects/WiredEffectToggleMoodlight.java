@@ -92,6 +92,7 @@ public class WiredEffectToggleMoodlight extends InteractionWiredEffect {
             moodLight.needsUpdate(true);
             room.updateItem(moodLight);
             Emulator.getThreading().run(moodLight);
+            WiredManager.triggerFurniStateUpdated(room, ctx.actor().orElse(null), moodLight, true);
         }
     }
 

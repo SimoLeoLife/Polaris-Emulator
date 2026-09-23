@@ -37,6 +37,7 @@ import com.eu.habbo.habbohotel.wired.core.WiredContext;
 import com.eu.habbo.habbohotel.wired.core.WiredContextVariableSupport;
 import com.eu.habbo.habbohotel.wired.core.WiredInternalVariableSupport;
 import com.eu.habbo.habbohotel.wired.core.WiredManager;
+import com.eu.habbo.habbohotel.wired.core.WiredMoveCarryHelper;
 import com.eu.habbo.habbohotel.wired.core.WiredSourceUtil;
 import com.eu.habbo.habbohotel.wired.core.WiredUserMovementHelper;
 import com.eu.habbo.messages.ServerMessage;
@@ -345,7 +346,8 @@ public class WiredEffectChangeVariableValue extends InteractionWiredEffect {
             Integer referenceValue = this.referenceFor(references, item.getId(), TARGET_FURNI, index++);
             if (!this.isUnaryOperation() && referenceValue == null) continue;
 
-            this.writeFurniInternalValue(room, item, key, applyOperation(this.operation, currentValue, referenceValue));
+            this.writeFurniInternalValue(
+                    ctx, room, item, key, applyOperation(this.operation, currentValue, referenceValue));
         }
     }
 
@@ -1012,17 +1014,27 @@ public class WiredEffectChangeVariableValue extends InteractionWiredEffect {
         return WiredInternalVariableSupport.readUserValue(room, roomUnit, key);
     }
 
+    // A user moved or turned by a variable write honours the stack's animation-time and
+    // no-animation add-ons, like a user moved by any other wired box.
     private boolean writeUserInternalValue(Room room, RoomUnit roomUnit, String key, int value) {
         return WiredInternalVariableSupport.writeUserValue(
-                room, roomUnit, key, value, WiredUserMovementHelper.DEFAULT_ANIMATION_DURATION, false);
+                room,
+                roomUnit,
+                key,
+                value,
+                WiredMoveCarryHelper.getAnimationDuration(
+                        room, this, WiredUserMovementHelper.DEFAULT_ANIMATION_DURATION),
+                WiredMoveCarryHelper.hasNoAnimationExtra(room, this));
     }
 
     private Integer readFurniInternalValue(Room room, HabboItem item, String key) {
         return WiredInternalVariableSupport.readFurniValue(room, item, key);
     }
 
-    private boolean writeFurniInternalValue(Room room, HabboItem item, String key, int value) {
-        return WiredInternalVariableSupport.writeFurniValue(room, item, key, value);
+    private boolean writeFurniInternalValue(WiredContext ctx, Room room, HabboItem item, String key, int value) {
+        try (var scope = WiredInternalVariableSupport.beginWiredFurniMove(this, ctx)) {
+            return WiredInternalVariableSupport.writeFurniValue(room, item, key, value);
+        }
     }
 
     private Integer readRoomInternalValue(Room room, String key) {

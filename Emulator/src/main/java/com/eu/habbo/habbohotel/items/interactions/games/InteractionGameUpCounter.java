@@ -203,6 +203,12 @@ public class InteractionGameUpCounter extends InteractionGameTimer {
 
         this.setCurrentTimeInMs(nextTimeMs);
         this.applyCounterState(room, true);
+
+        // Setting the clock onto a time is reaching it, as in Habbo: a "clock reaches" trigger
+        // for that time fires, which it never did when the time was adjusted rather than ticked to.
+        if (room != null) {
+            WiredManager.triggerClockCounter(room, this);
+        }
     }
 
     public void resetOnRoomUnload(Room room) {

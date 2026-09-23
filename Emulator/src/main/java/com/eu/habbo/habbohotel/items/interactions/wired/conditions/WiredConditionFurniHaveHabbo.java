@@ -61,7 +61,8 @@ public class WiredConditionFurniHaveHabbo extends InteractionWiredCondition {
         this.refresh();
 
         List<HabboItem> targets = WiredSourceUtil.resolveItems(ctx, this.furniSource, this.items);
-        if (targets.isEmpty()) return true;
+        // Nothing to check has nobody on it, as in Habbo; the NOT box passes instead.
+        if (targets.isEmpty()) return false;
 
         if (room.getLayout() == null) return false;
 

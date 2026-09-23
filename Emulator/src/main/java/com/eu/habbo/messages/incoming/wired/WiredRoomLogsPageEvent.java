@@ -13,8 +13,9 @@ import java.util.Locale;
  * Official AIR 13 room-wide wired log page (3882) with the level, source and text filters of
  * {@code WiredRoomLogListView}.
  *
- * <p>The rows come from the room's wired diagnostics history: the severity is the log level and the
- * diagnostic type is the log source, so the client's two dropdowns map straight onto them.
+ * <p>The rows come from the room's wired diagnostics history: the severity's log level (Habbo's debug,
+ * info, warning, error) is the level and the diagnostic type is the log source, so the client's two
+ * dropdowns map straight onto them. A "write to logs" box's line reads as just its message.
  */
 public class WiredRoomLogsPageEvent extends MessageHandler {
     private static final int MAX_PAGE_SIZE = 200;
@@ -40,7 +41,7 @@ public class WiredRoomLogsPageEvent extends MessageHandler {
                 WiredManager.getDiagnosticsSnapshot(room.getId()), logLevelFilter, logSourceFilter, normalizedQuery);
 
         int totalEntries = matches.size();
-        int firstIndex = Math.min((safePage - 1) * safePageSize, totalEntries);
+        int firstIndex = (int) Math.min((long) (safePage - 1) * safePageSize, totalEntries);
         int lastIndex = Math.min(firstIndex + safePageSize, totalEntries);
 
         this.client.sendResponse(new WiredRoomLogPageComposer(
@@ -67,7 +68,7 @@ public class WiredRoomLogsPageEvent extends MessageHandler {
         // Newest first, like the official log list.
         for (int index = history.size() - 1; index >= 0; index--) {
             WiredRoomDiagnostics.HistoryEntry entry = history.get(index);
-            int level = entry.getSeverity().ordinal();
+            int level = entry.getSeverity().getLogLevel();
             int source = entry.getType().ordinal();
 
             if (logLevelFilter >= 0 && level != logLevelFilter) {
@@ -92,6 +93,10 @@ public class WiredRoomLogsPageEvent extends MessageHandler {
     }
 
     private static String describe(WiredRoomDiagnostics.HistoryEntry entry) {
+        if (entry.getType() == WiredRoomDiagnostics.Type.WIRED_LOG) {
+            return entry.getReason();
+        }
+
         StringBuilder message = new StringBuilder(entry.getType().name());
 
         if (entry.getSourceLabel() != null && !entry.getSourceLabel().isEmpty()) {

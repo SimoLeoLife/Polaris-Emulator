@@ -62,6 +62,7 @@ import org.slf4j.LoggerFactory;
  * @see WiredStackIndex
  */
 public final class WiredEngine {
+    private static final int STACK_CALL_COST = 10;
 
     private static final Logger LOGGER = LoggerFactory.getLogger(WiredEngine.class);
 
@@ -238,6 +239,20 @@ public final class WiredEngine {
      */
     public boolean handleEventForSourceItem(WiredEvent event, int sourceItemId) {
         return this.eventDispatcher.dispatchForSourceItem(event, sourceItemId);
+    }
+
+    /**
+     * Whether a call-stacks box may run one more stack: not while the room's wired is banned, and
+     * each call is charged to the room's execution budget before the called stack does any work.
+     */
+    public boolean tryAdmitStackCall(Room room, int sourceId) {
+        if (room == null || this.executionGuard.isRoomBanned(room.getId())) {
+            return false;
+        }
+
+        return getDiagnostics(room.getId())
+                .tryConsumeExecutionBudget(
+                        STACK_CALL_COST, System.currentTimeMillis(), "call_stacks", sourceId, "stack call");
     }
 
     public boolean executeDirectStack(WiredStack stack, WiredEvent event, boolean negateConditions) {
@@ -1005,6 +1020,7 @@ public final class WiredEngine {
      */
     public void clearRoomDiagnostics(int roomId) {
         this.executionGuard.clearRoomDiagnostics(roomId);
+        WiredRoomTime.forgetRoom(roomId);
     }
 
     /**
@@ -1113,6 +1129,14 @@ public final class WiredEngine {
         this.executionGuard
                 .diagnostics(roomId)
                 .recordUnreachable(System.currentTimeMillis(), reason, sourceLabel, sourceId);
+    }
+
+    /** A line a "write to logs" box wrote, into the room log at the box's level. */
+    public void noteWiredLog(
+            int roomId, WiredRoomDiagnostics.Severity severity, String message, String sourceLabel, int sourceId) {
+        this.executionGuard
+                .diagnostics(roomId)
+                .recordWiredLog(System.currentTimeMillis(), severity, message, sourceLabel, sourceId);
     }
 
     private void handleRateLimit(

@@ -121,7 +121,11 @@ public enum WiredEffectType {
     // The official click-settings action: what the selected users' clicks on avatars and furni do,
     // sent to their clients as WiredClickSettings. 126 is the array box and 127 its capture extra,
     // 128 is the web API extra, so this takes the next seat.
-    CLICK_SETTINGS(129);
+    CLICK_SETTINGS(129),
+    // Habbo's "write to logs" action: a message at a log level, into the room's wired log. It had
+    // borrowed EFFECT_MESSAGE's chat composer, which has no level. 130-136 are the variable fx and
+    // projectile extras, so this takes the next seat.
+    WRITE_TO_LOGS(137);
 
     public final int code;
 

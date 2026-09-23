@@ -7,6 +7,9 @@ import com.eu.habbo.habbohotel.users.HabboItem;
 import com.eu.habbo.habbohotel.wired.WiredTriggerType;
 import com.eu.habbo.habbohotel.wired.WiredVariableChangeOrigin;
 import com.eu.habbo.habbohotel.wired.arrays.WiredArrayChange;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -206,6 +209,10 @@ public final class WiredEvent {
     private final int chatStyle; // bubble style for USER_SAYS
     private final int signalUserCount; // forwarded users in SIGNAL_RECEIVED
     private final int signalFurniCount; // forwarded furni in SIGNAL_RECEIVED
+    // The whole sets a signal or a stack call passed on; empty when it passed on nothing.
+    private final List<RoomUnit> forwardedUsers;
+    private final List<HabboItem> forwardedItems;
+    private final boolean stackCall; // raised by a call-stacks box rather than by the stack's trigger
     private final int variableTargetType;
     private final int variableDefinitionItemId;
     private final String internalVariableKey;
@@ -239,6 +246,9 @@ public final class WiredEvent {
         this.chatStyle = builder.chatStyle;
         this.signalUserCount = builder.signalUserCount;
         this.signalFurniCount = builder.signalFurniCount;
+        this.forwardedUsers = builder.forwardedUsers;
+        this.forwardedItems = builder.forwardedItems;
+        this.stackCall = builder.stackCall;
         this.variableTargetType = builder.variableTargetType;
         this.variableDefinitionItemId = builder.variableDefinitionItemId;
         this.internalVariableKey = builder.internalVariableKey;
@@ -387,6 +397,21 @@ public final class WiredEvent {
         return signalFurniCount;
     }
 
+    /** The users a signal or a stack call passed on, in order; empty when it passed on none. */
+    public List<RoomUnit> getForwardedUsers() {
+        return forwardedUsers;
+    }
+
+    /** The furni a signal or a stack call passed on, in order; empty when it passed on none. */
+    public List<HabboItem> getForwardedItems() {
+        return forwardedItems;
+    }
+
+    /** Whether a call-stacks box raised this, so the called stack runs without its trigger. */
+    public boolean isStackCall() {
+        return stackCall;
+    }
+
     public int getVariableTargetType() {
         return variableTargetType;
     }
@@ -497,6 +522,9 @@ public final class WiredEvent {
         private int chatStyle = -1;
         private int signalUserCount;
         private int signalFurniCount;
+        private List<RoomUnit> forwardedUsers = List.of();
+        private List<HabboItem> forwardedItems = List.of();
+        private boolean stackCall;
         private int variableTargetType = -1;
         private int variableDefinitionItemId;
         private String internalVariableKey = "";
@@ -516,6 +544,39 @@ public final class WiredEvent {
             if (room == null) throw new IllegalArgumentException("Room cannot be null");
             this.type = type;
             this.room = room;
+        }
+
+        /** Marks the event as a call-stacks box's call. */
+        public Builder stackCall(boolean stackCall) {
+            this.stackCall = stackCall;
+            return this;
+        }
+
+        /** The users a signal or a stack call passes on (nulls are skipped). */
+        public Builder forwardedUsers(Collection<RoomUnit> users) {
+            this.forwardedUsers = immutableWithoutNulls(users);
+            return this;
+        }
+
+        /** The furni a signal or a stack call passes on (nulls are skipped). */
+        public Builder forwardedItems(Collection<HabboItem> items) {
+            this.forwardedItems = immutableWithoutNulls(items);
+            return this;
+        }
+
+        // One immutable list shared by every signal a box sends, not a copy per signal.
+        private static <T> List<T> immutableWithoutNulls(Collection<T> values) {
+            if (values == null || values.isEmpty()) return List.of();
+
+            try {
+                return List.copyOf(values);
+            } catch (NullPointerException containsNull) {
+                List<T> kept = new ArrayList<>(values.size());
+                for (T value : values) {
+                    if (value != null) kept.add(value);
+                }
+                return List.copyOf(kept);
+            }
         }
 
         /**

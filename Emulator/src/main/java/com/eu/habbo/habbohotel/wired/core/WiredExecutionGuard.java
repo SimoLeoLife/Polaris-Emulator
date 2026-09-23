@@ -326,6 +326,10 @@ final class WiredExecutionGuard {
         }
     }
 
+    boolean isRoomBanned(int roomId) {
+        return isRoomBanned(roomId, this.clock.getAsLong());
+    }
+
     void clearRoomBan(int roomId) {
         this.bannedRooms.remove(roomId);
     }

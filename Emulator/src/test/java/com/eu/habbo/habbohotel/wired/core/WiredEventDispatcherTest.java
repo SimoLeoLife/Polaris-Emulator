@@ -101,6 +101,32 @@ class WiredEventDispatcherTest {
                 calls.stream().filter(value -> value.matches("\\d+:.*")).toList());
     }
 
+    @Test
+    void eventsNothingListensToDoNotCountTowardsTheRoomsRateLimit() {
+        Room room = room(84, true);
+        WiredStack listening = stack(item(8_401), mock(IWiredTrigger.class));
+        AtomicReference<List<WiredStack>> indexed = new AtomicReference<>(List.of());
+        List<String> calls = new ArrayList<>();
+        WiredExecutionGuard guard = guard();
+        WiredEventDispatcher dispatcher = dispatcher(
+                guard,
+                (candidate, type) -> indexed.get(),
+                (stack, event, time, negate) -> {
+                    calls.add("ran");
+                    return true;
+                },
+                calls);
+
+        // Visitors stepping on plates or rolling dice with no stack listening: far past the limit.
+        for (int i = 0; i < 5_000; i++) {
+            dispatcher.dispatch(event(room, WiredEvent.Type.CUSTOM), false);
+        }
+
+        indexed.set(List.of(listening));
+        assertTrue(dispatcher.dispatch(event(room, WiredEvent.Type.CUSTOM), false));
+        assertTrue(calls.contains("ran"));
+    }
+
     private static WiredEventDispatcher dispatcher(
             WiredExecutionGuard guard,
             WiredStackIndex index,

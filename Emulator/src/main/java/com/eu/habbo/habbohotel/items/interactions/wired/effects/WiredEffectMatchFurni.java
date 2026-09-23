@@ -109,7 +109,7 @@ public class WiredEffectMatchFurni extends InteractionWiredEffect implements Int
         return fallback;
     }
 
-    private void applySetting(Room room, HabboItem item, WiredMatchFurniSetting setting, WiredContext ctx) {
+    void applySetting(Room room, HabboItem item, WiredMatchFurniSetting setting, WiredContext ctx) {
         if (this.state && (this.checkForWiredResetPermission && item.allowWiredResetState())) {
             if (!setting.state.equals(" ") && !item.getExtradata().equals(setting.state)) {
                 item.setExtradata(setting.state);
@@ -122,17 +122,19 @@ public class WiredEffectMatchFurni extends InteractionWiredEffect implements Int
         RoomTile oldLocation = room.getLayout().getTile(item.getX(), item.getY());
         if (oldLocation == null) return;
 
-        if (this.direction && !this.position) {
-            if (item.getRotation() != setting.rotation
-                    && room.furnitureFitsAt(oldLocation, item, setting.rotation, false)
-                            == FurnitureMovementError.NONE) {
-                WiredMoveCarryHelper.moveFurni(room, this, item, oldLocation, setting.rotation, null, true, ctx);
-            }
-        } else if (this.altitude && !this.position) {
+        // Altitude first: with direction also on, this branch restores both. Checking direction first
+        // turned the furni and never gave it its height back.
+        if (this.altitude && !this.position) {
             int newRotation = this.direction ? setting.rotation : item.getRotation();
             if (BigDecimal.valueOf(item.getZ()).compareTo(BigDecimal.valueOf(setting.z)) != 0
                     || newRotation != item.getRotation()) {
                 WiredMoveCarryHelper.moveFurni(room, this, item, oldLocation, newRotation, setting.z, null, true, ctx);
+            }
+        } else if (this.direction && !this.position) {
+            if (item.getRotation() != setting.rotation
+                    && room.furnitureFitsAt(oldLocation, item, setting.rotation, false)
+                            == FurnitureMovementError.NONE) {
+                WiredMoveCarryHelper.moveFurni(room, this, item, oldLocation, setting.rotation, null, true, ctx);
             }
         } else if (this.position) {
             boolean slideAnimation = !this.direction || item.getRotation() == setting.rotation;
@@ -142,7 +144,9 @@ public class WiredEffectMatchFurni extends InteractionWiredEffect implements Int
 
             if (newLocation != null
                     && newLocation.state != RoomTileState.INVALID
-                    && (newLocation != oldLocation || newRotation != item.getRotation())
+                    && (newLocation != oldLocation
+                            || newRotation != item.getRotation()
+                            || BigDecimal.valueOf(item.getZ()).compareTo(BigDecimal.valueOf(newZ)) != 0)
                     && WiredMoveCarryHelper.getMovementError(room, this, item, newLocation, newRotation, ctx)
                             == FurnitureMovementError.NONE) {
                 if (WiredMoveCarryHelper.moveFurni(

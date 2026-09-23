@@ -8,6 +8,7 @@ import com.eu.habbo.habbohotel.rooms.RoomUnit;
 import com.eu.habbo.habbohotel.wired.WiredConditionType;
 import com.eu.habbo.habbohotel.wired.core.WiredContext;
 import com.eu.habbo.habbohotel.wired.core.WiredManager;
+import com.eu.habbo.habbohotel.wired.core.WiredRoomTime;
 import com.eu.habbo.messages.ServerMessage;
 import com.eu.habbo.util.HotelDateTimeUtil;
 import java.sql.ResultSet;
@@ -89,7 +90,7 @@ public class WiredConditionMatchDate extends InteractionWiredCondition {
 
     @Override
     public boolean evaluate(WiredContext ctx) {
-        LocalDate now = HotelDateTimeUtil.localDateNow();
+        LocalDate now = WiredRoomTime.now((ctx != null) ? ctx.room() : null).toLocalDate();
 
         return this.matchesMask(now.getDayOfWeek().getValue(), this.weekdayMask)
                 && this.matchesMask(now.getMonthValue(), this.monthMask)

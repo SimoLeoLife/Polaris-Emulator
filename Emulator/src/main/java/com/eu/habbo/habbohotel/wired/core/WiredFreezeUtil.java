@@ -37,6 +37,8 @@ public final class WiredFreezeUtil {
             return;
         }
 
+        Object freezeEffect = roomUnit.getCacheable().get(CACHE_EFFECT_ID);
+
         roomUnit.getCacheable().remove(CACHE_ACTIVE);
         roomUnit.getCacheable().remove(CACHE_EFFECT_ID);
         roomUnit.getCacheable().remove(CACHE_CANCEL_ON_TELEPORT);
@@ -45,10 +47,18 @@ public final class WiredFreezeUtil {
         roomUnit.setCanWalk(true);
         roomUnit.statusUpdate(true);
 
+        // Only the freeze's own effect comes off: an effect put on after the freeze (a wired give
+        // effect, an item, a costume) stays. Without a stored freeze effect, the old behaviour.
+        boolean clearsEffect = !(freezeEffect instanceof Integer freezeEffectId)
+                || freezeEffectId <= 0
+                || roomUnit.getEffectId() == freezeEffectId;
+
         if (room != null) {
-            room.giveEffect(roomUnit, 0, -1);
+            if (clearsEffect) {
+                room.giveEffect(roomUnit, 0, -1);
+            }
             room.sendComposer(new RoomUserStatusComposer(roomUnit).compose());
-        } else {
+        } else if (clearsEffect) {
             roomUnit.setEffectId(0, 0);
         }
     }

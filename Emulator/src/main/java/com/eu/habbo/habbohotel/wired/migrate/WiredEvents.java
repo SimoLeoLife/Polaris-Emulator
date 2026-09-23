@@ -448,10 +448,19 @@ public final class WiredEvents {
      * @return the event
      */
     public static WiredEvent botCollision(Room room, RoomUnit botUnit) {
-        return WiredEvent.builder(WiredEvent.Type.BOT_COLLISION, room)
+        return botCollision(room, botUnit, null);
+    }
+
+    public static WiredEvent botCollision(Room room, RoomUnit botUnit, HabboItem collidingFurni) {
+        WiredEvent.Builder builder = WiredEvent.builder(WiredEvent.Type.BOT_COLLISION, room)
                 .actor(botUnit)
-                .tile(botUnit.getCurrentLocation())
-                .build();
+                .tile(botUnit.getCurrentLocation());
+
+        if (collidingFurni != null) {
+            builder.sourceItem(collidingFurni);
+        }
+
+        return builder.build();
     }
 
     /**

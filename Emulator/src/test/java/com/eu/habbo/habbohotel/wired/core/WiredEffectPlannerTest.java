@@ -36,12 +36,12 @@ class WiredEffectPlannerTest {
 
     @Test
     void negativeLogIsNegativeByClassNotByCode() {
-        // The negative log answers EFFECT_MESSAGE like the positive log does: the type code picks the
+        // The negative log answers WRITE_TO_LOGS like the positive log does: the type code picks the
         // client dialog, so it cannot also say which branch of the stack the effect belongs to.
         WiredEffectPlanner planner = new WiredEffectPlanner();
         WiredEffectNegativeLog negativeLog = mock(WiredEffectNegativeLog.class);
-        when(negativeLog.getType()).thenReturn(WiredEffectType.EFFECT_MESSAGE);
-        InteractionWiredEffect positiveLog = interactionEffect(WiredEffectType.EFFECT_MESSAGE);
+        when(negativeLog.getType()).thenReturn(WiredEffectType.WRITE_TO_LOGS);
+        InteractionWiredEffect positiveLog = interactionEffect(WiredEffectType.WRITE_TO_LOGS);
         IWiredCondition condition = context -> true;
         WiredStack stack = new WiredStack(null, null, List.of(condition), List.of(negativeLog, positiveLog));
 

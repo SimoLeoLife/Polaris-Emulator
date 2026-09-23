@@ -75,8 +75,6 @@ public class InteractionDefault extends HabboItem {
                         || (objects.length >= 2
                                 && objects[1] instanceof WiredEffectType
                                 && objects[1] == WiredEffectType.TOGGLE_STATE))) {
-            super.onClick(client, room, objects);
-
             if (objects != null && objects.length > 0) {
                 if (objects[0] instanceof Integer) {
                     if (this.getExtradata().length() == 0) this.setExtradata("0");
@@ -102,6 +100,9 @@ public class InteractionDefault extends HabboItem {
                     }
                 }
             }
+
+            // After the new state is set, so the stack's conditions see the state the click made.
+            super.onClick(client, room, objects);
         }
     }
 

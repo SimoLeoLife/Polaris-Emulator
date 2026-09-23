@@ -8,8 +8,8 @@ import com.eu.habbo.habbohotel.rooms.RoomUnit;
 import com.eu.habbo.habbohotel.wired.WiredConditionType;
 import com.eu.habbo.habbohotel.wired.core.WiredContext;
 import com.eu.habbo.habbohotel.wired.core.WiredManager;
+import com.eu.habbo.habbohotel.wired.core.WiredRoomTime;
 import com.eu.habbo.messages.ServerMessage;
-import com.eu.habbo.util.HotelDateTimeUtil;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.LocalTime;
@@ -88,7 +88,7 @@ public class WiredConditionMatchTime extends InteractionWiredCondition {
 
     @Override
     public boolean evaluate(WiredContext ctx) {
-        LocalTime now = HotelDateTimeUtil.localTimeNow();
+        LocalTime now = WiredRoomTime.now((ctx != null) ? ctx.room() : null).toLocalTime();
 
         return this.matchesTimePart(now.getHour(), this.hourMode, this.hourFrom, this.hourTo)
                 && this.matchesTimePart(now.getMinute(), this.minuteMode, this.minuteFrom, this.minuteTo)

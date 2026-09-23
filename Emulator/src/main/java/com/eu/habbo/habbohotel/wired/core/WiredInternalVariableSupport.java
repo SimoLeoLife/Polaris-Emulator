@@ -6,6 +6,7 @@ import com.eu.habbo.habbohotel.games.GamePlayer;
 import com.eu.habbo.habbohotel.games.GameTeam;
 import com.eu.habbo.habbohotel.games.GameTeamColors;
 import com.eu.habbo.habbohotel.items.FurnitureType;
+import com.eu.habbo.habbohotel.items.Item;
 import com.eu.habbo.habbohotel.pets.Pet;
 import com.eu.habbo.habbohotel.rooms.FurnitureMovementError;
 import com.eu.habbo.habbohotel.rooms.Room;
@@ -27,6 +28,11 @@ import java.util.Locale;
 
 public final class WiredInternalVariableSupport {
     private static final ThreadLocal<Boolean> USER_MOVE_INSTANT_OVERRIDE = new ThreadLocal<>();
+    private static final ThreadLocal<FurniMoveOrigin> FURNI_MOVE_ORIGIN = new ThreadLocal<>();
+
+    /** The box and stack a furni placement write comes from, so it moves like any wired move. */
+    private record FurniMoveOrigin(HabboItem stackItem, WiredContext ctx) {}
+
     private static final ThreadLocal<UserMoveBatch> USER_MOVE_BATCH = new ThreadLocal<>();
     private static final ThreadLocal<Integer> USER_MOVE_BATCH_DEPTH = new ThreadLocal<>();
 
@@ -319,6 +325,17 @@ public final class WiredInternalVariableSupport {
         return new UserMoveInstantScope(previousValue);
     }
 
+    /**
+     * Placement writes (@position.x/y, @rotation, @altitude) made inside this scope move the furni
+     * through the wired movement path of the given box: animated, with the stack's carry, physics,
+     * animation time and curve add-ons. Outside it they place the furni directly.
+     */
+    public static FurniMoveScope beginWiredFurniMove(HabboItem stackItem, WiredContext ctx) {
+        FurniMoveOrigin previous = FURNI_MOVE_ORIGIN.get();
+        FURNI_MOVE_ORIGIN.set((stackItem != null && ctx != null) ? new FurniMoveOrigin(stackItem, ctx) : null);
+        return new FurniMoveScope(previous);
+    }
+
     public static UserMoveBatchScope beginUserMoveBatch() {
         Integer previousDepth = USER_MOVE_BATCH_DEPTH.get();
         int nextDepth = (previousDepth == null) ? 1 : (previousDepth + 1);
@@ -333,6 +350,7 @@ public final class WiredInternalVariableSupport {
 
     static void clearThreadLocalsForCurrentThread() {
         USER_MOVE_INSTANT_OVERRIDE.remove();
+        FURNI_MOVE_ORIGIN.remove();
         USER_MOVE_BATCH.remove();
         USER_MOVE_BATCH_DEPTH.remove();
     }
@@ -349,10 +367,8 @@ public final class WiredInternalVariableSupport {
             case "@id" -> item.getId();
             case "@class_id" ->
                 (item.getBaseItem() != null) ? item.getBaseItem().getId() : null;
-            case "@height" ->
-                (item.getBaseItem() != null)
-                        ? (int) Math.round(item.getBaseItem().getHeight() * 100)
-                        : null;
+            // The height it has now: a multi-height furni's current setting, not its base height.
+            case "@height" -> (item.getBaseItem() != null) ? (int) Math.round(Item.getCurrentHeight(item) * 100) : null;
             case "@state" -> parseInteger(item.getExtradata());
             case "@position_x" -> (int) item.getX();
             case "@position_y" -> (int) item.getY();
@@ -432,7 +448,7 @@ public final class WiredInternalVariableSupport {
             return null;
         }
 
-        ZonedDateTime now = HotelDateTimeUtil.now();
+        ZonedDateTime now = WiredRoomTime.now(room);
         String normalized = normalizeKey(key);
 
         return switch (normalized) {
@@ -450,7 +466,7 @@ public final class WiredInternalVariableSupport {
             case "@team_yellow_size" -> getTeamMetric(room, GameTeamColors.YELLOW, false);
             case "@room_id" -> room.getId();
             case "@group_id" -> room.getGuildId();
-            case "@timezone_server" -> now.getOffset().getTotalSeconds() / 60;
+            case "@timezone_server" -> HotelDateTimeUtil.now().getOffset().getTotalSeconds() / 60;
             case "@timezone_client" -> 0;
             case "@current_time" -> (int) now.toEpochSecond();
             case "@current_time.millisecond_of_second" -> now.getNano() / 1_000_000;
@@ -879,7 +895,11 @@ public final class WiredInternalVariableSupport {
             return false;
         }
 
-        FurnitureMovementError error = room.moveFurniTo(item, targetTile, rotation, z, null, true, true);
+        FurniMoveOrigin origin = FURNI_MOVE_ORIGIN.get();
+        FurnitureMovementError error = (origin != null)
+                ? WiredMoveCarryHelper.moveFurni(
+                        room, origin.stackItem(), item, targetTile, rotation, z, null, true, origin.ctx())
+                : room.moveFurniTo(item, targetTile, rotation, z, null, true, true);
         return error == FurnitureMovementError.NONE;
     }
 
@@ -930,6 +950,23 @@ public final class WiredInternalVariableSupport {
         TeamEffectData(int colorId, int typeId) {
             this.colorId = colorId;
             this.typeId = typeId;
+        }
+    }
+
+    public static final class FurniMoveScope implements AutoCloseable {
+        private final FurniMoveOrigin previous;
+
+        private FurniMoveScope(FurniMoveOrigin previous) {
+            this.previous = previous;
+        }
+
+        @Override
+        public void close() {
+            if (this.previous == null) {
+                FURNI_MOVE_ORIGIN.remove();
+            } else {
+                FURNI_MOVE_ORIGIN.set(this.previous);
+            }
         }
     }
 

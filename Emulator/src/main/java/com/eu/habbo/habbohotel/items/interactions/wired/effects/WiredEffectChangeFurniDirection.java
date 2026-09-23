@@ -154,7 +154,7 @@ public class WiredEffectChangeFurniDirection extends InteractionWiredEffect {
                     || movementError == FurnitureMovementError.TILE_HAS_PETS) {
                 Emulator.getThreading().run(() -> {
                     for (RoomUnit roomUnit : room.getRoomUnits(targetTile)) {
-                        WiredManager.triggerBotCollision(room, roomUnit);
+                        WiredManager.triggerBotCollision(room, roomUnit, entry.getKey());
                         break;
                     }
                 });

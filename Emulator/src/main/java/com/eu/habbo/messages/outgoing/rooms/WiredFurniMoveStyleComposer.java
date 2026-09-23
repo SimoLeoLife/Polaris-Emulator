@@ -1,5 +1,6 @@
 package com.eu.habbo.messages.outgoing.rooms;
 
+import com.eu.habbo.habbohotel.wired.core.WiredMoveStyleHelper;
 import com.eu.habbo.messages.ServerMessage;
 import com.eu.habbo.messages.outgoing.MessageComposer;
 import java.util.Collection;
@@ -20,8 +21,11 @@ public class WiredFurniMoveStyleComposer extends MessageComposer {
 
     public WiredFurniMoveStyleComposer(Collection<Integer> itemIds, int style, int intensity) {
         this.itemIds = itemIds;
-        this.style = Math.max(0, Math.min(6, style));
-        this.intensity = Math.max(0, Math.min(100, intensity));
+        this.style = Math.max(0, Math.min(WiredMoveStyleHelper.STYLE_JUMP, style));
+        // An easing style's intensity is a percentage; a jump's is its signed strength.
+        this.intensity = (this.style == WiredMoveStyleHelper.STYLE_JUMP)
+                ? Math.max(-1000, Math.min(1000, intensity))
+                : Math.max(0, Math.min(100, intensity));
     }
 
     @Override

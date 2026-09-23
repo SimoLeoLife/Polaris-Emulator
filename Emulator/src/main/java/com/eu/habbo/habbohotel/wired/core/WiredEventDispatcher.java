@@ -51,6 +51,13 @@ final class WiredEventDispatcher {
             return false;
         }
 
+        // An event nothing listens to costs nothing: counting it would let visitors walking over
+        // plates or rolling dice run the room into its rate limit and ban its wired.
+        List<WiredStack> stacks = this.eventIndex.getStacks(room, event.getType());
+        if (stacks.isEmpty()) {
+            return false;
+        }
+
         int roomId = room.getId();
         if (!this.guard.tryEnterDeferredPublication(
                 roomId, room, event.getType(), WiredExecutionGuard.EntryKind.EVENT)) {
@@ -59,10 +66,6 @@ final class WiredEventDispatcher {
 
         boolean published = false;
         try {
-            List<WiredStack> stacks = this.eventIndex.getStacks(room, event.getType());
-            if (stacks.isEmpty()) {
-                return false;
-            }
             this.guard.publishDeferredAdmission(roomId);
             published = true;
             return process(event, room, stacks, negateConditions, 0);
