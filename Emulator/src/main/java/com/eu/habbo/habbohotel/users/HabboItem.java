@@ -26,6 +26,7 @@ import com.eu.habbo.habbohotel.rooms.RoomLayout;
 import com.eu.habbo.habbohotel.rooms.RoomTile;
 import com.eu.habbo.habbohotel.rooms.RoomTileState;
 import com.eu.habbo.habbohotel.rooms.RoomUnit;
+import com.eu.habbo.habbohotel.rooms.RoomUnitType;
 import com.eu.habbo.habbohotel.wired.WiredEffectType;
 import com.eu.habbo.habbohotel.wired.core.WiredManager;
 import com.eu.habbo.messages.ServerMessage;
@@ -420,6 +421,9 @@ public abstract class HabboItem implements Runnable, IEventTriggers {
         return;*/
 
         WiredManager.triggerUserWalksOn(room, roomUnit, this);
+        if (roomUnit != null && roomUnit.getRoomUnitType() == RoomUnitType.BOT) {
+            WiredManager.triggerBotReachedFurni(room, roomUnit, this);
+        }
 
         if ((this.getBaseItem().allowSit() || this.getBaseItem().allowLay())
                 && !roomUnit.getDanceType().equals(DanceType.NONE)) {

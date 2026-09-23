@@ -5,6 +5,8 @@ import com.eu.habbo.habbohotel.guilds.GuildRank;
 import com.eu.habbo.habbohotel.users.Habbo;
 import com.eu.habbo.messages.outgoing.wired.WiredRoomSettingsDataComposer;
 import java.sql.SQLException;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -14,6 +16,11 @@ final class RoomWiredAccessService {
     private final Room room;
     private final RoomRepository repository;
     private final Object lock = new Object();
+    /** Group-admin answers by user id, with the time they expire; the lookup is a database query. */
+    private final Map<Integer, long[]> groupAdminCache = new ConcurrentHashMap<>();
+
+    private static final long GROUP_ADMIN_CACHE_MS = 10_000L;
+    private static final int GROUP_ADMIN_CACHE_MAX = 256;
     private volatile boolean loaded;
     private int inspectMask = Room.WIRED_ACCESS_DEFAULT_INSPECT_MASK;
     private int modifyMask = Room.WIRED_ACCESS_DEFAULT_MODIFY_MASK;
@@ -170,10 +177,11 @@ final class RoomWiredAccessService {
         if (hasAccess(mask, Room.WIRED_ACCESS_USERS_WITH_RIGHTS) && this.room.hasExplicitRights(habbo)) {
             return true;
         }
-        if (hasAccess(mask, Room.WIRED_ACCESS_GROUP_ADMINS) && this.isRoomGroupAdmin(habbo)) {
+        // Members first: it is an in-memory check, and every admin is a member.
+        if (hasAccess(mask, Room.WIRED_ACCESS_GROUP_MEMBERS) && this.isRoomGroupMember(habbo)) {
             return true;
         }
-        return hasAccess(mask, Room.WIRED_ACCESS_GROUP_MEMBERS) && this.isRoomGroupMember(habbo);
+        return hasAccess(mask, Room.WIRED_ACCESS_GROUP_ADMINS) && this.isRoomGroupAdmin(habbo);
     }
 
     private boolean isRoomGroupMember(Habbo habbo) {
@@ -185,6 +193,22 @@ final class RoomWiredAccessService {
             return false;
         }
 
+        int userId = habbo.getHabboInfo().getId();
+        long now = System.currentTimeMillis();
+        long[] cached = this.groupAdminCache.get(userId);
+        if (cached != null && cached[0] > now) {
+            return cached[1] == 1L;
+        }
+
+        boolean admin = this.lookupRoomGroupAdmin(habbo);
+        if (this.groupAdminCache.size() >= GROUP_ADMIN_CACHE_MAX) {
+            this.groupAdminCache.clear();
+        }
+        this.groupAdminCache.put(userId, new long[] {now + GROUP_ADMIN_CACHE_MS, admin ? 1L : 0L});
+        return admin;
+    }
+
+    private boolean lookupRoomGroupAdmin(Habbo habbo) {
         GuildMember member = this.room
                 .gameEnvironment()
                 .getGuildManager()

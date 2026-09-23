@@ -37,6 +37,6 @@ public class WiredRoomStateActionEvent extends MessageHandler {
 
     @Override
     public int getRatelimit() {
-        return 1000;
+        return 5000;
     }
 }

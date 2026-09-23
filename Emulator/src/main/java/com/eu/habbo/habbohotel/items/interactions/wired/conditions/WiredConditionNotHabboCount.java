@@ -83,7 +83,6 @@ public class WiredConditionNotHabboCount extends InteractionWiredCondition {
                 }
             }
         }
-        this.userSource = WiredSourceUtil.SOURCE_TRIGGER;
     }
 
     @Override

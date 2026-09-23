@@ -84,7 +84,6 @@ public class WiredConditionHabboCount extends InteractionWiredCondition {
                 }
             }
         }
-        this.userSource = WiredSourceUtil.SOURCE_TRIGGER;
     }
 
     @Override

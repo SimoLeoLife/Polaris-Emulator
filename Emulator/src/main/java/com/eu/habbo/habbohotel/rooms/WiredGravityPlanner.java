@@ -2,6 +2,7 @@ package com.eu.habbo.habbohotel.rooms;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -28,9 +29,20 @@ final class WiredGravityPlanner {
             candidates = candidates.subList(0, maximumItems);
         }
 
+        // Which furni stand on each tile, built once: scanning the whole room for every tile of
+        // every falling furni made one settle cost (candidates x footprint x room furni).
+        Map<TilePosition, List<FurnitureSnapshot>> furnitureByTile = new HashMap<>();
+        for (FurnitureSnapshot furniture : snapshot.furniture()) {
+            for (TilePosition tile : furniture.footprint()) {
+                furnitureByTile
+                        .computeIfAbsent(tile, ignored -> new ArrayList<>())
+                        .add(furniture);
+            }
+        }
+
         List<Fall> falls = new ArrayList<>();
         for (FurnitureSnapshot candidate : candidates) {
-            double targetZ = restingHeight(snapshot, candidate);
+            double targetZ = restingHeight(snapshot, furnitureByTile, candidate);
             if (candidate.z() - targetZ > HEIGHT_EPSILON) {
                 falls.add(new Fall(candidate, targetZ));
             }
@@ -38,7 +50,10 @@ final class WiredGravityPlanner {
         return new Plan(List.copyOf(falls), bounded, candidateCount);
     }
 
-    private static double restingHeight(Snapshot snapshot, FurnitureSnapshot candidate) {
+    private static double restingHeight(
+            Snapshot snapshot,
+            Map<TilePosition, List<FurnitureSnapshot>> furnitureByTile,
+            FurnitureSnapshot candidate) {
         if (candidate.footprint().isEmpty()) {
             return candidate.z();
         }
@@ -51,10 +66,8 @@ final class WiredGravityPlanner {
             }
 
             double tileSupport = floorHeight;
-            for (FurnitureSnapshot support : snapshot.furniture()) {
-                if (support.id() == candidate.id()
-                        || !support.footprint().contains(tile)
-                        || support.z() + support.height() > candidate.z() + HEIGHT_EPSILON) {
+            for (FurnitureSnapshot support : furnitureByTile.getOrDefault(tile, List.of())) {
+                if (support.id() == candidate.id() || support.z() + support.height() > candidate.z() + HEIGHT_EPSILON) {
                     continue;
                 }
                 tileSupport = Math.max(tileSupport, support.z() + support.height());

@@ -166,12 +166,14 @@ final class WiredStackExecutor {
             return false;
         }
 
+        // Moving or toggling a thousand furni costs far more than one: the selection counts too.
+        int chargedCost = stackCost + selectionCost(context);
         if (!roomDiagnostics.tryConsumeExecutionBudget(
-                stackCost,
+                chargedCost,
                 currentTime,
                 monitorSourceLabel,
                 monitorSourceId,
-                stackMonitorReason(stack, event, stackCost))) {
+                () -> stackMonitorReason(stack, event, chargedCost))) {
             this.diagnostics.log(
                     room,
                     mode == Mode.DIRECT ? "Execution cap blocked direct stack {}" : "Execution cap blocked stack {}",
@@ -203,7 +205,7 @@ final class WiredStackExecutor {
                 this.clock.getAsLong(),
                 monitorSourceLabel,
                 monitorSourceId,
-                executionMonitorReason(stack, elapsedMs));
+                () -> executionMonitorReason(stack, elapsedMs));
         this.structuredDiagnostics.execution(
                 room.getId(),
                 monitorSourceId,
@@ -460,6 +462,17 @@ final class WiredStackExecutor {
         }
         return legacyConditions;
     }
+
+    /** One unit per ten selected furni or users, once the selectors have run. */
+    static int selectionCost(WiredContext context) {
+        if (context == null || context.targets() == null) {
+            return 0;
+        }
+        WiredTargets targets = context.targets();
+        return (targets.items().size() + targets.users().size()) / SELECTION_PER_COST_UNIT;
+    }
+
+    static final int SELECTION_PER_COST_UNIT = 10;
 
     private static int estimateStackCost(WiredStack stack, int recursionDepth) {
         int cost = 1 + Math.max(0, stack.conditions().size());

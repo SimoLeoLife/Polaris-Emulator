@@ -6,6 +6,7 @@ import java.util.Collections;
 import java.util.EnumMap;
 import java.util.Iterator;
 import java.util.List;
+import java.util.function.Supplier;
 
 /**
  * Tracks wired monitor data for a single room.
@@ -385,6 +386,12 @@ public final class WiredRoomDiagnostics {
 
     public boolean tryConsumeExecutionBudget(
             int estimatedCost, long now, String sourceLabel, int sourceId, String reason) {
+        return tryConsumeExecutionBudget(estimatedCost, now, sourceLabel, sourceId, () -> reason);
+    }
+
+    /** The reason is only built when the budget refuses the cost. */
+    boolean tryConsumeExecutionBudget(
+            int estimatedCost, long now, String sourceLabel, int sourceId, Supplier<String> reason) {
         rollWindowIfNeeded(now);
 
         int normalizedCost = Math.max(0, estimatedCost);
@@ -393,7 +400,7 @@ public final class WiredRoomDiagnostics {
             record(
                     Type.EXECUTION_CAP,
                     now,
-                    buildExecutionCapReason(normalizedCost, reason, currentUsage),
+                    buildExecutionCapReason(normalizedCost, reason.get(), currentUsage),
                     sourceLabel,
                     sourceId);
             return false;
@@ -420,6 +427,11 @@ public final class WiredRoomDiagnostics {
     }
 
     public void recordExecution(long elapsedMs, long now, String sourceLabel, int sourceId, String reason) {
+        recordExecution(elapsedMs, now, sourceLabel, sourceId, () -> reason);
+    }
+
+    /** The reason is only built when this run is the window's new peak. */
+    void recordExecution(long elapsedMs, long now, String sourceLabel, int sourceId, Supplier<String> reason) {
         rollWindowIfNeeded(now);
 
         int normalizedElapsed = (int) Math.max(0L, elapsedMs);
@@ -434,7 +446,7 @@ public final class WiredRoomDiagnostics {
                     this.peakExecutionMs = normalizedElapsed;
                     this.peakExecutionSourceLabel = sanitizeSourceLabel(sourceLabel);
                     this.peakExecutionSourceId = Math.max(0, sourceId);
-                    this.peakExecutionReason = sanitizeReason(reason);
+                    this.peakExecutionReason = sanitizeReason(reason.get());
                 }
             }
         }

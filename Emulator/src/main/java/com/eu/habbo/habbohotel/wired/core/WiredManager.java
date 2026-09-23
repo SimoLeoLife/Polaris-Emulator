@@ -14,6 +14,7 @@ import com.eu.habbo.habbohotel.items.interactions.wired.triggers.WiredTriggerHab
 import com.eu.habbo.habbohotel.rooms.Room;
 import com.eu.habbo.habbohotel.rooms.RoomTile;
 import com.eu.habbo.habbohotel.rooms.RoomUnit;
+import com.eu.habbo.habbohotel.rooms.RoomUnitType;
 import com.eu.habbo.habbohotel.rooms.RoomWiredDisableSupport;
 import com.eu.habbo.habbohotel.users.Habbo;
 import com.eu.habbo.habbohotel.users.HabboBadge;
@@ -356,7 +357,17 @@ public final class WiredManager {
         boolean handled = false;
 
         try {
-            handled = engine.handleEvent(event, negateConditions);
+            RoomUnit player = (previousDepth == null && !WiredExecutionScope.isExecuting())
+                    ? event.getActor().orElse(null)
+                    : null;
+            if (player != null && player.getRoomUnitType() == RoomUnitType.USER) {
+                WiredExecutionGuard.markPlayerEvent(player.getId());
+            }
+            try {
+                handled = engine.handleEvent(event, negateConditions);
+            } finally {
+                WiredExecutionGuard.clearPlayerEvent();
+            }
 
             if (nextDepth == 1) {
                 ArrayDeque<DeferredEffectEvent> deferredEvents = DEFERRED_EFFECT_EVENTS.get();
@@ -718,8 +729,27 @@ public final class WiredManager {
             return false;
         }
 
+        // The counter is the event's source, not a trigger box, so the stacks are found by type.
         WiredEvent event = WiredEvents.clockCounter(room, counterItem);
-        return handleEventForSourceItem(event, counterItem);
+        return anyStackAwaits(event) && handleEvent(event);
+    }
+
+    /**
+     * Whether a stack's trigger matches the event. Used for events that fire on every tick or
+     * step, so only the ones a stack waits for count towards the room's rate limit.
+     */
+    private static boolean anyStackAwaits(WiredEvent event) {
+        RoomWiredStackIndex index = getStackIndex();
+        if (index == null) {
+            return false;
+        }
+
+        for (WiredStack stack : index.getStacks(event.getRoom(), event.getType())) {
+            if (stack != null && stack.trigger() != null && stack.trigger().matches(stack.triggerItem(), event)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -803,12 +833,12 @@ public final class WiredManager {
      * Trigger when bot reaches furniture.
      */
     public static boolean triggerBotReachedFurni(Room room, RoomUnit botUnit, HabboItem item) {
-        if (!isEnabled() || room == null || botUnit == null) {
+        if (!isEnabled() || room == null || botUnit == null || item == null) {
             return false;
         }
 
         WiredEvent event = WiredEvents.botReachedFurni(room, botUnit, item);
-        return handleEvent(event);
+        return anyStackAwaits(event) && handleEvent(event);
     }
 
     /**

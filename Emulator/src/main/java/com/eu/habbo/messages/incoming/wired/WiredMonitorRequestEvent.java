@@ -36,6 +36,6 @@ public class WiredMonitorRequestEvent extends MessageHandler {
 
     @Override
     public int getRatelimit() {
-        return 50;
+        return 200;
     }
 }

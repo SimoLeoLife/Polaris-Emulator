@@ -20,13 +20,16 @@ import com.eu.habbo.messages.ServerMessage;
 import com.eu.habbo.messages.outgoing.rooms.WiredMovementsComposer;
 import com.eu.habbo.messages.outgoing.rooms.items.FloorItemOnRollerComposer;
 import com.eu.habbo.messages.outgoing.rooms.users.RoomUserStatusComposer;
+import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.WeakHashMap;
 import java.util.concurrent.ConcurrentHashMap;
 
 public final class WiredMoveCarryHelper {
@@ -1191,13 +1194,37 @@ public final class WiredMoveCarryHelper {
             return WiredMovementPhysics.NONE;
         }
 
+        // Built once per firing: "all room furni" used to be copied twice for every moved furni.
+        WiredMovementPhysics physics = null;
+        if (ctx != null) {
+            CachedPhysics cached = PHYSICS_BY_EXTRA.get(extra);
+            if (cached != null && cached.context().get() == ctx) {
+                physics = cached.physics();
+            }
+        }
+        if (physics == null) {
+            physics = buildMovementPhysics(room, extra, ctx);
+            if (ctx != null) {
+                PHYSICS_BY_EXTRA.put(extra, new CachedPhysics(new WeakReference<>(ctx), physics));
+            }
+        }
+
+        return (movingItem != null) ? physics.withoutFurni(movingItem.getId()) : physics;
+    }
+
+    private record CachedPhysics(WeakReference<WiredContext> context, WiredMovementPhysics physics) {}
+
+    private static final Map<WiredExtraMovePhysics, CachedPhysics> PHYSICS_BY_EXTRA =
+            Collections.synchronizedMap(new WeakHashMap<>());
+
+    private static WiredMovementPhysics buildMovementPhysics(Room room, WiredExtraMovePhysics extra, WiredContext ctx) {
         HashSet<Integer> passThroughFurniIds = new HashSet<>();
         HashSet<Integer> passThroughUserIds = new HashSet<>();
         HashSet<Integer> blockingFurniIds = new HashSet<>();
 
         if (extra.isMoveThroughFurni()) {
             for (HabboItem item : resolveFurniSources(room, ctx, extra.getMoveThroughFurniSource())) {
-                if (item != null && item != movingItem) {
+                if (item != null) {
                     passThroughFurniIds.add(item.getId());
                 }
             }
@@ -1213,7 +1240,7 @@ public final class WiredMoveCarryHelper {
 
         if (extra.isBlockByFurni()) {
             for (HabboItem item : resolveFurniSources(room, ctx, extra.getBlockByFurniSource())) {
-                if (item != null && item != movingItem) {
+                if (item != null) {
                     blockingFurniIds.add(item.getId());
                 }
             }

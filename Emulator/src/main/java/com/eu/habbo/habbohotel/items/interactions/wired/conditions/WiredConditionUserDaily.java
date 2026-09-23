@@ -8,24 +8,24 @@ import com.eu.habbo.habbohotel.rooms.RoomUnit;
 import com.eu.habbo.habbohotel.wired.WiredConditionType;
 import com.eu.habbo.habbohotel.wired.core.WiredContext;
 import com.eu.habbo.habbohotel.wired.core.WiredManager;
+import com.eu.habbo.habbohotel.wired.core.WiredRoomTime;
 import com.eu.habbo.messages.ServerMessage;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.time.LocalDate;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.function.LongSupplier;
 
 /**
  * "Daily trigger" ({@code wf_cnd_daily_trg}): the triggering user passes once per calendar day, on
- * the server's clock. The day each user last passed is stored with the box; picking it up forgets
+ * the room's wired clock. The day each user last passed is stored with the box; picking it up forgets
  * everyone. No settings.
  */
 public class WiredConditionUserDaily extends InteractionWiredCondition {
     public static final WiredConditionType type = WiredConditionType.USER_DAILY;
 
     private final Map<Integer, Long> lastPassDay = new LinkedHashMap<>();
-    private LongSupplier dayClock = () -> LocalDate.now().toEpochDay();
+    private LongSupplier dayClock;
 
     public WiredConditionUserDaily(ResultSet set, Item baseItem) throws SQLException {
         super(set, baseItem);
@@ -56,7 +56,9 @@ public class WiredConditionUserDaily extends InteractionWiredCondition {
         Integer userId = WiredConditionUserCooldown.triggeringUserId(ctx);
         if (userId == null) return false;
 
-        long today = this.dayClock.getAsLong();
+        long today = (this.dayClock != null)
+                ? this.dayClock.getAsLong()
+                : WiredRoomTime.now(ctx.room()).toLocalDate().toEpochDay();
         synchronized (this.lastPassDay) {
             Long last = this.lastPassDay.get(userId);
             if (last != null && last == today) return false;

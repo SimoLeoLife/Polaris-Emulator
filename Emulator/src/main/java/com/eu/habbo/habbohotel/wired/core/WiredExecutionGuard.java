@@ -146,6 +146,7 @@ final class WiredExecutionGuard {
     private final ConcurrentHashMap<Integer, ActiveRecursionDepths> activeRoomRecursionDepth =
             new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, EventRateTracker> eventRateLimiters = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<PlayerEventKey, long[]> playerEventWindows = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Integer, Long> bannedRooms = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Integer, WiredRoomDiagnostics> roomDiagnostics = new ConcurrentHashMap<>();
     private volatile ActiveRoomCache recentActiveRoom;
@@ -169,6 +170,25 @@ final class WiredExecutionGuard {
         this.recursionLimitSink = Objects.requireNonNull(recursionLimitSink, "recursionLimitSink");
     }
 
+    /** A player may raise at most this many events of one type per second (clicks, chat, steps). */
+    static final int PLAYER_EVENTS_PER_SECOND = 5;
+
+    private static final int MAX_PLAYER_WINDOWS = 20_000;
+    private static final ThreadLocal<Integer> PLAYER_ACTOR = new ThreadLocal<>();
+
+    /**
+     * Marks the next event admitted on this thread as raised by this player's own action. Such an
+     * event is throttled per player, and when players push a room over its rate limit their events
+     * are dropped instead of banning the room's wired: visitors must not be able to switch it off.
+     */
+    static void markPlayerEvent(int roomUnitId) {
+        PLAYER_ACTOR.set(roomUnitId);
+    }
+
+    static void clearPlayerEvent() {
+        PLAYER_ACTOR.remove();
+    }
+
     boolean tryEnter(Room room, WiredEvent.Type eventType, EntryKind kind) {
         return tryEnter(room.getId(), room, eventType, kind, true);
     }
@@ -183,7 +203,16 @@ final class WiredExecutionGuard {
             return false;
         }
 
-        if (isRateLimited(roomId, room, eventType, now)) {
+        // Only the player's own event carries the mark, not what its stacks raise in turn.
+        Integer player = PLAYER_ACTOR.get();
+        if (player != null) {
+            PLAYER_ACTOR.remove();
+            if (!admitPlayerEvent(roomId, player, eventType, now)) {
+                return false;
+            }
+        }
+
+        if (isRateLimited(roomId, room, eventType, now, player == null)) {
             return false;
         }
 
@@ -300,6 +329,7 @@ final class WiredExecutionGuard {
     void clearRoomRateLimiters(int roomId) {
         String prefix = roomId + ":";
         this.eventRateLimiters.keySet().removeIf(key -> key.startsWith(prefix));
+        this.playerEventWindows.keySet().removeIf(key -> key.roomId() == roomId);
         RateTrackerCache cached = this.recentRateTracker;
         if (cached != null && cached.roomId() == roomId) {
             this.recentRateTracker = null;
@@ -308,6 +338,7 @@ final class WiredExecutionGuard {
 
     void clearAllRateLimiters() {
         this.eventRateLimiters.clear();
+        this.playerEventWindows.clear();
         this.recentRateTracker = null;
     }
 
@@ -347,7 +378,25 @@ final class WiredExecutionGuard {
         return true;
     }
 
-    private boolean isRateLimited(int roomId, Room room, WiredEvent.Type eventType, long now) {
+    private boolean admitPlayerEvent(int roomId, int roomUnitId, WiredEvent.Type eventType, long now) {
+        if (this.playerEventWindows.size() >= MAX_PLAYER_WINDOWS) {
+            this.playerEventWindows.clear();
+        }
+
+        long[] window = this.playerEventWindows.computeIfAbsent(
+                new PlayerEventKey(roomId, roomUnitId, eventType), ignored -> new long[] {now, 0L});
+        synchronized (window) {
+            if (now - window[0] >= 1_000L) {
+                window[0] = now;
+                window[1] = 0L;
+            }
+            return ++window[1] <= PLAYER_EVENTS_PER_SECOND;
+        }
+    }
+
+    private record PlayerEventKey(int roomId, int roomUnitId, WiredEvent.Type eventType) {}
+
+    private boolean isRateLimited(int roomId, Room room, WiredEvent.Type eventType, long now, boolean mayBan) {
         long windowMs = rateLimitWindowMs();
         int maximumEvents = maxEventsPerWindow();
         RateTrackerCache cached = this.recentRateTracker;
@@ -375,7 +424,7 @@ final class WiredExecutionGuard {
             this.recentRateTracker = new RateTrackerCache(roomId, eventType, tracker);
         }
 
-        if (limited && tracker.shouldBan(maximumEvents)) {
+        if (limited && mayBan && tracker.shouldBan(maximumEvents)) {
             int eventCount = tracker.eventCount();
             diagnostics(roomId)
                     .recordKilled(

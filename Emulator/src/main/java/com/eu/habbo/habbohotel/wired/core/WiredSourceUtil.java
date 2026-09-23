@@ -148,10 +148,27 @@ public final class WiredSourceUtil {
         return ctx.targets();
     }
 
+    /**
+     * Set while a stack's selectors are being re-run to answer "what did the selectors pick". A
+     * selector whose own reference reads that source would otherwise start the same run again,
+     * forever, until the thread's stack overflows.
+     */
+    private static final ThreadLocal<Boolean> RESOLVING_SELECTORS = new ThreadLocal<>();
+
     private static WiredContext executeSelectors(WiredContext originalCtx) {
-        if (originalCtx == null) {
+        if (originalCtx == null || RESOLVING_SELECTORS.get() != null) {
             return null;
         }
+
+        RESOLVING_SELECTORS.set(Boolean.TRUE);
+        try {
+            return runSelectors(originalCtx);
+        } finally {
+            RESOLVING_SELECTORS.remove();
+        }
+    }
+
+    private static WiredContext runSelectors(WiredContext originalCtx) {
 
         Room room = originalCtx.room();
         HabboItem triggerItem = originalCtx.triggerItem();

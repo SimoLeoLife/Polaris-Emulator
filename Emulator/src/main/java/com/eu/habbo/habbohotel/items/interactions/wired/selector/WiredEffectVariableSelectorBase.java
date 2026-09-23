@@ -89,22 +89,24 @@ public abstract class WiredEffectVariableSelectorBase extends InteractionWiredEf
             return;
         }
 
+        // The reference values are read once per firing, not again for every candidate.
+        ReferenceSnapshot references = (this.selectByValue && this.referenceMode == REFERENCE_VARIABLE)
+                ? this.resolveReferences(ctx, room)
+                : null;
+
         if (this.getVariableTargetType() == TARGET_FURNI) {
             LinkedHashSet<HabboItem> matchedItems = new LinkedHashSet<>();
+            LinkedHashSet<HabboItem> selectable = this.getSelectableFloorItems(room, ctx);
 
-            for (HabboItem item : this.getSelectableFloorItems(room, ctx)) {
+            for (HabboItem item : selectable) {
                 if (item == null) continue;
-                if (!this.matchesFurni(room, item, ctx)) continue;
+                if (!this.matchesFurni(room, item, references)) continue;
 
                 matchedItems.add(item);
             }
 
             LinkedHashSet<HabboItem> result = this.applySelectorModifiers(
-                    matchedItems,
-                    this.getSelectableFloorItems(room, ctx),
-                    ctx.targets().items(),
-                    this.filterExisting,
-                    this.invert);
+                    matchedItems, selectable, ctx.targets().items(), this.filterExisting, this.invert);
             ctx.targets().setItems(result);
             return;
         }
@@ -113,7 +115,7 @@ public abstract class WiredEffectVariableSelectorBase extends InteractionWiredEf
 
         for (RoomUnit roomUnit : room.getRoomUnits()) {
             if (roomUnit == null) continue;
-            if (!this.matchesUser(room, roomUnit, ctx)) continue;
+            if (!this.matchesUser(room, roomUnit, references)) continue;
 
             matchedUsers.add(roomUnit);
         }
@@ -324,22 +326,21 @@ public abstract class WiredEffectVariableSelectorBase extends InteractionWiredEf
                 && this.referenceUserSource == WiredSourceUtil.SOURCE_TRIGGER;
     }
 
-    private boolean matchesUser(Room room, RoomUnit roomUnit, WiredContext ctx) {
+    private boolean matchesUser(Room room, RoomUnit roomUnit, ReferenceSnapshot references) {
         if (!this.selectByValue) return this.hasUserVariable(room, roomUnit);
 
         Integer currentValue = this.readUserValue(room, roomUnit);
         Integer referenceValue =
-                this.resolveReferenceValue(ctx, room, roomUnit != null ? roomUnit.getId() : 0, TARGET_USER, -1);
+                this.resolveReferenceValue(references, roomUnit != null ? roomUnit.getId() : 0, TARGET_USER);
 
         return this.matchesComparison(currentValue, referenceValue);
     }
 
-    private boolean matchesFurni(Room room, HabboItem item, WiredContext ctx) {
+    private boolean matchesFurni(Room room, HabboItem item, ReferenceSnapshot references) {
         if (!this.selectByValue) return this.hasFurniVariable(room, item);
 
         Integer currentValue = this.readFurniValue(room, item);
-        Integer referenceValue =
-                this.resolveReferenceValue(ctx, room, item != null ? item.getId() : 0, TARGET_FURNI, -1);
+        Integer referenceValue = this.resolveReferenceValue(references, item != null ? item.getId() : 0, TARGET_FURNI);
 
         return this.matchesComparison(currentValue, referenceValue);
     }
@@ -370,17 +371,14 @@ public abstract class WiredEffectVariableSelectorBase extends InteractionWiredEf
     }
 
     private Integer resolveReferenceValue(
-            WiredContext ctx, Room room, int destinationEntityId, int destinationTargetType, int destinationIndex) {
+            ReferenceSnapshot snapshot, int destinationEntityId, int destinationTargetType) {
         if (!this.selectByValue || this.referenceMode != REFERENCE_VARIABLE) return this.referenceConstantValue;
 
-        ReferenceSnapshot snapshot = this.resolveReferences(ctx, room);
         if (snapshot == null || snapshot.isEmpty()) return null;
         if (snapshot.targetType == destinationTargetType && snapshot.values.containsKey(destinationEntityId))
             return snapshot.values.get(destinationEntityId);
-        if (destinationIndex >= 0 && destinationIndex < snapshot.values.size())
-            return new ArrayList<>(snapshot.values.values()).get(destinationIndex);
 
-        return new ArrayList<>(snapshot.values.values()).get(0);
+        return snapshot.values.values().iterator().next();
     }
 
     private ReferenceSnapshot resolveReferences(WiredContext ctx, Room room) {

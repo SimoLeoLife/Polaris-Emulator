@@ -27,6 +27,7 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 
 public class WiredEffectWhisper extends InteractionWiredEffect {
     public static final WiredEffectType type = WiredEffectType.SHOW_MESSAGE;
@@ -34,6 +35,9 @@ public class WiredEffectWhisper extends InteractionWiredEffect {
     protected static final int VISIBILITY_ALL_ROOM_USERS = 1;
     private static final long DELIVERY_DEDUP_TTL_MS = 60_000L;
     private static final int DELIVERY_DEDUP_CLEANUP_THRESHOLD = 512;
+    private static final long DELIVERY_DEDUP_CLEANUP_INTERVAL_MS = 1_000L;
+    private static final int DELIVERY_DEDUP_MAX = 50_000;
+    private static final AtomicLong LAST_DEDUP_CLEANUP_MS = new AtomicLong();
     private static final ConcurrentHashMap<String, Long> DELIVERY_DEDUP = new ConcurrentHashMap<>();
     private static final int DEFAULT_SHOW_MESSAGE_MAX_LENGTH = 200;
     private static final int DEFAULT_SHOW_MESSAGE_MAX_LINES = 8;
@@ -243,7 +247,19 @@ public class WiredEffectWhisper extends InteractionWiredEffect {
             return;
         }
 
+        // The map is shared by the hotel: sweep it at most once a second, not once per recipient.
+        long last = LAST_DEDUP_CLEANUP_MS.get();
+        if (now - last < DELIVERY_DEDUP_CLEANUP_INTERVAL_MS && DELIVERY_DEDUP.size() < DELIVERY_DEDUP_MAX) {
+            return;
+        }
+        if (!LAST_DEDUP_CLEANUP_MS.compareAndSet(last, now)) {
+            return;
+        }
+
         DELIVERY_DEDUP.entrySet().removeIf(entry -> (now - entry.getValue()) > DELIVERY_DEDUP_TTL_MS);
+        if (DELIVERY_DEDUP.size() >= DELIVERY_DEDUP_MAX) {
+            DELIVERY_DEDUP.clear();
+        }
     }
 
     @Override

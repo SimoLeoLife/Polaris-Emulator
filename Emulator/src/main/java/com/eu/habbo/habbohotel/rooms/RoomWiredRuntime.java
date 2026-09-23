@@ -1,5 +1,6 @@
 package com.eu.habbo.habbohotel.rooms;
 
+import com.eu.habbo.habbohotel.items.interactions.InteractionWired;
 import com.eu.habbo.habbohotel.items.interactions.wired.chest.WiredTradingManager;
 import com.eu.habbo.habbohotel.users.HabboItem;
 import java.util.Collection;
@@ -44,8 +45,14 @@ public final class RoomWiredRuntime {
         this.gravity.markMoving(item, durationMs);
     }
 
-    void onFurnitureTopologyChanged() {
-        advanceCacheGeneration();
+    /**
+     * Stacks only depend on where the wired boxes are, so only a moved wired box clears the stack
+     * cache; any other furni change (a toggle, a roller, a moved chair) keeps it.
+     */
+    void onFurnitureTopologyChanged(HabboItem item, boolean moved) {
+        if (moved && item instanceof InteractionWired) {
+            advanceCacheGeneration();
+        }
         this.gravity.onTopologyChanged();
     }
 

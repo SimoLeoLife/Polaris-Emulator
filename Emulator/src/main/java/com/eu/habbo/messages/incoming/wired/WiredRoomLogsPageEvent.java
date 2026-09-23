@@ -54,7 +54,7 @@ public class WiredRoomLogsPageEvent extends MessageHandler {
                 normalizedQuery));
     }
 
-    private static List<WiredRoomLogPageComposer.Entry> collect(
+    static List<WiredRoomLogPageComposer.Entry> collect(
             WiredRoomDiagnostics.Snapshot snapshot, int logLevelFilter, int logSourceFilter, String query) {
         List<WiredRoomLogPageComposer.Entry> entries = new ArrayList<>();
 
@@ -65,9 +65,8 @@ public class WiredRoomLogsPageEvent extends MessageHandler {
         String needle = query.toLowerCase(Locale.ROOT);
         List<WiredRoomDiagnostics.HistoryEntry> history = snapshot.getHistory();
 
-        // Newest first, like the official log list.
-        for (int index = history.size() - 1; index >= 0; index--) {
-            WiredRoomDiagnostics.HistoryEntry entry = history.get(index);
+        // The history is already newest first, like the official log list.
+        for (WiredRoomDiagnostics.HistoryEntry entry : history) {
             int level = entry.getSeverity().getLogLevel();
             int source = entry.getType().ordinal();
 
