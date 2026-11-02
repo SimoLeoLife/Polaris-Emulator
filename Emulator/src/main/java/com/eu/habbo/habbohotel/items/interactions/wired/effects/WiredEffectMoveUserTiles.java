@@ -5,6 +5,7 @@ import com.eu.habbo.habbohotel.gameclients.GameClient;
 import com.eu.habbo.habbohotel.items.Item;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredEffect;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredTrigger;
+import com.eu.habbo.habbohotel.items.interactions.wired.WiredInputGuard;
 import com.eu.habbo.habbohotel.items.interactions.wired.WiredSettings;
 import com.eu.habbo.habbohotel.rooms.Room;
 import com.eu.habbo.habbohotel.rooms.RoomTile;
@@ -14,13 +15,12 @@ import com.eu.habbo.habbohotel.rooms.RoomUserRotation;
 import com.eu.habbo.habbohotel.wired.WiredEffectType;
 import com.eu.habbo.habbohotel.wired.core.WiredContext;
 import com.eu.habbo.habbohotel.wired.core.WiredManager;
-import com.eu.habbo.habbohotel.wired.core.WiredMovementPhysics;
 import com.eu.habbo.habbohotel.wired.core.WiredMoveCarryHelper;
+import com.eu.habbo.habbohotel.wired.core.WiredMovementPhysics;
 import com.eu.habbo.habbohotel.wired.core.WiredSourceUtil;
 import com.eu.habbo.habbohotel.wired.core.WiredUserMovementHelper;
 import com.eu.habbo.messages.ServerMessage;
 import com.eu.habbo.messages.incoming.wired.WiredSaveException;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
@@ -32,7 +32,7 @@ public class WiredEffectMoveUserTiles extends InteractionWiredEffect {
     private static final int MIN_TILE_COUNT = 1;
     private static final int MAX_TILE_COUNT = 10;
 
-    public static final WiredEffectType type = WiredEffectType.MOVE_ROTATE_USER;
+    public static final WiredEffectType type = WiredEffectType.MOVE_USER_TILES;
 
     private int movementDirection = -1;
     private int rotationDirection = -1;
@@ -43,7 +43,8 @@ public class WiredEffectMoveUserTiles extends InteractionWiredEffect {
         super(set, baseItem);
     }
 
-    public WiredEffectMoveUserTiles(int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
+    public WiredEffectMoveUserTiles(
+            int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
         super(id, userId, item, extradata, limitedStack, limitedSells);
     }
 
@@ -51,6 +52,7 @@ public class WiredEffectMoveUserTiles extends InteractionWiredEffect {
     public void execute(WiredContext ctx) {
         Room room = ctx.room();
         WiredMovementPhysics movementPhysics = WiredMoveCarryHelper.getUserMovementPhysics(room, this, ctx);
+        int jumpStrength = WiredMoveCarryHelper.getUserJumpStrength(room, this, ctx);
 
         for (RoomUnit roomUnit : WiredSourceUtil.resolveUsers(ctx, this.userSource)) {
             if (roomUnit == null || roomUnit.getRoom() != room) {
@@ -58,7 +60,8 @@ public class WiredEffectMoveUserTiles extends InteractionWiredEffect {
             }
 
             boolean hasRotation = this.rotationDirection >= 0;
-            RoomUserRotation targetBodyRotation = hasRotation ? this.getTargetRotation(roomUnit) : roomUnit.getBodyRotation();
+            RoomUserRotation targetBodyRotation =
+                    hasRotation ? this.getTargetRotation(roomUnit) : roomUnit.getBodyRotation();
             RoomUserRotation targetHeadRotation = hasRotation ? targetBodyRotation : roomUnit.getHeadRotation();
 
             if (roomUnit.isWalking()) {
@@ -69,12 +72,17 @@ public class WiredEffectMoveUserTiles extends InteractionWiredEffect {
             }
 
             boolean noAnimation = WiredMoveCarryHelper.hasNoAnimationExtra(room, this);
-            int animationDuration = noAnimation ? 0 : WiredMoveCarryHelper.getAnimationDuration(room, this, WiredUserMovementHelper.DEFAULT_ANIMATION_DURATION);
+            int animationDuration = noAnimation
+                    ? 0
+                    : WiredMoveCarryHelper.getAnimationDuration(
+                            room, this, WiredUserMovementHelper.DEFAULT_ANIMATION_DURATION);
 
             boolean movedAny = false;
 
             for (int i = 0; i < this.tileCount; i++) {
-                RoomTile targetTile = (this.movementDirection >= 0) ? this.getTargetTile(room, roomUnit, this.movementDirection) : null;
+                RoomTile targetTile = (this.movementDirection >= 0)
+                        ? this.getTargetTile(room, roomUnit, this.movementDirection)
+                        : null;
                 boolean canMove = this.canMoveTo(room, roomUnit, targetTile, movementPhysics);
 
                 if (!canMove) {
@@ -82,8 +90,17 @@ public class WiredEffectMoveUserTiles extends InteractionWiredEffect {
                 }
 
                 double targetZ = targetTile.getStackHeight() + ((targetTile.state == RoomTileState.SIT) ? -0.5 : 0);
-                if (!WiredUserMovementHelper.moveUser(room, roomUnit, targetTile, targetZ, targetBodyRotation, targetHeadRotation,
-                        animationDuration, noAnimation, movementPhysics)) {
+                if (!WiredUserMovementHelper.moveUser(
+                        room,
+                        roomUnit,
+                        targetTile,
+                        targetZ,
+                        targetBodyRotation,
+                        targetHeadRotation,
+                        animationDuration,
+                        noAnimation,
+                        movementPhysics,
+                        jumpStrength)) {
                     break;
                 }
 
@@ -98,13 +115,13 @@ public class WiredEffectMoveUserTiles extends InteractionWiredEffect {
 
     @Override
     public String getWiredData() {
-        return WiredManager.getGson().toJson(new JsonData(
-            this.getDelay(),
-            this.movementDirection,
-            this.rotationDirection,
-            this.userSource,
-            this.tileCount
-        ));
+        return WiredManager.getGson()
+                .toJson(new JsonData(
+                        this.getDelay(),
+                        this.movementDirection,
+                        this.rotationDirection,
+                        this.userSource,
+                        this.tileCount));
     }
 
     @Override
@@ -150,10 +167,12 @@ public class WiredEffectMoveUserTiles extends InteractionWiredEffect {
         message.appendInt(this.getBaseItem().getSpriteId());
         message.appendInt(this.getId());
         message.appendString("");
+        // saveData reads the tile count as the fourth int; sending three left the dialog reopening
+        // on one tile whatever had been saved.
         message.appendInt(3);
         message.appendInt(this.movementDirection);
-        message.appendInt(this.rotationDirection);
-        message.appendInt(this.userSource);
+        message.appendInt(WiredEffectMoveRotateUser.toOfficialRotation(this.rotationDirection));
+        message.appendInt(this.tileCount);
         message.appendInt(0);
         message.appendInt(this.getType().code);
         message.appendInt(this.getDelay());
@@ -176,19 +195,24 @@ public class WiredEffectMoveUserTiles extends InteractionWiredEffect {
 
     @Override
     public boolean saveData(WiredSettings settings, GameClient gameClient) throws WiredSaveException {
-        if (settings.getIntParams().length < 3) {
+        // Laid out as the official move user: [movement, rotation (9 / 10 for the turns)]; ours
+        // follows: [tiles]. The user source is the official source slot.
+        if (settings.getIntParams().length < 2) {
             throw new WiredSaveException("Invalid data");
         }
 
         int delay = settings.getDelay();
-        if (delay > Emulator.getConfig().getInt("hotel.wired.max_delay", 20)) {
+        if (delay > Emulator.getConfig().getInt("hotel.wired.max_delay", WiredInputGuard.DEFAULT_MAX_DELAY)) {
             throw new WiredSaveException("Delay too long");
         }
 
         this.movementDirection = this.normalizeDirection(settings.getIntParams()[0]);
-        this.rotationDirection = this.normalizeRotation(settings.getIntParams()[1]);
-        this.userSource = settings.getIntParams()[2];
-        this.tileCount = (settings.getIntParams().length > 3) ? this.normalizeTileCount(settings.getIntParams()[3]) : MIN_TILE_COUNT;
+        this.rotationDirection =
+                this.normalizeRotation(WiredEffectMoveRotateUser.fromOfficialRotation(settings.getIntParams()[1]));
+        this.userSource = settings.userSource(0, WiredSourceUtil.SOURCE_TRIGGER);
+        this.tileCount = (settings.getIntParams().length > 2)
+                ? this.normalizeTileCount(settings.getIntParams()[2])
+                : MIN_TILE_COUNT;
         this.setDelay(delay);
 
         return true;
@@ -215,7 +239,11 @@ public class WiredEffectMoveUserTiles extends InteractionWiredEffect {
     }
 
     private int normalizeRotation(int rotation) {
-        return ((rotation >= 0 && rotation <= 7) || rotation == ROTATION_CLOCKWISE || rotation == ROTATION_COUNTER_CLOCKWISE) ? rotation : -1;
+        return ((rotation >= 0 && rotation <= 7)
+                        || rotation == ROTATION_CLOCKWISE
+                        || rotation == ROTATION_COUNTER_CLOCKWISE)
+                ? rotation
+                : -1;
     }
 
     private int normalizeTileCount(int count) {
@@ -231,7 +259,9 @@ public class WiredEffectMoveUserTiles extends InteractionWiredEffect {
     }
 
     private RoomUserRotation getTargetRotation(RoomUnit roomUnit) {
-        RoomUserRotation currentRotation = (roomUnit != null && roomUnit.getBodyRotation() != null) ? roomUnit.getBodyRotation() : RoomUserRotation.NORTH;
+        RoomUserRotation currentRotation = (roomUnit != null && roomUnit.getBodyRotation() != null)
+                ? roomUnit.getBodyRotation()
+                : RoomUserRotation.NORTH;
 
         if (this.rotationDirection == ROTATION_CLOCKWISE) {
             return RoomUserRotation.clockwise(currentRotation);

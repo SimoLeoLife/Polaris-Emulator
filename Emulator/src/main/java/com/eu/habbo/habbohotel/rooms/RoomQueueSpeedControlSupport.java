@@ -7,11 +7,14 @@ import com.eu.habbo.habbohotel.users.HabboItem;
 public final class RoomQueueSpeedControlSupport {
     private static final String CONTROLLER_INTERACTION = "wf_conf_queue_speed";
 
-    private RoomQueueSpeedControlSupport() {
-    }
+    private RoomQueueSpeedControlSupport() {}
 
     public static Integer getEffectiveRollerSpeed(Room room) {
         HabboItem controller = getControllerItem(room);
+        if (controller instanceof InteractionQueueSpeedControl speedControl) {
+            return InteractionQueueSpeedControl.toRollerSpeed(Integer.toString(speedControl.getRollerModeState()));
+        }
+
         return controller != null ? InteractionQueueSpeedControl.toRollerSpeed(controller.getExtradata()) : null;
     }
 
@@ -60,7 +63,13 @@ public final class RoomQueueSpeedControlSupport {
             return null;
         }
 
-        for (HabboItem item : room.getFloorItems()) {
+        // Asked every room cycle, so it reads the indexed controllers, not a copy of every floor item.
+        RoomSpecialTypes specialTypes = room.getRoomSpecialTypes();
+        if (specialTypes == null) {
+            return null;
+        }
+
+        for (HabboItem item : specialTypes.getItemsOfType(InteractionQueueSpeedControl.class)) {
             if (!isControllerItem(item)) {
                 continue;
             }

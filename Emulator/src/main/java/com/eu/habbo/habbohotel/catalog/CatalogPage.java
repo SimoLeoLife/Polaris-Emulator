@@ -2,25 +2,25 @@ package com.eu.habbo.habbohotel.catalog;
 
 import com.eu.habbo.messages.ISerialize;
 import com.eu.habbo.messages.ServerMessage;
-import it.unimi.dsi.fastutil.ints.IntArrayList;
-import it.unimi.dsi.fastutil.ints.IntList;
 import it.unimi.dsi.fastutil.ints.Int2ObjectMap;
 import it.unimi.dsi.fastutil.ints.Int2ObjectMaps;
 import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
+import it.unimi.dsi.fastutil.ints.IntArrayList;
+import it.unimi.dsi.fastutil.ints.IntList;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public abstract class CatalogPage implements Comparable<CatalogPage>, ISerialize {
     private static final Logger LOGGER = LoggerFactory.getLogger(CatalogPage.class);
 
     protected final IntList offerIds = new IntArrayList();
-    protected final Map<Integer, CatalogPage> childPages = new HashMap<>();
+    // Admin edits add and remove children while readers copy them to build the read index.
+    protected final Map<Integer, CatalogPage> childPages = new ConcurrentHashMap<>();
     private final Int2ObjectMap<CatalogItem> catalogItems = Int2ObjectMaps.synchronize(new Int2ObjectOpenHashMap<>());
     private final ArrayList<Integer> included = new ArrayList<>();
     protected int id;
@@ -34,6 +34,8 @@ public abstract class CatalogPage implements Comparable<CatalogPage>, ISerialize
     protected boolean visible;
     protected boolean enabled;
     protected boolean clubOnly;
+    protected boolean vipOnly;
+    protected int roomId;
     protected CatalogPageType catalogPageType = CatalogPageType.NORMAL;
     protected String layout;
     protected String headerImage;
@@ -44,12 +46,10 @@ public abstract class CatalogPage implements Comparable<CatalogPage>, ISerialize
     protected String textDetails;
     protected String textTeaser;
 
-    public CatalogPage() {
-    }
+    public CatalogPage() {}
 
     public CatalogPage(ResultSet set) throws SQLException {
-        if (set == null)
-            return;
+        if (set == null) return;
 
         this.id = set.getInt("id");
         this.parentId = set.getInt("parent_id");
@@ -62,6 +62,16 @@ public abstract class CatalogPage implements Comparable<CatalogPage>, ISerialize
         this.visible = set.getBoolean("visible");
         this.enabled = set.getBoolean("enabled");
         this.clubOnly = set.getBoolean("club_only");
+        try {
+            this.vipOnly = set.getBoolean("vip_only");
+        } catch (SQLException ignored) {
+            this.vipOnly = false;
+        }
+        try {
+            this.roomId = set.getInt("room_id");
+        } catch (SQLException ignored) {
+            this.roomId = 0;
+        }
         try {
             this.catalogPageType = CatalogPageType.fromString(set.getString("catalog_mode"));
         } catch (SQLException ignored) {
@@ -121,6 +131,10 @@ public abstract class CatalogPage implements Comparable<CatalogPage>, ISerialize
         this.iconImage = iconImage;
     }
 
+    public void setIconColor(int iconColor) {
+        this.iconColor = iconColor;
+    }
+
     public void setOrderNum(int orderNum) {
         this.orderNum = orderNum;
     }
@@ -131,6 +145,14 @@ public abstract class CatalogPage implements Comparable<CatalogPage>, ISerialize
 
     public void setEnabled(boolean enabled) {
         this.enabled = enabled;
+    }
+
+    public void setClubOnly(boolean clubOnly) {
+        this.clubOnly = clubOnly;
+    }
+
+    public void setVipOnly(boolean vipOnly) {
+        this.vipOnly = vipOnly;
     }
 
     public void setLayout(String layout) {
@@ -149,12 +171,34 @@ public abstract class CatalogPage implements Comparable<CatalogPage>, ISerialize
         this.teaserImage = teaserImage;
     }
 
+    public void setSpecialImage(String specialImage) {
+        this.specialImage = specialImage;
+    }
+
     public void setTextOne(String textOne) {
         this.textOne = textOne;
     }
 
+    public void setTextTwo(String textTwo) {
+        this.textTwo = textTwo;
+    }
+
     public void setTextDetails(String textDetails) {
         this.textDetails = textDetails;
+    }
+
+    public void setTextTeaser(String textTeaser) {
+        this.textTeaser = textTeaser;
+    }
+
+    public void setRoomId(int roomId) {
+        this.roomId = roomId;
+    }
+
+    public void setIncluded(String includes) {
+        this.included.clear();
+        if (includes == null || includes.isBlank()) return;
+        for (String id : includes.split(";")) this.included.add(Integer.parseInt(id));
     }
 
     public String getCaption() {
@@ -187,6 +231,14 @@ public abstract class CatalogPage implements Comparable<CatalogPage>, ISerialize
 
     public boolean isClubOnly() {
         return this.clubOnly;
+    }
+
+    public boolean isVipOnly() {
+        return this.vipOnly;
+    }
+
+    public int getRoomId() {
+        return this.roomId;
     }
 
     public CatalogPageType getCatalogPageType() {
@@ -241,6 +293,28 @@ public abstract class CatalogPage implements Comparable<CatalogPage>, ISerialize
         return this.catalogItems;
     }
 
+    /**
+     * Package-private, non-overridable view of the backing item map for {@link
+     * CatalogReadIndex#build}. Unlike {@link #getCatalogItems()} - which {@code
+     * RoomBundleLayout} overrides to run room-loading DB I/O as a side effect - this is {@code
+     * final}, so a read-index rebuild can walk every page's items without triggering that work
+     * while holding the manager's read-index lock.
+     */
+    final Int2ObjectMap<CatalogItem> catalogItemsView() {
+        return this.catalogItems;
+    }
+
+    /**
+     * Whether {@link #getCatalogItems()} must be called for its side effect before this page's
+     * cached, read-index-backed item list is served. {@code RoomBundleLayout} overrides {@link
+     * #getCatalogItems()} to recompute the bundle contents from the live room and needs that
+     * refresh on every open; a plain page's items only change through explicit mutation plus
+     * {@link CatalogManager#markCatalogChanged()}, so the default is false.
+     */
+    protected boolean refreshesItemsOnRead() {
+        return false;
+    }
+
     public CatalogItem getCatalogItem(int id) {
         return this.catalogItems.get(id);
     }
@@ -264,7 +338,13 @@ public abstract class CatalogPage implements Comparable<CatalogPage>, ISerialize
     @SuppressWarnings("NullableProblems")
     @Override
     public int compareTo(CatalogPage page) {
-        return this.getOrderNum() - page.getOrderNum();
+        // Pages sharing an order slot used to fall back to the iteration order of the child HashMap,
+        // which is not the order they were added in and shifts as pages come and go. The stock
+        // database ships eight pet pages at order 99 under one parent, so this was visible out of
+        // the box: the same catalog, a different sequence after a restart. The id keeps them steady.
+        int byOrder = Integer.compare(this.getOrderNum(), page.getOrderNum());
+
+        return byOrder != 0 ? byOrder : Integer.compare(this.getId(), page.getId());
     }
 
     @Override

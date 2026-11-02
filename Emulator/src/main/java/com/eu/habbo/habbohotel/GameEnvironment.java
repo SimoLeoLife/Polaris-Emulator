@@ -1,6 +1,7 @@
 package com.eu.habbo.habbohotel;
 
 import com.eu.habbo.Emulator;
+import com.eu.habbo.WiredPlatform;
 import com.eu.habbo.core.CreditsScheduler;
 import com.eu.habbo.core.GotwPointsScheduler;
 import com.eu.habbo.core.PixelScheduler;
@@ -10,12 +11,17 @@ import com.eu.habbo.habbohotel.bots.BotManager;
 import com.eu.habbo.habbohotel.campaign.calendar.CalendarManager;
 import com.eu.habbo.habbohotel.catalog.CatalogManager;
 import com.eu.habbo.habbohotel.commands.CommandHandler;
+import com.eu.habbo.habbohotel.communitygoals.CommunityGoalManager;
 import com.eu.habbo.habbohotel.crafting.CraftingManager;
 import com.eu.habbo.habbohotel.guides.GuideManager;
 import com.eu.habbo.habbohotel.guilds.GuildManager;
+import com.eu.habbo.habbohotel.habbicons.HabbiconService;
 import com.eu.habbo.habbohotel.hotelview.HotelViewManager;
+import com.eu.habbo.habbohotel.hotlooks.HotLooksManager;
 import com.eu.habbo.habbohotel.items.FurnitureTextProvider;
 import com.eu.habbo.habbohotel.items.ItemManager;
+import com.eu.habbo.habbohotel.items.interactions.wired.chest.ChestRelease;
+import com.eu.habbo.habbohotel.items.rentable.RentableFurnitureManager;
 import com.eu.habbo.habbohotel.mentions.MentionManager;
 import com.eu.habbo.habbohotel.modtool.ModToolManager;
 import com.eu.habbo.habbohotel.modtool.ModToolSanctions;
@@ -25,10 +31,12 @@ import com.eu.habbo.habbohotel.permissions.PermissionsManager;
 import com.eu.habbo.habbohotel.pets.PetManager;
 import com.eu.habbo.habbohotel.polls.PollManager;
 import com.eu.habbo.habbohotel.rooms.RoomChatBubbleManager;
+import com.eu.habbo.habbohotel.rooms.RoomCycleService;
 import com.eu.habbo.habbohotel.rooms.RoomManager;
 import com.eu.habbo.habbohotel.soundboard.SoundboardManager;
 import com.eu.habbo.habbohotel.translations.GoogleTranslateManager;
 import com.eu.habbo.habbohotel.traxeditor.TraxEditorManager;
+import com.eu.habbo.habbohotel.treasurehunt.TreasureHuntManager;
 import com.eu.habbo.habbohotel.users.HabboManager;
 import com.eu.habbo.habbohotel.users.custombadge.CustomBadgeManager;
 import com.eu.habbo.habbohotel.users.infostand.InfostandBackgroundManager;
@@ -61,7 +69,10 @@ public class GameEnvironment {
     private FurnitureTextProvider furnitureTextProvider;
     private CatalogManager catalogManager;
     private HotelViewManager hotelViewManager;
+    private CommunityGoalManager communityGoalManager;
+    private TreasureHuntManager treasureHuntManager;
     private RoomManager roomManager;
+    private RoomCycleService roomCycleService;
     private CommandHandler commandHandler;
     private PermissionsManager permissionsManager;
     private BotManager botManager;
@@ -80,15 +91,26 @@ public class GameEnvironment {
     private CustomBadgeManager customBadgeManager;
     private InfostandBackgroundManager infostandBackgroundManager;
     private WheelManager wheelManager;
+    private HotLooksManager hotLooksManager;
+    private final HabbiconService habbiconService;
     private SoundboardManager soundboardManager;
     private TraxEditorManager traxEditorManager;
     private MentionManager mentionManager;
+    private com.eu.habbo.habbohotel.quests.QuestManager questManager;
+    private com.eu.habbo.habbohotel.quests.DailyTaskManager dailyTaskManager;
+    private com.eu.habbo.habbohotel.quests.RewardTrackManager rewardTrackManager;
+    private RentableFurnitureManager rentableFurnitureManager;
 
     public GameEnvironment() {
         this(Runnable::run);
     }
 
     public GameEnvironment(Executor persistenceExecutor) {
+        this(persistenceExecutor, null);
+    }
+
+    public GameEnvironment(Executor persistenceExecutor, HabbiconService habbiconService) {
+        this.habbiconService = habbiconService;
         this.persistenceExecutor = Objects.requireNonNull(persistenceExecutor, "persistenceExecutor");
     }
 
@@ -97,17 +119,28 @@ public class GameEnvironment {
 
         this.permissionsManager = this.services.create("permissions manager", PermissionsManager::new);
         this.habboManager = this.services.create(
-                "habbo manager", () -> new HabboManager(this.persistenceExecutor), HabboManager::dispose);
+                "habbo manager",
+                () -> new HabboManager(this.persistenceExecutor, this.habbiconService),
+                HabboManager::dispose);
         this.hotelViewManager =
                 this.services.create("hotel view manager", HotelViewManager::new, HotelViewManager::dispose);
+        this.communityGoalManager = this.services.create(
+                "community goal manager", CommunityGoalManager::new, CommunityGoalManager::dispose);
+        this.treasureHuntManager =
+                this.services.create("treasure hunt manager", TreasureHuntManager::new, TreasureHuntManager::dispose);
         this.itemManager = this.services.create("item manager", ItemManager::new, ItemManager::dispose);
         this.itemManager.load();
+        sweepOrphanedChests();
         this.furnitureTextProvider = this.services.create("furniture text provider", FurnitureTextProvider::new);
         this.furnitureTextProvider.init();
         this.botManager = this.services.create("bot manager", BotManager::new, BotManager::dispose);
         this.petManager = this.services.create("pet manager", PetManager::new);
         this.guildManager = this.services.create("guild manager", GuildManager::new, GuildManager::dispose);
         this.catalogManager = this.services.create("catalog manager", CatalogManager::new, CatalogManager::dispose);
+        this.roomCycleService = this.services.create(
+                "room cycle workers",
+                () -> RoomCycleService.fromConfig(WiredPlatform.configuration()),
+                RoomCycleService::dispose);
         this.roomManager = this.services.create(
                 "room manager", () -> new RoomManager(this.persistenceExecutor), RoomManager::dispose);
         this.services.beforeDispose("room cycles", () -> this.roomManager.quiesceRoomCycles());
@@ -129,9 +162,18 @@ public class GameEnvironment {
         this.infostandBackgroundManager =
                 this.services.create("infostand backgrounds", InfostandBackgroundManager::new);
         this.wheelManager = this.services.create("wheel manager", WheelManager::new);
-        this.soundboardManager = this.services.create("soundboard manager", SoundboardManager::new);
+        this.hotLooksManager = this.services.create("hot looks manager", HotLooksManager::new);
+        this.soundboardManager =
+                this.services.create("soundboard manager", () -> new SoundboardManager(this.permissionsManager));
         this.traxEditorManager = this.services.create("trax editor manager", TraxEditorManager::new);
         this.mentionManager = this.services.create("mention manager", MentionManager::new);
+        this.questManager = this.services.create("quest manager", com.eu.habbo.habbohotel.quests.QuestManager::new);
+        this.dailyTaskManager =
+                this.services.create("daily task manager", com.eu.habbo.habbohotel.quests.DailyTaskManager::new);
+        this.rewardTrackManager =
+                this.services.create("reward track manager", com.eu.habbo.habbohotel.quests.RewardTrackManager::new);
+        this.rentableFurnitureManager = this.services.create(
+                "rentable furniture", RentableFurnitureManager::new, RentableFurnitureManager::dispose);
 
         this.roomManager.loadPublicRooms();
         this.navigatorManager.loadNavigator();
@@ -178,6 +220,18 @@ public class GameEnvironment {
         Emulator.getThreading().run(this.subscriptionScheduler);
 
         LOGGER.info("GameEnvironment -> Loaded!");
+    }
+
+    /**
+     * Give back what wired chests hold whose item was deleted without releasing them. Runs before any
+     * player is online; a failure here never stops the hotel from starting.
+     */
+    private static void sweepOrphanedChests() {
+        try {
+            ChestRelease.sweepOrphans();
+        } catch (RuntimeException e) {
+            LOGGER.error("Could not sweep wired chests whose furni no longer exists", e);
+        }
     }
 
     public void dispose() {
@@ -234,12 +288,19 @@ public class GameEnvironment {
         steps.put("item manager", this.itemManager == null ? null : () -> this.itemManager.dispose());
         steps.put("hotel view manager", this.hotelViewManager == null ? null : () -> this.hotelViewManager.dispose());
         steps.put(
+                "community goal manager",
+                this.communityGoalManager == null ? null : () -> this.communityGoalManager.dispose());
+        steps.put(
+                "treasure hunt manager",
+                this.treasureHuntManager == null ? null : () -> this.treasureHuntManager.dispose());
+        steps.put(
                 "subscription manager",
                 this.subscriptionManager == null ? null : () -> this.subscriptionManager.dispose());
         steps.put("calendar manager", this.calendarManager == null ? null : () -> this.calendarManager.dispose());
         steps.put(
                 "Google Translate cache",
                 this.googleTranslateManager == null ? null : () -> this.googleTranslateManager.clearCache());
+        steps.put("room cycle workers", this.roomCycleService == null ? null : () -> this.roomCycleService.dispose());
 
         disposeAll(steps);
         LOGGER.info("GameEnvironment -> Disposed!");
@@ -287,6 +348,10 @@ public class GameEnvironment {
         return this.wheelManager;
     }
 
+    public HotLooksManager getHotLooksManager() {
+        return this.hotLooksManager;
+    }
+
     public SoundboardManager getSoundboardManager() {
         return this.soundboardManager;
     }
@@ -299,8 +364,21 @@ public class GameEnvironment {
         return this.hotelViewManager;
     }
 
+    public CommunityGoalManager getCommunityGoalManager() {
+        return this.communityGoalManager;
+    }
+
+    public TreasureHuntManager getTreasureHuntManager() {
+        return this.treasureHuntManager;
+    }
+
     public RoomManager getRoomManager() {
         return this.roomManager;
+    }
+
+    /** The room cycle workers, or null before load and in tests. */
+    public RoomCycleService getRoomCycleService() {
+        return this.roomCycleService;
     }
 
     public CommandHandler getCommandHandler() {
@@ -329,6 +407,22 @@ public class GameEnvironment {
 
     public MentionManager getMentionManager() {
         return this.mentionManager;
+    }
+
+    public com.eu.habbo.habbohotel.quests.QuestManager getQuestManager() {
+        return this.questManager;
+    }
+
+    public com.eu.habbo.habbohotel.quests.DailyTaskManager getDailyTaskManager() {
+        return this.dailyTaskManager;
+    }
+
+    public com.eu.habbo.habbohotel.quests.RewardTrackManager getRewardTrackManager() {
+        return this.rewardTrackManager;
+    }
+
+    public RentableFurnitureManager getRentableFurnitureManager() {
+        return this.rentableFurnitureManager;
     }
 
     public AchievementManager getAchievementManager() {

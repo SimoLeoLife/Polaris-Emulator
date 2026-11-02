@@ -5,19 +5,30 @@ import com.eu.habbo.habbohotel.gameclients.GameClient;
 import com.eu.habbo.habbohotel.items.Item;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredExtra;
 import com.eu.habbo.habbohotel.items.interactions.wired.WiredSettings;
+import com.eu.habbo.habbohotel.permissions.Permission;
 import com.eu.habbo.habbohotel.rooms.Room;
 import com.eu.habbo.habbohotel.rooms.RoomUnit;
+import com.eu.habbo.habbohotel.rooms.RoomWiredVariableCatalog;
+import com.eu.habbo.habbohotel.users.Habbo;
+import com.eu.habbo.habbohotel.wired.arrays.WiredArrayDefinition;
+import com.eu.habbo.habbohotel.wired.arrays.WiredArrayVariableDefinition;
+import com.eu.habbo.habbohotel.wired.arrays.WiredArrayVariableType;
+import com.eu.habbo.habbohotel.wired.arrays.WiredVariableDefinitionData;
 import com.eu.habbo.habbohotel.wired.core.WiredManager;
+import com.eu.habbo.habbohotel.wired.protocol.WiredOfficialVariableIds;
 import com.eu.habbo.messages.ServerMessage;
 import com.eu.habbo.messages.incoming.wired.WiredSaveException;
-
+import com.eu.habbo.messages.outgoing.wired.WiredAllVariablesDiffComposer;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
 
-public class WiredExtraVariableReference extends InteractionWiredExtra {
+public class WiredExtraVariableReference extends InteractionWiredExtra
+        implements WiredArrayVariableDefinition, WiredOfficialVariableIds {
     public static final int CODE = 81;
+    /** AIR wired context SHARED_VARIABLE_LIST: the shared variables of the owner's other rooms. */
+    private static final int CONTEXT_SHARED_VARIABLE_LIST = 4;
 
     private String variableName = "";
     private int sourceRoomId = 0;
@@ -27,12 +38,14 @@ public class WiredExtraVariableReference extends InteractionWiredExtra {
     private int sourceTargetType = WiredVariableReferenceSupport.TARGET_USER;
     private boolean hasValue = false;
     private boolean readOnly = true;
+    private WiredArrayDefinition arrayDefinition;
 
     public WiredExtraVariableReference(ResultSet set, Item baseItem) throws SQLException {
         super(set, baseItem);
     }
 
-    public WiredExtraVariableReference(int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
+    public WiredExtraVariableReference(
+            int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
         super(id, userId, item, extradata, limitedStack, limitedSells);
     }
 
@@ -43,13 +56,13 @@ public class WiredExtraVariableReference extends InteractionWiredExtra {
 
     @Override
     public boolean saveData(WiredSettings settings, GameClient gameClient) throws WiredSaveException {
-        Room room = Emulator.getGameEnvironment().getRoomManager().getRoom(this.getRoomId());
+        Room room = findLoadedRoom(this.getRoomId());
 
         if (room == null) {
             throw new WiredSaveException("Room not found");
         }
 
-        ConfigData config = parseConfigData(settings.getStringParam());
+        ConfigData config = readEditor(room, settings);
         String normalizedName = WiredVariableNameValidator.normalizeForSave(config.variableName);
 
         WiredVariableNameValidator.validateDefinitionName(room, this.getId(), normalizedName);
@@ -58,15 +71,25 @@ public class WiredExtraVariableReference extends InteractionWiredExtra {
             throw new WiredSaveException("wiredfurni.params.variables.validation.missing_variable");
         }
 
-        WiredVariableReferenceSupport.SharedDefinitionOption definition = WiredVariableReferenceSupport.findSharedDefinition(
-            room,
-            config.sourceRoomId,
-            config.sourceVariableItemId,
-            config.sourceTargetType
-        );
+        WiredVariableReferenceSupport.SharedDefinitionOption definition =
+                WiredVariableReferenceSupport.findSharedDefinition(
+                        room, config.sourceRoomId, config.sourceVariableItemId, config.sourceTargetType);
 
+        // The official refusal for a reference to a variable that is not (or no longer) shared (18f2688f).
         if (definition == null) {
-            throw new WiredSaveException("wiredfurni.params.variables.validation.invalid_variable");
+            throw new WiredSaveException("wiredfurni.error.variables.reference.valid");
+        }
+
+        // One reference per shared variable in a room: another box already linked to it is refused (AIR).
+        if (room.getRoomSpecialTypes() != null) {
+            for (InteractionWiredExtra extra : room.getRoomSpecialTypes().getExtras()) {
+                if (extra instanceof WiredExtraVariableReference other
+                        && other.getId() != this.getId()
+                        && other.getSourceRoomId() == definition.getRoomId()
+                        && other.getSourceVariableItemId() == definition.getItemId()) {
+                    throw new WiredSaveException("wiredfurni.error.variables.reference.already_exists");
+                }
+            }
         }
 
         this.variableName = normalizedName;
@@ -76,24 +99,39 @@ public class WiredExtraVariableReference extends InteractionWiredExtra {
         this.sourceVariableName = definition.getName();
         this.sourceTargetType = definition.getTargetType();
         this.hasValue = definition.hasValue();
-        this.readOnly = config.readOnly;
+        // The shared variable lives in another room of the same owner. Writing through the reference
+        // reaches that room, where the editor may hold no rights at all, so only the owner (or staff who
+        // own any room) may save a writable reference; anyone else gets a read-only one.
+        this.readOnly = config.readOnly || !mayWriteSource(room, gameClient);
+        this.arrayDefinition = definition.getArrayDefinition();
 
         room.getUserVariableManager().broadcastSnapshot();
         return true;
     }
 
+    static boolean mayWriteSource(Room room, GameClient gameClient) {
+        Habbo editor = gameClient == null ? null : gameClient.getHabbo();
+
+        return editor != null
+                && (editor.getHabboInfo().getId() == room.getOwnerId()
+                        || editor.hasPermission(Permission.ACC_ANYROOMOWNER));
+    }
+
     @Override
     public String getWiredData() {
-        return WiredManager.getGson().toJson(new JsonData(
-            this.variableName,
-            this.sourceRoomId,
-            this.sourceRoomName,
-            this.sourceVariableItemId,
-            this.sourceVariableName,
-            this.sourceTargetType,
-            this.hasValue,
-            this.readOnly
-        ));
+        return WiredManager.getGson()
+                .toJson(new JsonData(
+                        this.variableName,
+                        this.sourceRoomId,
+                        this.sourceRoomName,
+                        this.sourceVariableItemId,
+                        this.sourceVariableName,
+                        this.sourceTargetType,
+                        this.hasValue,
+                        this.readOnly,
+                        this.arrayDefinition == null
+                                ? null
+                                : WiredVariableDefinitionData.array(this.variableName, this.arrayDefinition)));
     }
 
     @Override
@@ -103,12 +141,125 @@ public class WiredExtraVariableReference extends InteractionWiredExtra {
         message.appendInt(0);
         message.appendInt(this.getBaseItem().getSpriteId());
         message.appendInt(this.getId());
-        message.appendString(buildEditorPayload(room));
-        message.appendInt(0);
+        // AIR (ReferenceVariable): the name, [readOnly], the shared variable as the definition's variable id and
+        // the owner's shared variables in the SHARED_VARIABLE_LIST context.
+        message.appendString(this.variableName);
+        message.appendInt(1);
+        message.appendInt(this.readOnly ? 1 : 0);
         message.appendInt(0);
         message.appendInt(CODE);
         message.appendInt(0);
         message.appendInt(0);
+
+        List<WiredVariableReferenceSupport.SharedDefinitionOption> shared = new ArrayList<>();
+        for (WiredVariableReferenceSupport.RoomOption option : WiredVariableReferenceSupport.loadRoomOptions(room)) {
+            shared.addAll(option.getVariables());
+        }
+        boolean listsSource = false;
+        for (WiredVariableReferenceSupport.SharedDefinitionOption definition : shared) {
+            listsSource |= definition.getItemId() == this.sourceVariableItemId
+                    && definition.getTargetType() == this.sourceTargetType;
+        }
+
+        message.appendInt(1);
+        message.appendInt(CONTEXT_SHARED_VARIABLE_LIST);
+        boolean keepsLostSource = !listsSource && this.sourceVariableItemId > 0;
+        message.appendInt(shared.size() + (keepsLostSource ? 1 : 0));
+        for (WiredVariableReferenceSupport.SharedDefinitionOption definition : shared) {
+            appendSharedVariable(
+                    message,
+                    definition.getRoomId(),
+                    definition.getRoomName(),
+                    definition.getItemId(),
+                    definition.getName(),
+                    definition.getTargetType(),
+                    definition.hasValue());
+        }
+        if (keepsLostSource) {
+            // A source that is no longer shared still shows, so the editor opens on it.
+            appendSharedVariable(
+                    message,
+                    this.sourceRoomId,
+                    this.sourceRoomName,
+                    this.sourceVariableItemId,
+                    this.sourceVariableName,
+                    this.sourceTargetType,
+                    this.hasValue);
+        }
+    }
+
+    @Override
+    public String[] officialVariableIds() {
+        return this.sourceVariableItemId > 0
+                ? new String[] {sharedVariableId(this.sourceTargetType, this.sourceVariableItemId)}
+                : new String[0];
+    }
+
+    /** The id of a shared variable as the catalog names it: {@code user:<id>} or {@code room:<id>}. */
+    static String sharedVariableId(int targetType, int itemId) {
+        return RoomWiredVariableCatalog.variableId(catalogTarget(targetType), itemId);
+    }
+
+    private static int catalogTarget(int targetType) {
+        return (targetType == WiredVariableReferenceSupport.TARGET_ROOM)
+                ? RoomWiredVariableCatalog.TARGET_ROOM
+                : RoomWiredVariableCatalog.TARGET_USER;
+    }
+
+    private static void appendSharedVariable(
+            ServerMessage message,
+            int roomId,
+            String roomName,
+            int itemId,
+            String name,
+            int targetType,
+            boolean hasValue) {
+        message.appendInt(roomId);
+        message.appendString(sanitizeLabel(roomName));
+        WiredAllVariablesDiffComposer.appendVariable(
+                message,
+                new RoomWiredVariableCatalog.Variable(
+                        sharedVariableId(targetType, itemId),
+                        RoomWiredVariableCatalog.TYPE_CREATED,
+                        name != null ? name : "",
+                        WiredVariableReferenceSupport.SHARED_AVAILABILITY,
+                        catalogTarget(targetType),
+                        hasValue,
+                        false,
+                        false));
+    }
+
+    /**
+     * What the editor saved: AIR's name, [readOnly] and shared variable id, or the JSON string of our earlier editor
+     * (kept so older share codes and clients still save).
+     */
+    static ConfigData readEditor(Room room, WiredSettings settings) {
+        String text = settings.getStringParam();
+        if (text != null && text.trim().startsWith("{")) {
+            return parseConfigData(text.trim());
+        }
+
+        ConfigData config = new ConfigData();
+        config.variableName = (text != null) ? text : "";
+        int[] ints = settings.getIntParams();
+        config.readOnly = ints.length == 0 || ints[0] != 0;
+
+        String[] variableIds = settings.getVariableIds();
+        String id = (variableIds.length > 0 && variableIds[0] != null) ? variableIds[0].trim() : "";
+        config.sourceVariableItemId = RoomWiredVariableCatalog.definitionIdOf(id);
+        config.sourceTargetType = RoomWiredVariableCatalog.targetOf(id) == RoomWiredVariableCatalog.TARGET_ROOM
+                ? WiredVariableReferenceSupport.TARGET_ROOM
+                : WiredVariableReferenceSupport.TARGET_USER;
+
+        for (WiredVariableReferenceSupport.RoomOption option : WiredVariableReferenceSupport.loadRoomOptions(room)) {
+            for (WiredVariableReferenceSupport.SharedDefinitionOption definition : option.getVariables()) {
+                if (definition.getItemId() == config.sourceVariableItemId
+                        && definition.getTargetType() == config.sourceTargetType) {
+                    config.sourceRoomId = definition.getRoomId();
+                }
+            }
+        }
+        return config;
     }
 
     @Override
@@ -133,6 +284,16 @@ public class WiredExtraVariableReference extends InteractionWiredExtra {
         this.sourceTargetType = normalizeTargetType(data.sourceTargetType);
         this.hasValue = data.hasValue;
         this.readOnly = data.readOnly;
+        if (data.definition != null) {
+            try {
+                this.arrayDefinition =
+                        com.eu.habbo.habbohotel.wired.arrays.WiredArrayDefinitionSupport.parseArrayDefinition(
+                                data.definition);
+                if (this.arrayDefinition != null) this.hasValue = true;
+            } catch (IllegalArgumentException ignored) {
+                this.arrayDefinition = null;
+            }
+        }
     }
 
     @Override
@@ -145,11 +306,11 @@ public class WiredExtraVariableReference extends InteractionWiredExtra {
         this.sourceTargetType = WiredVariableReferenceSupport.TARGET_USER;
         this.hasValue = false;
         this.readOnly = true;
+        this.arrayDefinition = null;
     }
 
     @Override
-    public void onWalk(RoomUnit roomUnit, Room room, Object[] objects) {
-    }
+    public void onWalk(RoomUnit roomUnit, Room room, Object[] objects) {}
 
     @Override
     public boolean hasConfiguration() {
@@ -200,29 +361,52 @@ public class WiredExtraVariableReference extends InteractionWiredExtra {
         return this.sourceTargetType == WiredVariableReferenceSupport.TARGET_ROOM;
     }
 
-    private String buildEditorPayload(Room room) {
-        List<RoomEditorData> roomOptions = new ArrayList<>();
+    @Override
+    public WiredArrayVariableType getArrayVariableType() {
+        return this.isRoomReference() ? WiredArrayVariableType.ROOM : WiredArrayVariableType.USER;
+    }
 
-        for (WiredVariableReferenceSupport.RoomOption option : WiredVariableReferenceSupport.loadRoomOptions(room)) {
-            List<VariableEditorData> variables = new ArrayList<>();
+    @Override
+    public WiredArrayDefinition getArrayDefinition() {
+        return this.arrayDefinition;
+    }
 
-            for (WiredVariableReferenceSupport.SharedDefinitionOption definition : option.getVariables()) {
-                variables.add(new VariableEditorData(definition.getItemId(), definition.getName(), definition.getTargetType(), definition.hasValue()));
-            }
+    @Override
+    public boolean isArrayPermanent() {
+        return true;
+    }
 
-            roomOptions.add(new RoomEditorData(option.getRoomId(), option.getRoomName(), variables));
-        }
+    @Override
+    public int getArrayStorageRoomId(int currentRoomId) {
+        return this.sourceRoomId;
+    }
 
-        return WiredManager.getGson().toJson(new EditorPayload(
-            this.variableName,
-            this.sourceRoomId,
-            this.sourceRoomName,
-            this.sourceVariableItemId,
-            this.sourceVariableName,
-            this.sourceTargetType,
-            this.readOnly,
-            roomOptions
-        ));
+    @Override
+    public int getArrayStorageDefinitionItemId() {
+        return this.sourceVariableItemId;
+    }
+
+    @Override
+    public boolean isArrayWritable() {
+        return !this.readOnly;
+    }
+
+    @Override
+    public boolean isArrayShared() {
+        return true;
+    }
+
+    @Override
+    public boolean isArraySourceValid() {
+        return WiredVariableReferenceSupport.isSharedSourceStillAvailable(this);
+    }
+
+    Room loadedSourceRoom() {
+        return findLoadedRoom(this.sourceRoomId);
+    }
+
+    private static Room findLoadedRoom(int roomId) {
+        return Emulator.getGameEnvironment().getRoomManager().getRoom(roomId);
     }
 
     private static ConfigData parseConfigData(String value) {
@@ -235,7 +419,9 @@ public class WiredExtraVariableReference extends InteractionWiredExtra {
     }
 
     private static int normalizeTargetType(int value) {
-        return (value == WiredVariableReferenceSupport.TARGET_ROOM) ? WiredVariableReferenceSupport.TARGET_ROOM : WiredVariableReferenceSupport.TARGET_USER;
+        return (value == WiredVariableReferenceSupport.TARGET_ROOM)
+                ? WiredVariableReferenceSupport.TARGET_ROOM
+                : WiredVariableReferenceSupport.TARGET_USER;
     }
 
     private static String sanitizeLabel(String value) {
@@ -255,8 +441,18 @@ public class WiredExtraVariableReference extends InteractionWiredExtra {
         int sourceTargetType;
         boolean hasValue;
         boolean readOnly;
+        WiredVariableDefinitionData definition;
 
-        JsonData(String variableName, int sourceRoomId, String sourceRoomName, int sourceVariableItemId, String sourceVariableName, int sourceTargetType, boolean hasValue, boolean readOnly) {
+        JsonData(
+                String variableName,
+                int sourceRoomId,
+                String sourceRoomName,
+                int sourceVariableItemId,
+                String sourceVariableName,
+                int sourceTargetType,
+                boolean hasValue,
+                boolean readOnly,
+                WiredVariableDefinitionData definition) {
             this.variableName = variableName;
             this.sourceRoomId = sourceRoomId;
             this.sourceRoomName = sourceRoomName;
@@ -265,6 +461,7 @@ public class WiredExtraVariableReference extends InteractionWiredExtra {
             this.sourceTargetType = sourceTargetType;
             this.hasValue = hasValue;
             this.readOnly = readOnly;
+            this.definition = definition;
         }
     }
 
@@ -274,48 +471,5 @@ public class WiredExtraVariableReference extends InteractionWiredExtra {
         int sourceVariableItemId = 0;
         int sourceTargetType = WiredVariableReferenceSupport.TARGET_USER;
         boolean readOnly = true;
-    }
-
-    static class EditorPayload extends ConfigData {
-        String sourceRoomName;
-        String sourceVariableName;
-        List<RoomEditorData> rooms;
-
-        EditorPayload(String variableName, int sourceRoomId, String sourceRoomName, int sourceVariableItemId, String sourceVariableName, int sourceTargetType, boolean readOnly, List<RoomEditorData> rooms) {
-            this.variableName = variableName;
-            this.sourceRoomId = sourceRoomId;
-            this.sourceRoomName = sourceRoomName;
-            this.sourceVariableItemId = sourceVariableItemId;
-            this.sourceVariableName = sourceVariableName;
-            this.sourceTargetType = sourceTargetType;
-            this.readOnly = readOnly;
-            this.rooms = rooms;
-        }
-    }
-
-    static class RoomEditorData {
-        int roomId;
-        String roomName;
-        List<VariableEditorData> variables;
-
-        RoomEditorData(int roomId, String roomName, List<VariableEditorData> variables) {
-            this.roomId = roomId;
-            this.roomName = roomName;
-            this.variables = variables;
-        }
-    }
-
-    static class VariableEditorData {
-        int itemId;
-        String name;
-        int targetType;
-        boolean hasValue;
-
-        VariableEditorData(int itemId, String name, int targetType, boolean hasValue) {
-            this.itemId = itemId;
-            this.name = name;
-            this.targetType = targetType;
-            this.hasValue = hasValue;
-        }
     }
 }

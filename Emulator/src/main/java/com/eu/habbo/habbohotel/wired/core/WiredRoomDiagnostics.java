@@ -1,10 +1,12 @@
 package com.eu.habbo.habbohotel.wired.core;
 
-import java.util.ArrayList;
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.EnumMap;
+import java.util.Iterator;
 import java.util.List;
+import java.util.function.Supplier;
 
 /**
  * Tracks wired monitor data for a single room.
@@ -17,12 +19,55 @@ public final class WiredRoomDiagnostics {
         EXECUTOR_OVERLOAD,
         MARKED_AS_HEAVY,
         KILLED,
-        RECURSION_TIMEOUT
+        RECURSION_TIMEOUT,
+        /** A chain fired and an effect had nothing to act on, so it did nothing and said nothing. */
+        NO_TARGETS,
+        /** A furni is waiting on something the room has no way of producing. */
+        UNREACHABLE,
+        /** A line a "write to logs" box wrote, at the level the box was set to. */
+        WIRED_LOG,
+        /** Place Furni could not place one or more of its copies (room full, tile taken, a gate or roller). */
+        PLACEMENT_FAILED,
+        /** A furni or user could not be given one more variable: it holds as many as one holder may. */
+        TOO_MANY_VARIABLES,
+        /** A wired transaction failed for a reason the room or the server is behind, not the player. */
+        TRANSACTION_FAILURE,
+        /** The room holds more variable fx boxes than are drawn; the rest are left out. */
+        VARIABLE_FX_LIMIT
     }
 
+    /**
+     * How serious an entry is. {@link #getLogLevel()} is the number the room log window filters and
+     * colours by - AIR's four levels, 0 info, 1 warn, 2 error, 3 debug
+     * ({@code WiredRoomLogListTableObject.COLORS}). It is not the ordinal: the two the engine always
+     * used stay first, where they were.
+     */
     public enum Severity {
-        WARNING,
-        ERROR
+        WARNING(1),
+        ERROR(2),
+        DEBUG(3),
+        INFO(0);
+
+        private final int logLevel;
+
+        Severity(int logLevel) {
+            this.logLevel = logLevel;
+        }
+
+        public int getLogLevel() {
+            return this.logLevel;
+        }
+
+        /** The severity for a log level from a box or a filter; anything unknown reads as info. */
+        public static Severity fromLogLevel(int logLevel) {
+            for (Severity severity : values()) {
+                if (severity.logLevel == logLevel) {
+                    return severity;
+                }
+            }
+
+            return INFO;
+        }
     }
 
     public static final class LogEntry {
@@ -106,13 +151,26 @@ public final class WiredRoomDiagnostics {
         private final List<LogEntry> logs;
         private final List<HistoryEntry> history;
 
-        public Snapshot(int usageCurrentWindow, int usageLimitPerWindow, boolean heavy, int delayedEventsPending,
-                        int delayedEventsLimit, int averageExecutionMs, int peakExecutionMs,
-                        int recursionDepthCurrent, int recursionDepthLimit, int killedRemainingSeconds,
-                        int usageWindowMs, int overloadAverageThresholdMs, int overloadPeakThresholdMs,
-                        int heavyUsageThresholdPercent, int heavyConsecutiveWindowsThreshold,
-                        int overloadConsecutiveWindowsThreshold, int heavyDelayedThresholdPercent,
-                        List<LogEntry> logs, List<HistoryEntry> history) {
+        public Snapshot(
+                int usageCurrentWindow,
+                int usageLimitPerWindow,
+                boolean heavy,
+                int delayedEventsPending,
+                int delayedEventsLimit,
+                int averageExecutionMs,
+                int peakExecutionMs,
+                int recursionDepthCurrent,
+                int recursionDepthLimit,
+                int killedRemainingSeconds,
+                int usageWindowMs,
+                int overloadAverageThresholdMs,
+                int overloadPeakThresholdMs,
+                int heavyUsageThresholdPercent,
+                int heavyConsecutiveWindowsThreshold,
+                int overloadConsecutiveWindowsThreshold,
+                int heavyDelayedThresholdPercent,
+                List<LogEntry> logs,
+                List<HistoryEntry> history) {
             this.usageCurrentWindow = usageCurrentWindow;
             this.usageLimitPerWindow = usageLimitPerWindow;
             this.heavy = heavy;
@@ -219,7 +277,8 @@ public final class WiredRoomDiagnostics {
         private final String sourceLabel;
         private final int sourceId;
 
-        public HistoryEntry(Type type, Severity severity, long occurredAtMs, String reason, String sourceLabel, int sourceId) {
+        public HistoryEntry(
+                Type type, Severity severity, long occurredAtMs, String reason, String sourceLabel, int sourceId) {
             this.type = type;
             this.severity = severity;
             this.occurredAtMs = occurredAtMs;
@@ -267,31 +326,56 @@ public final class WiredRoomDiagnostics {
     private final int maxHistoryEntries;
 
     private final java.util.concurrent.atomic.AtomicLong windowStartedAt = new java.util.concurrent.atomic.AtomicLong();
-    private final java.util.concurrent.atomic.AtomicInteger usageCurrentWindow = new java.util.concurrent.atomic.AtomicInteger();
-    private final java.util.concurrent.atomic.AtomicInteger delayedEventsPending = new java.util.concurrent.atomic.AtomicInteger();
-    private final java.util.concurrent.atomic.AtomicLong totalExecutionMsCurrentWindow = new java.util.concurrent.atomic.AtomicLong();
-    private final java.util.concurrent.atomic.AtomicInteger executionSamplesCurrentWindow = new java.util.concurrent.atomic.AtomicInteger();
+    private final java.util.concurrent.atomic.AtomicInteger usageCurrentWindow =
+            new java.util.concurrent.atomic.AtomicInteger();
+    private final java.util.concurrent.atomic.AtomicInteger delayedEventsPending =
+            new java.util.concurrent.atomic.AtomicInteger();
+    private final java.util.concurrent.atomic.AtomicLong totalExecutionMsCurrentWindow =
+            new java.util.concurrent.atomic.AtomicLong();
+    private final java.util.concurrent.atomic.AtomicInteger executionSamplesCurrentWindow =
+            new java.util.concurrent.atomic.AtomicInteger();
     private volatile int averageExecutionMs;
     private volatile int peakExecutionMs;
     private volatile int consecutiveHeavyWindows;
     private volatile int consecutiveOverloadWindows;
     private volatile boolean heavy;
+    private volatile java.util.function.BiConsumer<Boolean, Long> heavyListener;
     private volatile String peakExecutionSourceLabel;
     private volatile int peakExecutionSourceId;
     private volatile String peakExecutionReason;
 
-    public WiredRoomDiagnostics(int usageWindowMs, int usageLimitPerWindow, int delayedEventsLimit,
-                                int overloadAverageThresholdMs, int overloadPeakThresholdMs,
-                                int heavyUsageThresholdPercent, int heavyConsecutiveWindowsThreshold) {
-        this(usageWindowMs, usageLimitPerWindow, delayedEventsLimit, overloadAverageThresholdMs, overloadPeakThresholdMs,
-                heavyUsageThresholdPercent, heavyConsecutiveWindowsThreshold, 2, 60, 200);
+    public WiredRoomDiagnostics(
+            int usageWindowMs,
+            int usageLimitPerWindow,
+            int delayedEventsLimit,
+            int overloadAverageThresholdMs,
+            int overloadPeakThresholdMs,
+            int heavyUsageThresholdPercent,
+            int heavyConsecutiveWindowsThreshold) {
+        this(
+                usageWindowMs,
+                usageLimitPerWindow,
+                delayedEventsLimit,
+                overloadAverageThresholdMs,
+                overloadPeakThresholdMs,
+                heavyUsageThresholdPercent,
+                heavyConsecutiveWindowsThreshold,
+                2,
+                60,
+                200);
     }
 
-    public WiredRoomDiagnostics(int usageWindowMs, int usageLimitPerWindow, int delayedEventsLimit,
-                                int overloadAverageThresholdMs, int overloadPeakThresholdMs,
-                                int heavyUsageThresholdPercent, int heavyConsecutiveWindowsThreshold,
-                                int overloadConsecutiveWindowsThreshold, int heavyDelayedThresholdPercent,
-                                int maxHistoryEntries) {
+    public WiredRoomDiagnostics(
+            int usageWindowMs,
+            int usageLimitPerWindow,
+            int delayedEventsLimit,
+            int overloadAverageThresholdMs,
+            int overloadPeakThresholdMs,
+            int heavyUsageThresholdPercent,
+            int heavyConsecutiveWindowsThreshold,
+            int overloadConsecutiveWindowsThreshold,
+            int heavyDelayedThresholdPercent,
+            int maxHistoryEntries) {
         this.usageWindowMs = Math.max(250, usageWindowMs);
         this.usageLimitPerWindow = Math.max(1, usageLimitPerWindow);
         this.delayedEventsLimit = Math.max(1, delayedEventsLimit);
@@ -310,14 +394,23 @@ public final class WiredRoomDiagnostics {
         }
     }
 
-    public boolean tryConsumeExecutionBudget(int estimatedCost, long now, String sourceLabel, int sourceId, String reason) {
+    public boolean tryConsumeExecutionBudget(
+            int estimatedCost, long now, String sourceLabel, int sourceId, String reason) {
+        return tryConsumeExecutionBudget(estimatedCost, now, sourceLabel, sourceId, () -> reason);
+    }
+
+    /** The reason is only built when the budget refuses the cost. */
+    boolean tryConsumeExecutionBudget(
+            int estimatedCost, long now, String sourceLabel, int sourceId, Supplier<String> reason) {
         rollWindowIfNeeded(now);
 
         int normalizedCost = Math.max(0, estimatedCost);
         int currentUsage = this.usageCurrentWindow.addAndGet(normalizedCost);
         if (currentUsage > this.usageLimitPerWindow) {
-            record(Type.EXECUTION_CAP, now,
-                    buildExecutionCapReason(normalizedCost, reason, currentUsage),
+            record(
+                    Type.EXECUTION_CAP,
+                    now,
+                    buildExecutionCapReason(normalizedCost, reason.get(), currentUsage),
                     sourceLabel,
                     sourceId);
             return false;
@@ -331,10 +424,8 @@ public final class WiredRoomDiagnostics {
 
         int currentPending = this.delayedEventsPending.incrementAndGet();
         if (currentPending > this.delayedEventsLimit) {
-            record(Type.DELAYED_EVENTS_CAP, now,
-                    buildDelayedCapReason(reason, currentPending),
-                    sourceLabel,
-                    sourceId);
+            this.delayedEventsPending.decrementAndGet();
+            record(Type.DELAYED_EVENTS_CAP, now, buildDelayedCapReason(reason, currentPending), sourceLabel, sourceId);
             return false;
         }
 
@@ -346,6 +437,11 @@ public final class WiredRoomDiagnostics {
     }
 
     public void recordExecution(long elapsedMs, long now, String sourceLabel, int sourceId, String reason) {
+        recordExecution(elapsedMs, now, sourceLabel, sourceId, () -> reason);
+    }
+
+    /** The reason is only built when this run is the window's new peak. */
+    void recordExecution(long elapsedMs, long now, String sourceLabel, int sourceId, Supplier<String> reason) {
         rollWindowIfNeeded(now);
 
         int normalizedElapsed = (int) Math.max(0L, elapsedMs);
@@ -360,10 +456,20 @@ public final class WiredRoomDiagnostics {
                     this.peakExecutionMs = normalizedElapsed;
                     this.peakExecutionSourceLabel = sanitizeSourceLabel(sourceLabel);
                     this.peakExecutionSourceId = Math.max(0, sourceId);
-                    this.peakExecutionReason = sanitizeReason(reason);
+                    this.peakExecutionReason = sanitizeReason(reason.get());
                 }
             }
         }
+    }
+
+    /** Timer firings over the room's per-second cap were dropped; logged like any execution cap. */
+    void recordTimerCap(long now, String reason) {
+        recordExecutionCap(now, reason, "timers");
+    }
+
+    void recordExecutionCap(long now, String reason, String sourceLabel) {
+        rollWindowIfNeeded(now);
+        record(Type.EXECUTION_CAP, now, reason, sourceLabel, 0);
     }
 
     public void recordKilled(long now, String reason, String sourceLabel, int sourceId) {
@@ -374,6 +480,60 @@ public final class WiredRoomDiagnostics {
     public void recordRecursionTimeout(long now, String reason, String sourceLabel, int sourceId) {
         rollWindowIfNeeded(now);
         record(Type.RECURSION_TIMEOUT, now, reason, sourceLabel, sourceId);
+    }
+
+    /**
+     * A chain ran to its effects and one of them resolved no furni or no users. Nothing is wrong with
+     * the engine - the setup asked for something that was not there - but until now that was the one
+     * way a chain could do nothing without leaving a trace, which is a long evening for whoever built
+     * it. Entries aggregate by type, so a busy room adds a count rather than a wall of lines.
+     */
+    public void recordNoTargets(long now, String reason, String sourceLabel, int sourceId) {
+        rollWindowIfNeeded(now);
+        record(Type.NO_TARGETS, now, reason, sourceLabel, sourceId);
+    }
+
+    /**
+     * A furni was placed that can only ever be fed by something the room does not contain - a
+     * highscore board with no way to end a game, say. Nothing has failed yet and nothing will: the
+     * furni will simply sit there empty, which reads exactly like a bug.
+     */
+    public void recordUnreachable(long now, String reason, String sourceLabel, int sourceId) {
+        rollWindowIfNeeded(now);
+        record(Type.UNREACHABLE, now, reason, sourceLabel, sourceId);
+    }
+
+    /** Place Furni could not place a copy; the users saw the placement-failed notice. */
+    public void recordPlacementFailure(long now, String reason, String sourceLabel, int sourceId) {
+        rollWindowIfNeeded(now);
+        record(Type.PLACEMENT_FAILED, now, reason, sourceLabel, sourceId);
+    }
+
+    /** A holder could not be given one more variable (Habbo's TOO_MANY_VARIABLES, error 6). */
+    public void recordTooManyVariables(long now, String reason, String sourceLabel, int sourceId) {
+        rollWindowIfNeeded(now);
+        record(Type.TOO_MANY_VARIABLES, now, reason, sourceLabel, sourceId);
+    }
+
+    /** A wired transaction failed on the room's or the server's side (Habbo's TRANSACTION_FAILURE, error 7). */
+    public void recordTransactionFailure(long now, String reason, String sourceLabel, int sourceId) {
+        rollWindowIfNeeded(now);
+        record(Type.TRANSACTION_FAILURE, now, reason, sourceLabel, sourceId);
+    }
+
+    /** More variable fx boxes than the room may draw (Habbo's VARIABLE_FX_LIMIT, error 8). */
+    public void recordVariableFxLimit(long now, String reason, String sourceLabel, int sourceId) {
+        rollWindowIfNeeded(now);
+        record(Type.VARIABLE_FX_LIMIT, now, reason, sourceLabel, sourceId);
+    }
+
+    /**
+     * A line a wired box asked to write. It lands in the room log at the box's own level, so the log
+     * window shows it next to what the engine noted, filterable like any other entry.
+     */
+    public void recordWiredLog(long now, Severity severity, String message, String sourceLabel, int sourceId) {
+        rollWindowIfNeeded(now);
+        record(Type.WIRED_LOG, severity, now, message, sourceLabel, sourceId);
     }
 
     public synchronized void clearLogs() {
@@ -395,7 +555,8 @@ public final class WiredRoomDiagnostics {
         this.history.clear();
     }
 
-    public synchronized Snapshot snapshot(int recursionDepthCurrent, int recursionDepthLimit, long killedUntilMs, long now) {
+    public synchronized Snapshot snapshot(
+            int recursionDepthCurrent, int recursionDepthLimit, long killedUntilMs, long now) {
         rollWindowIfNeeded(now);
 
         List<LogEntry> logEntries = new ArrayList<>(Type.values().length);
@@ -442,8 +603,7 @@ public final class WiredRoomDiagnostics {
                 this.overloadConsecutiveWindowsThreshold,
                 this.heavyDelayedThresholdPercent,
                 logEntries,
-                historyEntries
-        );
+                historyEntries);
     }
 
     private void rollWindowIfNeeded(long now) {
@@ -457,10 +617,22 @@ public final class WiredRoomDiagnostics {
             synchronized (this) {
                 startedAt = this.windowStartedAt.get();
                 if ((now - startedAt) >= this.usageWindowMs) {
-                    while ((now - startedAt) >= this.usageWindowMs) {
+                    // Only the first elapsed window carries samples; the ones after it are
+                    // empty and their evaluation reaches a fixed point once the consecutive
+                    // window thresholds are passed. Evaluate that many and then skip the rest
+                    // of the gap, so an idle room is never walked window by window.
+                    long elapsedWindows = (now - startedAt) / this.usageWindowMs;
+                    long windowsToEvaluate = Math.min(
+                            elapsedWindows,
+                            1L
+                                    + Math.max(
+                                            this.heavyConsecutiveWindowsThreshold,
+                                            this.overloadConsecutiveWindowsThreshold));
+                    long skipped = elapsedWindows - windowsToEvaluate;
+                    for (long window = 0; window < windowsToEvaluate; window++) {
                         evaluateWindow(startedAt + this.usageWindowMs);
                         startedAt += this.usageWindowMs;
-                        
+
                         this.usageCurrentWindow.set(0);
                         this.totalExecutionMsCurrentWindow.set(0L);
                         this.executionSamplesCurrentWindow.set(0);
@@ -470,6 +642,7 @@ public final class WiredRoomDiagnostics {
                         this.peakExecutionSourceId = 0;
                         this.peakExecutionReason = null;
                     }
+                    startedAt += skipped * this.usageWindowMs;
                     this.windowStartedAt.set(startedAt);
                 }
             }
@@ -480,7 +653,8 @@ public final class WiredRoomDiagnostics {
         int usagePercent = (int) Math.round((this.usageCurrentWindow.get() * 100D) / this.usageLimitPerWindow);
         int delayedPercent = (int) Math.round((this.delayedEventsPending.get() * 100D) / this.delayedEventsLimit);
         boolean overloadWindow = (this.executionSamplesCurrentWindow.get() > 0)
-                && ((this.averageExecutionMs >= this.overloadAverageThresholdMs) || (this.peakExecutionMs >= this.overloadPeakThresholdMs));
+                && ((this.averageExecutionMs >= this.overloadAverageThresholdMs)
+                        || (this.peakExecutionMs >= this.overloadPeakThresholdMs));
         boolean heavyWindow = (usagePercent >= this.heavyUsageThresholdPercent)
                 || (delayedPercent >= this.heavyDelayedThresholdPercent)
                 || overloadWindow;
@@ -489,7 +663,9 @@ public final class WiredRoomDiagnostics {
             this.consecutiveOverloadWindows++;
 
             if (this.consecutiveOverloadWindows >= this.overloadConsecutiveWindowsThreshold) {
-                record(Type.EXECUTOR_OVERLOAD, now,
+                record(
+                        Type.EXECUTOR_OVERLOAD,
+                        now,
                         buildExecutorOverloadReason(),
                         this.peakExecutionSourceLabel,
                         this.peakExecutionSourceId);
@@ -503,7 +679,10 @@ public final class WiredRoomDiagnostics {
 
             if (!this.heavy && (this.consecutiveHeavyWindows >= this.heavyConsecutiveWindowsThreshold)) {
                 this.heavy = true;
-                record(Type.MARKED_AS_HEAVY, now,
+                notifyHeavy(true, now);
+                record(
+                        Type.MARKED_AS_HEAVY,
+                        now,
                         buildHeavyReason(usagePercent, delayedPercent, overloadWindow),
                         overloadWindow ? this.peakExecutionSourceLabel : null,
                         overloadWindow ? this.peakExecutionSourceId : 0);
@@ -513,52 +692,84 @@ public final class WiredRoomDiagnostics {
         }
 
         this.consecutiveHeavyWindows = 0;
-        this.heavy = false;
+        if (this.heavy) {
+            this.heavy = false;
+            notifyHeavy(false, now);
+        }
+    }
+
+    /** Told when the room becomes heavy or calms down again. */
+    void onHeavyChange(java.util.function.BiConsumer<Boolean, Long> listener) {
+        this.heavyListener = listener;
+    }
+
+    private void notifyHeavy(boolean nowHeavy, long now) {
+        java.util.function.BiConsumer<Boolean, Long> listener = this.heavyListener;
+        if (listener != null) {
+            listener.accept(nowHeavy, now);
+        }
     }
 
     private void record(Type type, long now, String reason, String sourceLabel, int sourceId) {
         LogEntry entry = this.logs.get(type);
+        record(type, (entry != null) ? entry.getSeverity() : null, now, reason, sourceLabel, sourceId);
+    }
+
+    // Synchronized with snapshot(): a box can now log every tick, and the history is a plain deque.
+    private synchronized void record(
+            Type type, Severity severity, long now, String reason, String sourceLabel, int sourceId) {
+        LogEntry entry = this.logs.get(type);
         if (entry != null) {
             entry.record(now, reason, sourceLabel, sourceId);
-            this.history.addFirst(new HistoryEntry(type, entry.getSeverity(), now, reason, sourceLabel, sourceId));
+            this.history.addFirst(new HistoryEntry(type, severity, now, reason, sourceLabel, sourceId));
 
             while (this.history.size() > this.maxHistoryEntries) {
-                this.history.removeLast();
+                // A box's own log lines make room among themselves, so a chatty box cannot push the
+                // engine's entries (killed, recursion) out of the history.
+                if (type != Type.WIRED_LOG || !removeOldestWiredLog()) {
+                    this.history.removeLast();
+                }
             }
         }
+    }
+
+    private boolean removeOldestWiredLog() {
+        Iterator<HistoryEntry> iterator = this.history.descendingIterator();
+        while (iterator.hasNext()) {
+            if (iterator.next().getType() == Type.WIRED_LOG) {
+                iterator.remove();
+                return true;
+            }
+        }
+        return false;
     }
 
     private String buildExecutionCapReason(int normalizedCost, String reason, int currentUsage) {
         return joinReason(
                 reason,
-                String.format("Estimated stack cost %d would exceed usage budget %d/%d in %dms window",
-                        normalizedCost,
-                        currentUsage,
-                        this.usageLimitPerWindow,
-                        this.usageWindowMs)
-        );
+                String.format(
+                        "Estimated stack cost %d would exceed usage budget %d/%d in %dms window",
+                        normalizedCost, currentUsage, this.usageLimitPerWindow, this.usageWindowMs));
     }
 
     private String buildDelayedCapReason(String reason, int currentPending) {
         return joinReason(
                 reason,
-                String.format("Pending delayed events would exceed queue %d/%d",
-                        currentPending,
-                        this.delayedEventsLimit)
-        );
+                String.format(
+                        "Pending delayed events would exceed queue %d/%d", currentPending, this.delayedEventsLimit));
     }
 
     private String buildExecutorOverloadReason() {
         return joinReason(
                 this.peakExecutionReason,
-                String.format("Average execution %dms (limit %dms), peak %dms (limit %dms) across %d execution(s) in %dms window",
+                String.format(
+                        "Average execution %dms (limit %dms), peak %dms (limit %dms) across %d execution(s) in %dms window",
                         this.averageExecutionMs,
                         this.overloadAverageThresholdMs,
                         this.peakExecutionMs,
                         this.overloadPeakThresholdMs,
                         this.executionSamplesCurrentWindow.get(),
-                        this.usageWindowMs)
-        );
+                        this.usageWindowMs));
     }
 
     private String buildHeavyReason(int usagePercent, int delayedPercent, boolean overloadWindow) {
@@ -569,8 +780,7 @@ public final class WiredRoomDiagnostics {
                 this.heavyUsageThresholdPercent,
                 delayedPercent,
                 this.heavyDelayedThresholdPercent,
-                overloadWindow ? "yes" : "no"
-        );
+                overloadWindow ? "yes" : "no");
     }
 
     private static String joinReason(String primary, String fallback) {
@@ -593,6 +803,16 @@ public final class WiredRoomDiagnostics {
     }
 
     private Severity defaultSeverity(Type type) {
-        return (type == Type.MARKED_AS_HEAVY) ? Severity.WARNING : Severity.ERROR;
+        if (type == Type.WIRED_LOG) {
+            return Severity.INFO;
+        }
+
+        // Neither of these is the engine failing; they describe a setup, so they read as warnings.
+        return (type == Type.MARKED_AS_HEAVY
+                        || type == Type.NO_TARGETS
+                        || type == Type.UNREACHABLE
+                        || type == Type.PLACEMENT_FAILED)
+                ? Severity.WARNING
+                : Severity.ERROR;
     }
 }

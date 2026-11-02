@@ -2,8 +2,15 @@ package com.eu.habbo.habbohotel.rooms;
 
 import com.eu.habbo.Emulator;
 import com.eu.habbo.core.DatabaseLoggable;
+import com.eu.habbo.habbohotel.games.GamePlayer;
+import com.eu.habbo.habbohotel.games.battlebanzai.BattleBanzaiGame;
+import com.eu.habbo.habbohotel.games.freeze.FreezeGame;
+import com.eu.habbo.habbohotel.games.wired.WiredGame;
+import com.eu.habbo.habbohotel.modtool.WordFilter;
 import com.eu.habbo.habbohotel.permissions.Permission;
+import com.eu.habbo.habbohotel.users.ChatStyleRepository;
 import com.eu.habbo.habbohotel.users.Habbo;
+import com.eu.habbo.habbohotel.users.HabboInfo;
 import com.eu.habbo.habbohotel.users.UserCustomizationData;
 import com.eu.habbo.messages.ISerialize;
 import com.eu.habbo.messages.ServerMessage;
@@ -22,6 +29,8 @@ public class RoomChatMessage implements Runnable, ISerialize, DatabaseLoggable {
     private static final String QUERY =
             "INSERT INTO chatlogs_room (user_from_id, user_to_id, message, timestamp, room_id) VALUES (?, ?, ?, ?, ?)";
 
+    public static final int NO_BUBBLE_WIDTH_OVERRIDE = -1;
+    private static final int WIDEST_BUBBLE_WIDTH = 0, THINNEST_BUBBLE_WIDTH = 2;
     private static final List<String> chatColors = Arrays.asList("@red@", "@cyan@", "@blue@", "@green@", "@purple@");
     public static volatile int MAXIMUM_LENGTH = 100;
     // Configuration. Loaded from database & updated accordingly.
@@ -30,6 +39,9 @@ public class RoomChatMessage implements Runnable, ISerialize, DatabaseLoggable {
     private final Habbo habbo;
     public int roomId;
     public boolean isCommand = false;
+    /** Set by the room chat once the line has been sent to the room; a refused line stays false. */
+    public boolean delivered = false;
+
     public boolean filtered = false;
     private int roomUnitId;
     private String message;
@@ -39,6 +51,10 @@ public class RoomChatMessage implements Runnable, ISerialize, DatabaseLoggable {
     private Habbo targetHabbo;
     private byte emotion;
     private String RoomChatColour; // Added Chatcolor
+    /** -1 follows the room setting; 0 wide, 1 normal, 2 thin as the room chat settings name them. */
+    private int bubbleWidthOverride = NO_BUBBLE_WIDTH_OVERRIDE;
+    /** The bubble shows the message without the speaker's name, as a wired bot may ask. */
+    private boolean hideUsername = false;
 
     public RoomChatMessage(MessageHandler message) {
         if (message.packet.getMessageId() == Incoming.RoomUserWhisperEvent) {
@@ -49,6 +65,7 @@ public class RoomChatMessage implements Runnable, ISerialize, DatabaseLoggable {
         } else {
             this.message = message.packet.readString();
         }
+        this.message = truncateToMaximumLength(this.message);
         try {
             this.bubble = RoomChatMessageBubbles.getBubble(message.packet.readInt());
         } catch (Exception e) {
@@ -64,16 +81,70 @@ public class RoomChatMessage implements Runnable, ISerialize, DatabaseLoggable {
                     break;
                 }
             }
+
+            // A catalog-sold style only for its owners; the ownership lookup only runs for those styles.
+            if (ChatStyleRepository.isPurchasable(this.bubble.getType())
+                    && !ChatStyleRepository.owns(
+                            message.client.getHabbo().getHabboInfo().getId(), this.bubble.getType())) {
+                this.bubble = RoomChatMessageBubbles.NORMAL;
+            }
         }
 
         this.habbo = message.client.getHabbo();
+        this.bubble = resolveSpeakerBubble(this.bubble, this.habbo);
         this.roomUnitId = this.habbo.getRoomUnit().getId();
         this.unfilteredMessage = this.message;
-        this.timestamp = Emulator.getIntUnixTimestamp();
+        this.timestamp = now();
 
         this.checkEmotion();
 
         this.filter();
+    }
+
+    /**
+     * The bubble a user's own talk, shout or whisper goes out in. A member of a Wired team speaks in the team's
+     * bubble (AIR styles 130 red, 131 blue, 132 yellow, 133 green), whatever style they picked; so does a member of a
+     * Battle Banzai or Freeze team, as on AIR. A client cannot ask for a team bubble itself.
+     */
+    static RoomChatMessageBubbles resolveSpeakerBubble(RoomChatMessageBubbles requested, Habbo speaker) {
+        RoomChatMessageBubbles bubble = requested;
+        if (bubble == null || RoomChatMessageBubbles.isWiredTeamBubble(bubble.getType())) {
+            bubble = RoomChatMessageBubbles.NORMAL;
+        }
+
+        RoomChatMessageBubbles team = wiredTeamBubble(speaker);
+        return team != null ? team : bubble;
+    }
+
+    /** The team bubble of the speaker, or null when they are not in a coloured Wired, Banzai or Freeze team. */
+    static RoomChatMessageBubbles wiredTeamBubble(Habbo speaker) {
+        if (speaker == null || speaker.getHabboInfo() == null) {
+            return null;
+        }
+
+        HabboInfo info = speaker.getHabboInfo();
+        Class<?> game = info.getCurrentGame();
+        if (game != WiredGame.class && game != BattleBanzaiGame.class && game != FreezeGame.class) {
+            return null;
+        }
+
+        GamePlayer player = info.getGamePlayer();
+        if (player == null || player.getTeamColor() == null) {
+            return null;
+        }
+
+        switch (player.getTeamColor()) {
+            case RED:
+                return RoomChatMessageBubbles.WIRED_TEAM_RED;
+            case BLUE:
+                return RoomChatMessageBubbles.WIRED_TEAM_BLUE;
+            case YELLOW:
+                return RoomChatMessageBubbles.WIRED_TEAM_YELLOW;
+            case GREEN:
+                return RoomChatMessageBubbles.WIRED_TEAM_GREEN;
+            default:
+                return null;
+        }
     }
 
     public RoomChatMessage(RoomChatMessage chatMessage) {
@@ -84,6 +155,8 @@ public class RoomChatMessage implements Runnable, ISerialize, DatabaseLoggable {
         this.bubble = chatMessage.getBubble();
         this.roomUnitId = chatMessage.roomUnitId;
         this.emotion = (byte) chatMessage.getEmotion();
+        this.bubbleWidthOverride = chatMessage.bubbleWidthOverride;
+        this.hideUsername = chatMessage.hideUsername;
     }
 
     public RoomChatMessage(String message, RoomUnit roomUnit, RoomChatMessageBubbles bubble) {
@@ -142,15 +215,21 @@ public class RoomChatMessage implements Runnable, ISerialize, DatabaseLoggable {
     public void run() {
         if (this.habbo == null) return;
 
-        if (this.message.length() > RoomChatMessage.MAXIMUM_LENGTH) {
-            try {
-                this.message = this.message.substring(0, RoomChatMessage.MAXIMUM_LENGTH - 1);
-            } catch (Exception e) {
-                LOGGER.error("Caught exception", e);
-            }
-        }
+        this.message = truncateToMaximumLength(this.message);
 
         Emulator.getDatabaseLogger().store(this);
+    }
+
+    /**
+     * A longer line is cut to its first {@link #MAXIMUM_LENGTH} characters (a full-length line is kept whole), as in
+     * Habbo, instead of being dropped. Behaviour observed in plus-emulator/PlusEMU 3a043f7d, reimplemented.
+     */
+    public static String truncateToMaximumLength(String message) {
+        int maximum = Math.max(1, RoomChatMessage.MAXIMUM_LENGTH);
+        if (message == null || message.length() <= maximum) {
+            return message;
+        }
+        return message.substring(0, maximum);
     }
 
     public String getMessage() {
@@ -219,9 +298,34 @@ public class RoomChatMessage implements Runnable, ISerialize, DatabaseLoggable {
             message.appendString(customizationData.prefixFont);
             message.appendString(customizationData.nickIcon);
             message.appendString(customizationData.displayOrder);
+            // Optional tail: an old client stops reading before it, a new one reads -1 as "room setting".
+            message.appendInt(this.bubbleWidthOverride);
+            // Optional tail after the width: an old client stops reading before it.
+            message.appendBoolean(this.hideUsername);
         } catch (Exception e) {
             LOGGER.error("Caught exception", e);
         }
+    }
+
+    public int getBubbleWidthOverride() {
+        return this.bubbleWidthOverride;
+    }
+
+    public void setBubbleWidthOverride(int bubbleWidthOverride) {
+        this.bubbleWidthOverride = normalizeBubbleWidthOverride(bubbleWidthOverride);
+    }
+
+    public boolean isHideUsername() {
+        return this.hideUsername;
+    }
+
+    public void setHideUsername(boolean hideUsername) {
+        this.hideUsername = hideUsername;
+    }
+
+    /** Anything that is not one of the three widths means "no override". */
+    public static int normalizeBubbleWidthOverride(int value) {
+        return (value >= WIDEST_BUBBLE_WIDTH && value <= THINNEST_BUBBLE_WIDTH) ? value : NO_BUBBLE_WIDTH_OVERRIDE;
     }
 
     public void filter() {
@@ -231,12 +335,11 @@ public class RoomChatMessage implements Runnable, ISerialize, DatabaseLoggable {
             }
         }
 
-        if (Emulator.getConfig().getBoolean("hotel.wordfilter.enabled")
-                && Emulator.getConfig().getBoolean("hotel.wordfilter.rooms")) {
+        if (roomWordFilterEnabled()) {
             if (!this.habbo.hasPermission(Permission.ACC_CHAT_NO_FILTER)) {
-                if (!Emulator.getGameEnvironment().getWordFilter().autoReportCheck(this)) {
-                    if (!Emulator.getGameEnvironment().getWordFilter().hideMessageCheck(this.message)) {
-                        Emulator.getGameEnvironment().getWordFilter().filter(this, this.habbo);
+                if (!wordFilter().autoReportCheck(this)) {
+                    if (!wordFilter().hideMessageCheck(this.message)) {
+                        wordFilter().filter(this, this.habbo);
                         return;
                     }
                 } else {
@@ -251,6 +354,54 @@ public class RoomChatMessage implements Runnable, ISerialize, DatabaseLoggable {
                 this.message = "";
             }
         }
+    }
+
+    /**
+     * The room word filter for a line someone else wrote and a command puts in this user's mouth, such
+     * as :say or :shout. It is judged on the author: their filter permission, their word filter events.
+     * It never auto-reports or mutes the user who is made to speak, who did not write it.
+     */
+    public void filterWrittenBy(Habbo author) {
+        if (!roomWordFilterEnabled() || author.hasPermission(Permission.ACC_CHAT_NO_FILTER)) {
+            return;
+        }
+
+        if (wordFilter().hideMessageCheck(this.message)) {
+            this.message = "";
+            return;
+        }
+
+        wordFilter().filter(this, author);
+    }
+
+    /**
+     * Logs a line a command put in this user's mouth, under this user and with the author's name and
+     * the command appended, so the room chat log shows who really wrote it. Follows the same
+     * save-room-chats setting as ordinary talk.
+     */
+    public void logWrittenBy(Habbo author, String command) {
+        if (!SAVE_ROOM_CHATS) {
+            return;
+        }
+
+        RoomChatMessage logged = new RoomChatMessage(this);
+        logged.unfilteredMessage = this.unfilteredMessage + " [:" + command + " "
+                + author.getHabboInfo().getUsername() + "]";
+        logged.timestamp = now();
+        logged.run();
+    }
+
+    private static boolean roomWordFilterEnabled() {
+        return Emulator.getConfig().getBoolean("hotel.wordfilter.enabled")
+                && Emulator.getConfig().getBoolean("hotel.wordfilter.rooms");
+    }
+
+    private static WordFilter wordFilter() {
+        return Emulator.getGameEnvironment().getWordFilter();
+    }
+
+    private static int now() {
+        return Emulator.getIntUnixTimestamp();
     }
 
     @Override

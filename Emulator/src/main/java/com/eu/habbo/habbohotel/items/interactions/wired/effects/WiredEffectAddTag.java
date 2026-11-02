@@ -14,7 +14,6 @@ import com.eu.habbo.habbohotel.wired.core.WiredManager;
 import com.eu.habbo.habbohotel.wired.core.WiredSourceUtil;
 import com.eu.habbo.messages.ServerMessage;
 import com.eu.habbo.messages.outgoing.rooms.users.RoomUserTagsComposer;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
@@ -27,7 +26,7 @@ import java.util.List;
  * persist (a profile tag is inherently persistent).
  */
 public class WiredEffectAddTag extends InteractionWiredEffect {
-    public static final WiredEffectType type = WiredEffectType.SHOW_MESSAGE;
+    public static final WiredEffectType type = WiredEffectType.EFFECT_TAG;
 
     private static final int MAX_TAG_LENGTH = 38;
 
@@ -50,8 +49,7 @@ public class WiredEffectAddTag extends InteractionWiredEffect {
         message.appendInt(this.getBaseItem().getSpriteId());
         message.appendInt(this.getId());
         message.appendString(this.tag);
-        message.appendInt(1);
-        message.appendInt(this.userSource);
+        message.appendInt(0);
         message.appendInt(0);
         message.appendInt(type.code);
         message.appendInt(this.getDelay());
@@ -82,7 +80,8 @@ public class WiredEffectAddTag extends InteractionWiredEffect {
         this.tag = trimmed.length() <= MAX_TAG_LENGTH ? trimmed : trimmed.substring(0, MAX_TAG_LENGTH);
 
         int[] params = settings.getIntParams();
-        this.userSource = (params.length > 0) ? params[0] : WiredSourceUtil.SOURCE_TRIGGER;
+        // Official: no int params; the user source is the official source slot.
+        this.userSource = settings.userSource(0, WiredSourceUtil.SOURCE_TRIGGER);
 
         this.setDelay(settings.getDelay());
 

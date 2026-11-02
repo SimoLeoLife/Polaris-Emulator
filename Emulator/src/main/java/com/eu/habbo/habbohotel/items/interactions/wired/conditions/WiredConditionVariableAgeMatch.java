@@ -5,20 +5,30 @@ import com.eu.habbo.habbohotel.items.Item;
 import com.eu.habbo.habbohotel.items.interactions.wired.WiredSettings;
 import com.eu.habbo.habbohotel.rooms.Room;
 import com.eu.habbo.habbohotel.rooms.RoomUnit;
-import com.eu.habbo.habbohotel.rooms.WiredVariableDefinitionInfo;
-import com.eu.habbo.habbohotel.users.Habbo;
+import com.eu.habbo.habbohotel.rooms.UserVariableHolders;
 import com.eu.habbo.habbohotel.users.HabboItem;
 import com.eu.habbo.habbohotel.wired.WiredConditionType;
 import com.eu.habbo.habbohotel.wired.core.WiredContext;
 import com.eu.habbo.habbohotel.wired.core.WiredContextVariableSupport;
 import com.eu.habbo.habbohotel.wired.core.WiredManager;
+import com.eu.habbo.habbohotel.wired.core.WiredPointerVariableSupport;
+import com.eu.habbo.habbohotel.wired.core.WiredQuantifier;
 import com.eu.habbo.habbohotel.wired.core.WiredSourceUtil;
+import com.eu.habbo.habbohotel.wired.core.WiredValueVariable;
+import com.eu.habbo.habbohotel.wired.protocol.WiredVariableIds;
+import com.eu.habbo.habbohotel.wired.protocol.WiredVariableTargets;
 import com.eu.habbo.messages.ServerMessage;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * The official "variable age matches" (AIR code 37). Int params {@code [target, comparison, useUpdate, durationHigh,
+ * durationLow, unit, fromVariable, durationTarget]}; variable ids {@code [variable, duration variable or none]}; the
+ * furni and users in the official source slots, the quantifier in its slot; no string (older clients sent the variable,
+ * a tab and the duration variable's id; still read).
+ */
 public class WiredConditionVariableAgeMatch extends WiredConditionHasVariable {
     public static final WiredConditionType type = WiredConditionType.VAR_AGE_MATCH;
 
@@ -41,12 +51,18 @@ public class WiredConditionVariableAgeMatch extends WiredConditionHasVariable {
     protected int comparison = COMPARISON_LOWER_THAN;
     protected int durationAmount = 0;
     protected int durationUnit = DURATION_UNIT_SECONDS;
+    /** The duration read from a variable (official, WIN63-202610121624), on the box's own selection. */
+    protected boolean fromVariable = false;
+
+    protected int durationVariableId = 0;
+    protected int durationTarget = WiredValueVariable.TARGET_GLOBAL;
 
     public WiredConditionVariableAgeMatch(ResultSet set, Item baseItem) throws SQLException {
         super(set, baseItem);
     }
 
-    public WiredConditionVariableAgeMatch(int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
+    public WiredConditionVariableAgeMatch(
+            int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
         super(id, userId, item, extradata, limitedStack, limitedSells);
     }
 
@@ -74,16 +90,19 @@ public class WiredConditionVariableAgeMatch extends WiredConditionHasVariable {
 
         message.appendInt(this.getBaseItem().getSpriteId());
         message.appendInt(this.getId());
-        message.appendString(this.variableToken == null ? "" : this.variableToken);
+        // Official layout: [target, comparison (0 less, 2 more), useUpdate, durationHigh, durationLow, unit,
+        // fromVariable, durationTarget], variable ids [variable, duration variable or none], no string, the furni
+        // and users in the official source slots, the quantifier in its slot.
+        message.appendString("");
         message.appendInt(8);
-        message.appendInt(this.targetType);
-        message.appendInt(this.compareValue);
+        message.appendInt(WiredVariableTargets.toOfficial(this.targetType));
         message.appendInt(this.comparison);
+        message.appendInt(this.compareValue);
+        message.appendInt(0);
         message.appendInt(this.durationAmount);
         message.appendInt(this.durationUnit);
-        message.appendInt(this.userSource);
-        message.appendInt(this.furniSource);
-        message.appendInt(this.quantifier);
+        message.appendInt(this.fromVariable ? 1 : 0);
+        message.appendInt(this.durationTarget);
         message.appendInt(0);
         message.appendInt(this.getType().code);
         message.appendInt(0);
@@ -91,21 +110,52 @@ public class WiredConditionVariableAgeMatch extends WiredConditionHasVariable {
     }
 
     @Override
+    public String[] officialVariableIds() {
+        return WiredVariableIds.list(
+                WiredVariableIds.toWireForHolder(this.targetType, this.variableToken),
+                this.fromVariable ? WiredVariableIds.toWire(this.durationTarget, this.durationVariableId) : "");
+    }
+
+    @Override
     public boolean saveData(WiredSettings settings) {
         int[] params = settings.getIntParams();
         Room room = Emulator.getGameEnvironment().getRoomManager().getRoom(this.getRoomId());
 
-        this.targetType = (params.length > 0) ? normalizeTargetTypeExtended(params[0]) : TARGET_USER;
-        this.compareValue = (params.length > 1) ? normalizeCompareValue(params[1]) : COMPARE_VALUE_CREATED;
-        this.comparison = (params.length > 2) ? normalizeComparison(params[2]) : COMPARISON_LOWER_THAN;
-        this.durationAmount = normalizeDurationAmount((params.length > 3) ? params[3] : 0);
-        this.durationUnit = (params.length > 4) ? normalizeDurationUnit(params[4]) : DURATION_UNIT_SECONDS;
-        this.userSource = (params.length > 5) ? normalizeUserSource(params[5]) : WiredSourceUtil.SOURCE_TRIGGER;
-        this.furniSource = (params.length > 6) ? normalizeFurniSource(params[6]) : WiredSourceUtil.SOURCE_TRIGGER;
-        this.quantifier = (params.length > 7) ? normalizeQuantifier(params[7]) : QUANTIFIER_ALL;
-        this.setVariableToken(normalizeVariableToken(settings.getStringParam()));
+        this.targetType = (params.length > 0)
+                ? normalizeTargetTypeExtended(WiredVariableTargets.fromOfficial(params[0]))
+                : TARGET_USER;
+        this.comparison = (params.length > 1) ? normalizeComparison(params[1]) : COMPARISON_LOWER_THAN;
+        this.compareValue = (params.length > 2) ? normalizeCompareValue(params[2]) : COMPARE_VALUE_CREATED;
+        long duration = (params.length > 4) ? (((long) params[3]) << 32) | (params[4] & 0xFFFFFFFFL) : 0L;
+        this.durationAmount = normalizeDurationAmount((int) Math.clamp(duration, 0, MAX_DURATION_AMOUNT));
+        this.durationUnit = (params.length > 5) ? normalizeDurationUnit(params[5]) : DURATION_UNIT_SECONDS;
+        this.durationTarget =
+                WiredValueVariable.normalizeTarget((params.length > 7) ? params[7] : WiredValueVariable.TARGET_GLOBAL);
+        this.quantifier = normalizeQuantifier(settings.getQuantifierCode());
+        this.userSource = settings.getUserSourceTypes().length > 0
+                ? normalizeUserSource(settings.getUserSourceTypes()[0])
+                : WiredSourceUtil.SOURCE_TRIGGER;
+        this.furniSource = settings.getFurniSourceTypes().length > 0
+                ? normalizeFurniSource(settings.getFurniSourceTypes()[0])
+                : WiredSourceUtil.SOURCE_TRIGGER;
+        if (WiredVariableIds.present(settings.getVariableIds())) {
+            // AIR: [variable, duration variable or none].
+            this.setVariableToken(WiredVariableIds.tokenAt(settings.getVariableIds(), 0));
+            this.durationVariableId =
+                    settings.getVariableIds().length > 1 ? WiredVariableIds.boxIdOf(settings.getVariableIds()[1]) : 0;
+        } else {
+            // Older clients and share codes: the variable, a tab and the duration variable's id.
+            String text = settings.getStringParam() == null ? "" : settings.getStringParam();
+            int tab = text.indexOf('\t');
+            this.setVariableToken(normalizeVariableToken(tab < 0 ? text : text.substring(0, tab)));
+            this.durationVariableId = tab < 0 ? 0 : WiredValueVariable.parseId(text.substring(tab + 1));
+        }
+        this.fromVariable = (params.length > 6) && params[6] == 1 && this.durationVariableId > 0;
+        if (!this.fromVariable) this.durationVariableId = 0;
 
-        if (!this.isValidSource(room)) {
+        // A box with no variable, or one no box defines, saves too and then always fails (observed on AIR). A room
+        // variable has no creation time: only its last update can be compared.
+        if (this.targetType == TARGET_ROOM && this.compareValue != COMPARE_VALUE_UPDATED) {
             return false;
         }
 
@@ -137,17 +187,36 @@ public class WiredConditionVariableAgeMatch extends WiredConditionHasVariable {
 
         Room room = ctx.room();
 
-        if (room == null || this.variableToken == null || this.variableToken.isEmpty() || !isCustomVariableToken(this.variableToken)) {
+        if (room == null
+                || this.variableToken == null
+                || this.variableToken.isEmpty()
+                || !isCustomVariableToken(this.variableToken)) {
             return false;
         }
 
-        long thresholdMs = durationToMillis(this.durationAmount, this.durationUnit);
+        int amount = this.durationAmount;
+        if (this.fromVariable) {
+            Integer read = WiredValueVariable.read(
+                    ctx,
+                    room,
+                    this.durationTarget,
+                    this.durationVariableId,
+                    this.furniSource,
+                    this.selectedItems,
+                    this.userSource);
+            if (read == null) return false;
+            amount = normalizeDurationAmount(read);
+        }
+        long thresholdMs = durationToMillis(amount, this.durationUnit);
+        // A pointer is checked as the variable it stands for in this stack.
+        int variableId = WiredPointerVariableSupport.resolve(ctx, room, this.variableItemId);
+        if (variableId <= 0) return false;
 
         return switch (this.targetType) {
-            case TARGET_FURNI -> this.evaluateFurniTargets(ctx, room, thresholdMs);
-            case TARGET_ROOM -> this.evaluateRoomTarget(room, thresholdMs);
-            case TARGET_CONTEXT -> this.evaluateContextTarget(ctx, room, thresholdMs);
-            default -> this.evaluateUserTargets(ctx, room, thresholdMs);
+            case TARGET_FURNI -> this.evaluateFurniTargets(ctx, room, thresholdMs, variableId);
+            case TARGET_ROOM -> this.evaluateRoomTarget(room, thresholdMs, variableId);
+            case TARGET_CONTEXT -> this.evaluateContextTarget(ctx, room, thresholdMs, variableId);
+            default -> this.evaluateUserTargets(ctx, room, thresholdMs, variableId);
         };
     }
 
@@ -166,19 +235,22 @@ public class WiredConditionVariableAgeMatch extends WiredConditionHasVariable {
             if (item != null) itemIds.add(item.getId());
         }
 
-        return WiredManager.getGson().toJson(new JsonData(
-            itemIds,
-            this.targetType,
-            this.variableToken,
-            this.variableItemId,
-            this.compareValue,
-            this.comparison,
-            this.durationAmount,
-            this.durationUnit,
-            this.userSource,
-            this.furniSource,
-            this.quantifier
-        ));
+        JsonData data = new JsonData(
+                itemIds,
+                this.targetType,
+                this.variableToken,
+                this.variableItemId,
+                this.compareValue,
+                this.comparison,
+                this.durationAmount,
+                this.durationUnit,
+                this.userSource,
+                this.furniSource,
+                this.quantifier);
+        data.fromVariable = this.fromVariable;
+        data.durationVariableId = this.durationVariableId;
+        data.durationTarget = this.durationTarget;
+        return WiredManager.getGson().toJson(data);
     }
 
     @Override
@@ -202,7 +274,15 @@ public class WiredConditionVariableAgeMatch extends WiredConditionHasVariable {
                 this.userSource = normalizeUserSource(data.userSource);
                 this.furniSource = normalizeFurniSource(data.furniSource);
                 this.quantifier = normalizeQuantifier(data.quantifier);
-                this.setVariableToken(normalizeVariableToken((data.variableToken != null) ? data.variableToken : ((data.variableItemId > 0) ? String.valueOf(data.variableItemId) : "")));
+                this.durationVariableId = Math.max(0, data.durationVariableId);
+                this.fromVariable = data.fromVariable && this.durationVariableId > 0;
+                this.durationTarget = data.durationTarget == null
+                        ? WiredValueVariable.TARGET_GLOBAL
+                        : WiredValueVariable.normalizeTarget(data.durationTarget);
+                this.setVariableToken(normalizeVariableToken(
+                        (data.variableToken != null)
+                                ? data.variableToken
+                                : ((data.variableItemId > 0) ? String.valueOf(data.variableItemId) : "")));
 
                 if (room != null && data.itemIds != null) {
                     for (Integer itemId : data.itemIds) {
@@ -225,97 +305,101 @@ public class WiredConditionVariableAgeMatch extends WiredConditionHasVariable {
     @Override
     public void onPickUp() {
         super.onPickUp();
+        this.fromVariable = false;
+        this.durationVariableId = 0;
+        this.durationTarget = WiredValueVariable.TARGET_GLOBAL;
         this.compareValue = COMPARE_VALUE_CREATED;
         this.comparison = COMPARISON_LOWER_THAN;
         this.durationAmount = 0;
         this.durationUnit = DURATION_UNIT_SECONDS;
     }
 
-    private boolean evaluateUserTargets(WiredContext ctx, Room room, long thresholdMs) {
+    private boolean evaluateUserTargets(WiredContext ctx, Room room, long thresholdMs, int variableId) {
         List<RoomUnit> targets = WiredSourceUtil.resolveUsers(ctx, this.userSource);
-        if (targets.isEmpty()) return false;
+        if (targets.isEmpty()) return WiredQuantifier.overEmpty(this.quantifier != QUANTIFIER_ANY);
 
         if (this.quantifier == QUANTIFIER_ANY) {
             for (RoomUnit roomUnit : targets) {
-                if (this.matchesAge(this.readUserAgeMs(room, roomUnit), thresholdMs)) return true;
+                if (this.matchesAge(this.readUserAgeMs(room, roomUnit, variableId), thresholdMs)) return true;
             }
 
             return false;
         }
 
         for (RoomUnit roomUnit : targets) {
-            if (!this.matchesAge(this.readUserAgeMs(room, roomUnit), thresholdMs)) return false;
+            if (!this.matchesAge(this.readUserAgeMs(room, roomUnit, variableId), thresholdMs)) return false;
         }
 
         return true;
     }
 
-    private boolean evaluateFurniTargets(WiredContext ctx, Room room, long thresholdMs) {
+    private boolean evaluateFurniTargets(WiredContext ctx, Room room, long thresholdMs, int variableId) {
         this.refresh();
 
         List<HabboItem> targets = WiredSourceUtil.resolveItems(ctx, this.furniSource, this.selectedItems);
-        if (targets.isEmpty()) return false;
+        if (targets.isEmpty()) return WiredQuantifier.overEmpty(this.quantifier != QUANTIFIER_ANY);
 
         if (this.quantifier == QUANTIFIER_ANY) {
             for (HabboItem item : targets) {
-                if (this.matchesAge(this.readFurniAgeMs(room, item), thresholdMs)) return true;
+                if (this.matchesAge(this.readFurniAgeMs(room, item, variableId), thresholdMs)) return true;
             }
 
             return false;
         }
 
         for (HabboItem item : targets) {
-            if (!this.matchesAge(this.readFurniAgeMs(room, item), thresholdMs)) return false;
+            if (!this.matchesAge(this.readFurniAgeMs(room, item, variableId), thresholdMs)) return false;
         }
 
         return true;
     }
 
-    private boolean evaluateRoomTarget(Room room, long thresholdMs) {
-        return this.matchesAge(this.readRoomAgeMs(room), thresholdMs);
+    private boolean evaluateRoomTarget(Room room, long thresholdMs, int variableId) {
+        return this.matchesAge(this.readRoomAgeMs(room, variableId), thresholdMs);
     }
 
-    private boolean evaluateContextTarget(WiredContext ctx, Room room, long thresholdMs) {
-        return this.matchesAge(this.readContextAgeMs(ctx, room), thresholdMs);
+    private boolean evaluateContextTarget(WiredContext ctx, Room room, long thresholdMs, int variableId) {
+        return this.matchesAge(this.readContextAgeMs(ctx, room, variableId), thresholdMs);
     }
 
-    private Long readUserAgeMs(Room room, RoomUnit roomUnit) {
+    private Long readUserAgeMs(Room room, RoomUnit roomUnit, int variableId) {
         if (room == null || roomUnit == null) return null;
 
-        Habbo habbo = room.getHabbo(roomUnit);
-        if (habbo == null || !room.getUserVariableManager().hasVariable(habbo.getHabboInfo().getId(), this.variableItemId)) return null;
+        int holder = UserVariableHolders.of(room, roomUnit);
+        if (holder == 0 || !room.getUserVariableManager().hasVariable(holder, variableId)) return null;
 
         int timestamp = (this.compareValue == COMPARE_VALUE_UPDATED)
-            ? room.getUserVariableManager().getUpdatedAt(habbo.getHabboInfo().getId(), this.variableItemId)
-            : room.getUserVariableManager().getCreatedAt(habbo.getHabboInfo().getId(), this.variableItemId);
+                ? room.getUserVariableManager().getUpdatedAt(holder, variableId)
+                : room.getUserVariableManager().getCreatedAt(holder, variableId);
 
         return timestampToAgeMs(timestamp);
     }
 
-    private Long readFurniAgeMs(Room room, HabboItem item) {
-        if (room == null || item == null || !room.getFurniVariableManager().hasVariable(item.getId(), this.variableItemId)) return null;
+    private Long readFurniAgeMs(Room room, HabboItem item, int variableId) {
+        if (room == null || item == null || !room.getFurniVariableManager().hasVariable(item.getId(), variableId))
+            return null;
 
         int timestamp = (this.compareValue == COMPARE_VALUE_UPDATED)
-            ? room.getFurniVariableManager().getUpdatedAt(item.getId(), this.variableItemId)
-            : room.getFurniVariableManager().getCreatedAt(item.getId(), this.variableItemId);
+                ? room.getFurniVariableManager().getUpdatedAt(item.getId(), variableId)
+                : room.getFurniVariableManager().getCreatedAt(item.getId(), variableId);
 
         return timestampToAgeMs(timestamp);
     }
 
-    private Long readRoomAgeMs(Room room) {
+    private Long readRoomAgeMs(Room room, int variableId) {
         if (room == null) return null;
         if (this.compareValue == COMPARE_VALUE_CREATED) return null;
 
-        int timestamp = room.getRoomVariableManager().getUpdatedAt(this.variableItemId);
+        int timestamp = room.getRoomVariableManager().getUpdatedAt(variableId);
         return timestampToAgeMs(timestamp);
     }
 
-    private Long readContextAgeMs(WiredContext ctx, Room room) {
-        if (ctx == null || room == null || !WiredContextVariableSupport.hasVariable(ctx, this.variableItemId)) return null;
+    private Long readContextAgeMs(WiredContext ctx, Room room, int variableId) {
+        if (ctx == null || room == null || !WiredContextVariableSupport.hasVariable(ctx, variableId)) return null;
 
         int timestamp = (this.compareValue == COMPARE_VALUE_UPDATED)
-            ? WiredContextVariableSupport.getUpdatedAt(ctx, this.variableItemId)
-            : WiredContextVariableSupport.getCreatedAt(ctx, this.variableItemId);
+                ? WiredContextVariableSupport.getUpdatedAt(ctx, variableId)
+                : WiredContextVariableSupport.getCreatedAt(ctx, variableId);
 
         return timestampToAgeMs(timestamp);
     }
@@ -326,20 +410,6 @@ public class WiredConditionVariableAgeMatch extends WiredConditionHasVariable {
         return switch (this.comparison) {
             case COMPARISON_HIGHER_THAN -> ageMs > thresholdMs;
             default -> ageMs < thresholdMs;
-        };
-    }
-
-    private boolean isValidSource(Room room) {
-        if (room == null || !isCustomVariableToken(this.variableToken)) return false;
-
-        return switch (this.targetType) {
-            case TARGET_FURNI -> room.getFurniVariableManager().getDefinitionInfo(this.variableItemId) != null;
-            case TARGET_CONTEXT -> WiredContextVariableSupport.getDefinitionInfo(room, this.variableItemId) != null;
-            case TARGET_ROOM -> {
-                WiredVariableDefinitionInfo definition = room.getRoomVariableManager().getDefinitionInfo(this.variableItemId);
-                yield this.compareValue == COMPARE_VALUE_UPDATED && definition != null;
-            }
-            default -> room.getUserVariableManager().getDefinitionInfo(this.variableItemId) != null;
         };
     }
 
@@ -393,8 +463,14 @@ public class WiredConditionVariableAgeMatch extends WiredConditionHasVariable {
 
     static int normalizeDurationUnit(int value) {
         return switch (value) {
-            case DURATION_UNIT_MILLISECONDS, DURATION_UNIT_SECONDS, DURATION_UNIT_MINUTES, DURATION_UNIT_HOURS,
-                DURATION_UNIT_DAYS, DURATION_UNIT_WEEKS, DURATION_UNIT_MONTHS, DURATION_UNIT_YEARS -> value;
+            case DURATION_UNIT_MILLISECONDS,
+                    DURATION_UNIT_SECONDS,
+                    DURATION_UNIT_MINUTES,
+                    DURATION_UNIT_HOURS,
+                    DURATION_UNIT_DAYS,
+                    DURATION_UNIT_WEEKS,
+                    DURATION_UNIT_MONTHS,
+                    DURATION_UNIT_YEARS -> value;
             default -> DURATION_UNIT_SECONDS;
         };
     }
@@ -411,8 +487,22 @@ public class WiredConditionVariableAgeMatch extends WiredConditionHasVariable {
         int userSource;
         int furniSource;
         int quantifier;
+        boolean fromVariable;
+        int durationVariableId;
+        Integer durationTarget;
 
-        JsonData(List<Integer> itemIds, int targetType, String variableToken, int variableItemId, int compareValue, int comparison, int durationAmount, int durationUnit, int userSource, int furniSource, int quantifier) {
+        JsonData(
+                List<Integer> itemIds,
+                int targetType,
+                String variableToken,
+                int variableItemId,
+                int compareValue,
+                int comparison,
+                int durationAmount,
+                int durationUnit,
+                int userSource,
+                int furniSource,
+                int quantifier) {
             this.itemIds = itemIds;
             this.targetType = targetType;
             this.variableToken = variableToken;

@@ -14,7 +14,6 @@ import com.eu.habbo.habbohotel.wired.core.WiredManager;
 import com.eu.habbo.habbohotel.wired.core.WiredSourceUtil;
 import com.eu.habbo.messages.ServerMessage;
 import com.eu.habbo.messages.outgoing.users.InClientLinkComposer;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
@@ -27,7 +26,7 @@ import java.util.List;
  * {@link InClientLinkComposer}, as proven by ClickUserEvent / InteractionInformationTerminal.
  */
 public class WiredEffectOpenHabboPages extends InteractionWiredEffect {
-    public static final WiredEffectType type = WiredEffectType.SHOW_MESSAGE;
+    public static final WiredEffectType type = WiredEffectType.EFFECT_TEXT;
 
     private String link = "";
     private int userSource = WiredSourceUtil.SOURCE_TRIGGER;
@@ -36,7 +35,8 @@ public class WiredEffectOpenHabboPages extends InteractionWiredEffect {
         super(set, baseItem);
     }
 
-    public WiredEffectOpenHabboPages(int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
+    public WiredEffectOpenHabboPages(
+            int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
         super(id, userId, item, extradata, limitedStack, limitedSells);
     }
 
@@ -48,8 +48,7 @@ public class WiredEffectOpenHabboPages extends InteractionWiredEffect {
         message.appendInt(this.getBaseItem().getSpriteId());
         message.appendInt(this.getId());
         message.appendString(this.link);
-        message.appendInt(1);
-        message.appendInt(this.userSource);
+        message.appendInt(0);
         message.appendInt(0);
         message.appendInt(type.code);
         message.appendInt(this.getDelay());
@@ -72,14 +71,22 @@ public class WiredEffectOpenHabboPages extends InteractionWiredEffect {
 
     @Override
     public boolean saveData(WiredSettings settings, GameClient gameClient) {
-        String value = settings.getStringParam();
-        if (value == null || value.trim().isEmpty()) {
+        String value = WiredLinkPolicy.normalize(settings.getStringParam());
+        if (value.isEmpty()) {
             return false;
         }
-        this.link = value.trim();
+
+        // The link is pushed at every resolved user's client, so it is bounded by who configures it.
+        Habbo configurer = (gameClient != null) ? gameClient.getHabbo() : null;
+        if (!WiredLinkPolicy.canUse(value, configurer)) {
+            return false;
+        }
+
+        this.link = value;
 
         int[] params = settings.getIntParams();
-        this.userSource = (params.length > 0) ? params[0] : WiredSourceUtil.SOURCE_TRIGGER;
+        // Official: no int params; the user source is the official source slot.
+        this.userSource = settings.userSource(0, WiredSourceUtil.SOURCE_TRIGGER);
 
         this.setDelay(settings.getDelay());
 
@@ -120,7 +127,9 @@ public class WiredEffectOpenHabboPages extends InteractionWiredEffect {
 
         if (wiredData.startsWith("{")) {
             JsonData data = WiredManager.getGson().fromJson(wiredData, JsonData.class);
-            this.link = data.link == null ? "" : data.link;
+            // Normalised, but not re-gated: the save path is the boundary. Dropping a stored link here
+            // would silently blank a box an ACC_SUPERWIRED user was entitled to configure.
+            this.link = WiredLinkPolicy.normalize(data.link);
             this.setDelay(data.delay);
             this.userSource = data.userSource;
         } else {

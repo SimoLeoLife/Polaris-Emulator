@@ -5,6 +5,7 @@ import com.eu.habbo.habbohotel.items.Item;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredEffect;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredTrigger;
 import com.eu.habbo.habbohotel.items.interactions.wired.WiredNumericInputGuard;
+import com.eu.habbo.habbohotel.items.interactions.wired.WiredRewardPolicy;
 import com.eu.habbo.habbohotel.items.interactions.wired.WiredSettings;
 import com.eu.habbo.habbohotel.rooms.Room;
 import com.eu.habbo.habbohotel.rooms.RoomUnit;
@@ -14,7 +15,6 @@ import com.eu.habbo.habbohotel.wired.core.WiredContext;
 import com.eu.habbo.habbohotel.wired.core.WiredManager;
 import com.eu.habbo.habbohotel.wired.core.WiredSourceUtil;
 import com.eu.habbo.messages.ServerMessage;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
@@ -27,7 +27,7 @@ import java.util.List;
  * capped by {@link WiredNumericInputGuard#maxRewardAmount()} per execution to bound abuse.
  */
 public class WiredEffectGiveCredits extends InteractionWiredEffect {
-    public static final WiredEffectType type = WiredEffectType.SHOW_MESSAGE;
+    public static final WiredEffectType type = WiredEffectType.EFFECT_AMOUNT;
 
     private int amount = 0;
     private int userSource = WiredSourceUtil.SOURCE_TRIGGER;
@@ -48,8 +48,7 @@ public class WiredEffectGiveCredits extends InteractionWiredEffect {
         message.appendInt(this.getBaseItem().getSpriteId());
         message.appendInt(this.getId());
         message.appendString(this.amount + "");
-        message.appendInt(1);
-        message.appendInt(this.userSource);
+        message.appendInt(0);
         message.appendInt(0);
         message.appendInt(type.code);
         message.appendInt(this.getDelay());
@@ -72,14 +71,21 @@ public class WiredEffectGiveCredits extends InteractionWiredEffect {
 
     @Override
     public boolean saveData(WiredSettings settings, GameClient gameClient) {
-        int nextAmount = WiredNumericInputGuard.parsePositiveAmount(settings.getStringParam(), WiredNumericInputGuard.maxRewardAmount());
+        // Value out of nothing: the amount cap bounds one firing, not a room full of them.
+        if (!WiredRewardPolicy.canConfigure(gameClient)) {
+            return false;
+        }
+
+        int nextAmount = WiredNumericInputGuard.parsePositiveAmount(
+                settings.getStringParam(), WiredNumericInputGuard.maxRewardAmount());
         if (nextAmount <= 0) {
             return false;
         }
         this.amount = nextAmount;
 
         int[] params = settings.getIntParams();
-        this.userSource = (params.length > 0) ? params[0] : WiredSourceUtil.SOURCE_TRIGGER;
+        // Official: no int params; the user source is the official source slot.
+        this.userSource = settings.userSource(0, WiredSourceUtil.SOURCE_TRIGGER);
 
         this.setDelay(settings.getDelay());
 
@@ -98,7 +104,6 @@ public class WiredEffectGiveCredits extends InteractionWiredEffect {
         for (RoomUnit unit : WiredSourceUtil.resolveUsers(ctx, this.userSource)) {
             Habbo habbo = room.getHabbo(unit);
             if (habbo == null) continue;
-
             habbo.giveCredits(this.amount);
         }
     }
@@ -120,7 +125,9 @@ public class WiredEffectGiveCredits extends InteractionWiredEffect {
 
         if (wiredData.startsWith("{")) {
             JsonData data = WiredManager.getGson().fromJson(wiredData, JsonData.class);
-            this.amount = data.amount;
+            // The cap is a property of the system, not of the moment a furni was saved:
+            // a value stored under a looser limit is brought back inside it here.
+            this.amount = WiredNumericInputGuard.clampAmount(data.amount, WiredNumericInputGuard.maxRewardAmount());
             this.setDelay(data.delay);
             this.userSource = data.userSource;
         } else {

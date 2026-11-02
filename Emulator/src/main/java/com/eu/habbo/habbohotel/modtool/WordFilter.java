@@ -13,8 +13,10 @@ import java.sql.Statement;
 import java.text.Normalizer;
 import java.util.HashSet;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.Strings;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -23,11 +25,16 @@ public class WordFilter {
 
     private static final Pattern DIACRITICS_AND_FRIENDS =
             Pattern.compile("[\\p{InCombiningDiacriticalMarks}\\p{IsLm}\\p{IsSk}]+");
+    private static final Pattern PUNCTUATION = Pattern.compile("[,.;:'\"]");
+    private static final Pattern NON_ASCII = Pattern.compile("[^\\p{ASCII}*$]");
+    private static final Pattern MARKS = Pattern.compile("\\p{M}");
+    private static final Pattern ONLY_MARKS = Pattern.compile("^\\p{M}*$]");
+    private static final Pattern ONE_OR_BAR = Pattern.compile("[1|]");
     public static volatile boolean ENABLED_FRIENDCHAT = true;
     public static volatile String DEFAULT_REPLACEMENT = "bobba";
-    protected Set<WordFilterWord> autoReportWords = new HashSet<>();
-    protected Set<WordFilterWord> hideMessageWords = new HashSet<>();
-    protected Set<WordFilterWord> words = new HashSet<>();
+    protected volatile Set<WordFilterWord> autoReportWords = ConcurrentHashMap.newKeySet();
+    protected volatile Set<WordFilterWord> hideMessageWords = ConcurrentHashMap.newKeySet();
+    protected volatile Set<WordFilterWord> words = ConcurrentHashMap.newKeySet();
 
     public WordFilter() {
         long start = System.currentTimeMillis();
@@ -45,9 +52,11 @@ public class WordFilter {
     public synchronized void reload() {
         if (!Emulator.getConfig().getBoolean("hotel.wordfilter.enabled")) return;
 
-        this.autoReportWords.clear();
-        this.hideMessageWords.clear();
-        this.words.clear();
+        // Built aside and published at the end: other threads read these sets while a reload runs, and clearing
+        // them in place left the filter empty for the length of the query.
+        Set<WordFilterWord> autoReport = ConcurrentHashMap.newKeySet();
+        Set<WordFilterWord> hideMessage = ConcurrentHashMap.newKeySet();
+        Set<WordFilterWord> all = ConcurrentHashMap.newKeySet();
 
         try (Connection connection = Emulator.getDatabase().getDataSource().getConnection();
                 Statement statement = connection.createStatement()) {
@@ -63,28 +72,32 @@ public class WordFilter {
                     }
 
                     if (!word.prefixOnly) {
-                        if (word.autoReport) this.autoReportWords.add(word);
-                        else if (word.hideMessage) this.hideMessageWords.add(word);
+                        if (word.autoReport) autoReport.add(word);
+                        else if (word.hideMessage) hideMessage.add(word);
                     }
 
-                    this.words.add(word);
+                    all.add(word);
                 }
             }
+
+            this.autoReportWords = autoReport;
+            this.hideMessageWords = hideMessage;
+            this.words = all;
         } catch (SQLException e) {
             LOGGER.error("Caught SQL exception", e);
         }
     }
 
     public String normalise(String message) {
+        String text = Normalizer.normalize(StringUtils.stripAccents(message), Normalizer.Form.NFKD);
+        text = PUNCTUATION.matcher(text).replaceAll(" ").replace("I", "l");
+        text = NON_ASCII.matcher(text).replaceAll("");
+        text = MARKS.matcher(text).replaceAll(" ");
+        text = ONLY_MARKS.matcher(text).replaceAll("");
+        text = ONE_OR_BAR.matcher(text).replaceAll("i");
+
         return DIACRITICS_AND_FRIENDS
-                .matcher(Normalizer.normalize(StringUtils.stripAccents(message), Normalizer.Form.NFKD)
-                        .replaceAll("[,.;:'\"]", " ")
-                        .replace("I", "l")
-                        .replaceAll("[^\\p{ASCII}*$]", "")
-                        .replaceAll("\\p{M}", " ")
-                        .replaceAll("^\\p{M}*$]", "")
-                        .replaceAll("[1|]", "i")
-                        .replace("2", "z")
+                .matcher(text.replace("2", "z")
                         .replace("3", "e")
                         .replace("4", "a")
                         .replace("5", "s")
@@ -166,7 +179,7 @@ public class WordFilter {
         for (WordFilterWord word : this.words) {
             if (word.prefixOnly) continue;
 
-            if (StringUtils.containsIgnoreCase(filteredMessage, word.key)) {
+            if (Strings.CI.contains(filteredMessage, word.key)) {
                 if (habbo != null) {
                     if (Emulator.getPluginManager()
                             .fireEvent(new UserTriggerWordFilterEvent(habbo, word))
@@ -198,7 +211,7 @@ public class WordFilter {
         for (WordFilterWord word : this.words) {
             if (word.prefixOnly) continue;
 
-            if (StringUtils.containsIgnoreCase(message, word.key)) {
+            if (Strings.CI.contains(message, word.key)) {
                 if (habbo != null) {
                     if (Emulator.getPluginManager()
                             .fireEvent(new UserTriggerWordFilterEvent(habbo, word))

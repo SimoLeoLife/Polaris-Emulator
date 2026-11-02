@@ -1,13 +1,17 @@
 package com.eu.habbo.habbohotel.users;
 
 import com.eu.habbo.Emulator;
+import com.eu.habbo.database.DetachedRows;
 import com.eu.habbo.database.SqlQueries;
 import com.eu.habbo.habbohotel.economy.EconomyLedger;
 import com.eu.habbo.habbohotel.economy.EconomyOperation;
 import com.eu.habbo.habbohotel.economy.EconomyOperationId;
+import com.eu.habbo.habbohotel.habbicons.HabbiconService;
 import com.eu.habbo.habbohotel.modtool.ModToolBan;
 import com.eu.habbo.habbohotel.permissions.Permission;
+import com.eu.habbo.habbohotel.permissions.PermissionAuditLog;
 import com.eu.habbo.habbohotel.permissions.Rank;
+import com.eu.habbo.habbohotel.permissions.TemporaryRanks;
 import com.eu.habbo.messages.ServerMessage;
 import com.eu.habbo.messages.outgoing.catalog.CatalogModeComposer;
 import com.eu.habbo.messages.outgoing.catalog.CatalogUpdatedComposer;
@@ -16,6 +20,7 @@ import com.eu.habbo.messages.outgoing.catalog.GiftConfigurationComposer;
 import com.eu.habbo.messages.outgoing.catalog.RecyclerLogicComposer;
 import com.eu.habbo.messages.outgoing.catalog.marketplace.MarketplaceConfigComposer;
 import com.eu.habbo.messages.outgoing.generic.alerts.GenericAlertComposer;
+import com.eu.habbo.messages.outgoing.handshake.DisconnectReasonComposer;
 import com.eu.habbo.messages.outgoing.modtool.ModToolComposer;
 import com.eu.habbo.messages.outgoing.users.UserPerksComposer;
 import com.eu.habbo.messages.outgoing.users.UserPermissionsComposer;
@@ -32,6 +37,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
+import javax.sql.rowset.CachedRowSet;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -47,12 +53,18 @@ public class HabboManager {
     private final ConcurrentHashMap<String, Habbo> onlineHabbosByName;
     private final ConcurrentHashMap<Integer, String> usernameCache = new ConcurrentHashMap<>();
     private final DisconnectPersistenceGate disconnectPersistence;
+    private final HabbiconService habbiconService;
 
     public HabboManager() {
         this(Runnable::run);
     }
 
     public HabboManager(Executor persistenceExecutor) {
+        this(persistenceExecutor, null);
+    }
+
+    public HabboManager(Executor persistenceExecutor, HabbiconService habbiconService) {
+        this.habbiconService = habbiconService;
         long millis = System.currentTimeMillis();
 
         this.onlineHabbos = new ConcurrentHashMap<>();
@@ -63,26 +75,26 @@ public class HabboManager {
     }
 
     public static HabboInfo getOfflineHabboInfo(int id) {
-        try {
-            return SqlQueries.queryOne("SELECT * FROM users WHERE id = ? LIMIT 1", HabboInfo::new, id)
-                    .orElse(null);
-        } catch (SqlQueries.DataAccessException e) {
-            LOGGER.error("Caught SQL exception", e);
-            return null;
-        }
+        return offlineHabboInfo("SELECT * FROM users WHERE id = ? LIMIT 1", statement -> statement.setInt(1, id));
     }
 
     public static HabboInfo getOfflineHabboInfo(String username) {
-        try {
-            return SqlQueries.queryOne("SELECT * FROM users WHERE username = ? LIMIT 1", HabboInfo::new, username)
-                    .orElse(null);
-        } catch (SqlQueries.DataAccessException e) {
+        return offlineHabboInfo(
+                "SELECT * FROM users WHERE username = ? LIMIT 1", statement -> statement.setString(1, username));
+    }
+
+    /** HabboInfo loads currencies and searches itself, so it is built after the row's connection is back. */
+    private static HabboInfo offlineHabboInfo(String sql, DetachedRows.Binder binder) {
+        try (CachedRowSet row = DetachedRows.read(sql, binder)) {
+            return row.next() ? new HabboInfo(row) : null;
+        } catch (SQLException | SqlQueries.DataAccessException e) {
             LOGGER.error("Caught SQL exception", e);
             return null;
         }
     }
 
     public void addHabbo(Habbo habbo) {
+        habbo.setHabbiconService(this.habbiconService);
         this.onlineHabbos.put(habbo.getHabboInfo().getId(), habbo);
         this.onlineHabbosByName.put(habbo.getHabboInfo().getUsername().toLowerCase(), habbo);
     }
@@ -101,12 +113,17 @@ public class HabboManager {
     }
 
     public Habbo loadHabbo(String sso) {
-        Habbo habbo;
         int userId = 0;
 
+        // The SSO lookup deliberately ignores auth_ticket_expires_at: tickets are
+        // single-use (consumed right after a successful login below), so replay is
+        // bounded by consumption, not by a TTL. Third-party CMSes (e.g. AtomCMS)
+        // only write auth_ticket, and a stale expiry left over from a built-in
+        // issuer used to block their logins. The expiry column remains in use by
+        // the emulator's own HTTP session endpoints.
         try (Connection connection = Emulator.getDatabase().getDataSource().getConnection();
-                PreparedStatement statement = connection.prepareStatement(
-                        "SELECT id FROM users WHERE auth_ticket = ? AND (auth_ticket_expires_at IS NULL OR auth_ticket_expires_at >= NOW()) LIMIT 1")) {
+                PreparedStatement statement =
+                        connection.prepareStatement("SELECT id FROM users WHERE auth_ticket = ? LIMIT 1")) {
             statement.setString(1, sso);
             try (ResultSet s = statement.executeQuery()) {
                 if (s.next()) {
@@ -118,14 +135,56 @@ public class HabboManager {
             LOGGER.error("Caught SQL exception", e);
         }
 
-        if (!this.awaitDisconnectPersistence(userId)) {
+        Habbo habbo = loadHabbo(
+                userId, "SELECT * FROM users WHERE auth_ticket = ? LIMIT 1", statement -> statement.setString(1, sso));
+
+        if (habbo != null) {
+            this.consumeSsoTicket(habbo.getHabboInfo().getId());
+        }
+
+        return habbo;
+    }
+
+    /**
+     * Consumes (clears) a user's SSO ticket after a successful login so it
+     * cannot be replayed. Mid-session reconnects are unaffected: GameClient
+     * disposal parks the habbo and SessionResumeManager restores the same
+     * ticket for the reconnect grace window ("ticket cleared to '' after
+     * login" is exactly the state its restore-guard expects), and newer
+     * clients additionally carry a session-recovery token. Hotel owners can
+     * keep tickets alive for debugging with emulator setting debug_sso = 1
+     * (default 0).
+     */
+    public void consumeSsoTicket(int userId) {
+        if (Emulator.getConfig().getBoolean("debug_sso", false)) {
+            return;
+        }
+
+        try (Connection connection = Emulator.getDatabase().getDataSource().getConnection();
+                PreparedStatement statement = connection.prepareStatement(
+                        "UPDATE users SET auth_ticket = '', auth_ticket_expires_at = NULL WHERE id = ? LIMIT 1")) {
+            statement.setInt(1, userId);
+            statement.execute();
+        } catch (SQLException e) {
+            LOGGER.error("Failed to consume SSO ticket for user " + userId, e);
+        }
+    }
+
+    public Habbo loadHabboById(int userId) {
+        return loadHabbo(userId, "SELECT * FROM users WHERE id = ? LIMIT 1", statement -> statement.setInt(1, userId));
+    }
+
+    private Habbo loadHabbo(int userId, String query, StatementBinder binder) {
+        Habbo habbo;
+        if (userId <= 0 || !this.awaitDisconnectPersistence(userId)) {
             return null;
         }
 
         habbo = this.cloneCheck(userId);
         if (habbo != null) {
-            habbo.alert(Emulator.getTexts().getValue("loggedin.elsewhere"));
-            Emulator.getGameServer().getGameClientManager().forceDisposeClient(habbo.getClient());
+            Emulator.getGameServer()
+                    .getGameClientManager()
+                    .disconnectWithReason(habbo.getClient(), DisconnectReasonComposer.CONCURRENT_LOGIN);
             habbo = null;
         }
 
@@ -138,25 +197,22 @@ public class HabboManager {
             return null;
         }
 
-        try (Connection connection = Emulator.getDatabase().getDataSource().getConnection();
-                PreparedStatement statement = connection.prepareStatement(
-                        "SELECT * FROM users WHERE auth_ticket = ? AND (auth_ticket_expires_at IS NULL OR auth_ticket_expires_at >= NOW()) LIMIT 1")) {
-            statement.setString(1, sso);
-            try (ResultSet set = statement.executeQuery()) {
-                if (set.next()) {
-                    habbo = new Habbo(set);
+        // The user's row is read first and its connection given back: building the Habbo loads its
+        // currencies, inventory, messenger and more, each on a connection of its own.
+        try (CachedRowSet set = DetachedRows.read(query, binder::bind)) {
+            if (set.next()) {
+                habbo = new Habbo(set);
 
-                    if (habbo.getHabboInfo().firstVisit) {
-                        Emulator.getPluginManager().fireEvent(new UserRegisteredEvent(habbo));
-                    }
-
-                    // NB: il ticket SSO NON viene svuotato qui di proposito. Dietro
-                    // Cloudflare il WebSocket viene droppato e il client ritenta più
-                    // volte con lo STESSO ticket: se lo consumassimo al primo uso, i
-                    // retry (e l'hard-refresh) fallirebbero con "non-existing SSO token".
-                    // Il ticket resta valido fino alla scadenza (auth_ticket_expires_at,
-                    // TTL gestito dal CMS) o finché il CMS non ne scrive uno nuovo / logout.
+                if (habbo.getHabboInfo().firstVisit) {
+                    Emulator.getPluginManager().fireEvent(new UserRegisteredEvent(habbo));
                 }
+
+                // NB: il ticket SSO NON viene svuotato qui di proposito. Dietro
+                // Cloudflare il WebSocket viene droppato e il client ritenta più
+                // volte con lo STESSO ticket: se lo consumassimo al primo uso, i
+                // retry (e l'hard-refresh) fallirebbero con "non-existing SSO token".
+                // Il ticket resta valido fino alla scadenza (auth_ticket_expires_at,
+                // TTL gestito dal CMS) o finché il CMS non ne scrive uno nuovo / logout.
             }
         } catch (SQLException e) {
             LOGGER.error("Caught SQL exception", e);
@@ -165,6 +221,11 @@ public class HabboManager {
         }
 
         return habbo;
+    }
+
+    @FunctionalInterface
+    private interface StatementBinder {
+        void bind(PreparedStatement statement) throws SQLException;
     }
 
     private boolean awaitDisconnectPersistence(int userId) {
@@ -242,13 +303,18 @@ public class HabboManager {
     }
 
     public List<HabboInfo> getCloneAccounts(Habbo habbo, int limit) {
+        return this.getCloneAccounts(habbo.getHabboInfo(), limit);
+    }
+
+    /** Accounts registered from or last seen on the same IP as this one, online or not. */
+    public List<HabboInfo> getCloneAccounts(HabboInfo info, int limit) {
         try {
             return SqlQueries.query(
                     "SELECT * FROM users WHERE (ip_register = ? OR ip_current = ?) AND id != ? ORDER BY id DESC LIMIT ?",
                     HabboInfo::new,
-                    habbo.getHabboInfo().getIpRegister(),
-                    habbo.getHabboInfo().getIpLogin(),
-                    habbo.getHabboInfo().getId(),
+                    info.getIpRegister(),
+                    info.getIpLogin(),
+                    info.getId(),
                     limit);
         } catch (SqlQueries.DataAccessException e) {
             LOGGER.error("Caught SQL exception", e);
@@ -270,12 +336,34 @@ public class HabboManager {
     }
 
     public void setRank(int userId, int rankId) throws Exception {
+        this.setRank(userId, rankId, PermissionAuditLog.SYSTEM, "system", "system");
+    }
+
+    /** Sets the rank and writes it to the permission audit with who did it and how ({@code via}). */
+    public void setRank(int userId, int rankId, int actorId, String actorName, String via) throws Exception {
         Habbo habbo = this.getHabbo(userId);
 
         if (!Emulator.getGameEnvironment().getPermissionsManager().rankExists(rankId)) {
             throw new Exception("Rank ID (" + rankId + ") does not exist");
         }
         Rank newRank = Emulator.getGameEnvironment().getPermissionsManager().getRank(rankId);
+        int oldRankId = habbo != null && habbo.getHabboInfo().getRank() != null
+                ? habbo.getHabboInfo().getRank().getId()
+                : storedRankId(userId);
+
+        try {
+            SqlQueries.update("UPDATE users SET `rank` = ? WHERE id = ? LIMIT 1", rankId, userId);
+        } catch (SqlQueries.DataAccessException e) {
+            // Nothing else may change when the rank was not stored: ending a temporary rank after a failed update
+            // dropped its timer and logged a return that never happened, and the user kept the rank for good.
+            throw new Exception("Could not store rank " + rankId + " for user " + userId, e);
+        }
+
+        // A rank given any other way ends a temporary rank, so it is not undone later.
+        if (!TemporaryRanks.keepsTimer(via)) {
+            TemporaryRanks.clear(userId);
+        }
+
         if (habbo != null && habbo.getHabboStats() != null) {
             Rank oldRank = habbo.getHabboInfo().getRank();
             if (!oldRank.getBadge().isEmpty()) {
@@ -314,36 +402,52 @@ public class HabboManager {
             habbo.alert(Emulator.getTexts()
                     .getValue("commands.generic.cmd_give_rank.new_rank")
                     .replace("id", newRank.getName()));
-        } else {
-            try {
-                SqlQueries.update("UPDATE users SET `rank` = ? WHERE id = ? LIMIT 1", rankId, userId);
-            } catch (SqlQueries.DataAccessException e) {
-                LOGGER.error("Caught SQL exception", e);
-            }
         }
+
+        PermissionAuditLog.rankSet(actorId, actorName, userId, oldRankId, rankId, via);
 
         Emulator.getPluginManager().fireEvent(new UserRankChangedEvent(habbo));
     }
 
+    private static int storedRankId(int userId) {
+        try {
+            return SqlQueries.queryOne("SELECT `rank` FROM users WHERE id = ? LIMIT 1", rs -> rs.getInt(1), userId)
+                    .orElse(0);
+        } catch (SqlQueries.DataAccessException e) {
+            LOGGER.error("Caught SQL exception", e);
+            return 0;
+        }
+    }
+
     public void giveCredits(int userId, int credits) {
+        this.applyCredits(
+                userId, credits, "system.habbo_manager", EconomyOperationId.create("credits:" + userId), userId);
+    }
+
+    /** Grants or takes credits from a user online or not, with who did it and why; false when nothing changed. */
+    public boolean applyCredits(int userId, int credits, String reason, String operationId, Integer actorId) {
+        if (credits == 0) return false;
+
         Habbo habbo = this.getHabbo(userId);
         if (habbo != null) {
-            habbo.giveCredits(credits, "system.habbo_manager");
-        } else {
-            try {
-                EconomyLedger.execute(new EconomyOperation(
-                        EconomyOperationId.create("credits:" + userId),
-                        userId,
-                        userId,
-                        credits > 0 ? "credit_grant" : "credit_debit",
-                        "system.habbo_manager",
-                        EconomyLedger.CREDITS,
-                        credits,
-                        null,
-                        "offline"));
-            } catch (Exception e) {
-                LOGGER.error("Unable to apply audited offline credit mutation for user {}", userId, e);
-            }
+            return habbo.applyCredits(credits, reason, operationId, actorId);
+        }
+
+        try {
+            EconomyLedger.execute(new EconomyOperation(
+                    operationId,
+                    userId,
+                    actorId,
+                    credits > 0 ? "credit_grant" : "credit_debit",
+                    reason,
+                    EconomyLedger.CREDITS,
+                    credits,
+                    null,
+                    "offline"));
+            return true;
+        } catch (Exception e) {
+            LOGGER.error("Unable to apply audited offline credit mutation for user {}", userId, e);
+            return false;
         }
     }
 

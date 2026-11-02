@@ -4,6 +4,7 @@ import com.eu.habbo.Emulator;
 import com.eu.habbo.habbohotel.items.Item;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredCondition;
 import com.eu.habbo.habbohotel.items.interactions.games.InteractionGameUpCounter;
+import com.eu.habbo.habbohotel.items.interactions.wired.WiredSaveRefusedException;
 import com.eu.habbo.habbohotel.items.interactions.wired.WiredSettings;
 import com.eu.habbo.habbohotel.rooms.Room;
 import com.eu.habbo.habbohotel.rooms.RoomUnit;
@@ -11,9 +12,10 @@ import com.eu.habbo.habbohotel.users.HabboItem;
 import com.eu.habbo.habbohotel.wired.WiredConditionType;
 import com.eu.habbo.habbohotel.wired.core.WiredContext;
 import com.eu.habbo.habbohotel.wired.core.WiredManager;
+import com.eu.habbo.habbohotel.wired.core.WiredQuantifier;
 import com.eu.habbo.habbohotel.wired.core.WiredSourceUtil;
+import com.eu.habbo.habbohotel.wired.protocol.WiredOfficialQuantifier;
 import com.eu.habbo.messages.ServerMessage;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.HashSet;
@@ -22,7 +24,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 
-public class WiredConditionCounterTimeMatches extends InteractionWiredCondition {
+public class WiredConditionCounterTimeMatches extends InteractionWiredCondition implements WiredOfficialQuantifier {
     private static final int COMPARISON_LESS = 0;
     private static final int COMPARISON_EQUAL = 1;
     private static final int COMPARISON_GREATER = 2;
@@ -45,7 +47,8 @@ public class WiredConditionCounterTimeMatches extends InteractionWiredCondition 
         this.items = new LinkedHashSet<>();
     }
 
-    public WiredConditionCounterTimeMatches(int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
+    public WiredConditionCounterTimeMatches(
+            int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
         super(id, userId, item, extradata, limitedStack, limitedSells);
         this.items = new LinkedHashSet<>();
     }
@@ -61,7 +64,7 @@ public class WiredConditionCounterTimeMatches extends InteractionWiredCondition 
 
         List<HabboItem> targets = WiredSourceUtil.resolveItems(ctx, this.furniSource, this.items);
         if (targets.isEmpty()) {
-            return false;
+            return WiredQuantifier.overEmpty(this.quantifier != QUANTIFIER_ANY);
         }
 
         int targetTimeInMs = this.getTargetTimeInMs();
@@ -101,14 +104,14 @@ public class WiredConditionCounterTimeMatches extends InteractionWiredCondition 
 
     @Override
     public String getWiredData() {
-        return WiredManager.getGson().toJson(new JsonData(
-                this.comparison,
-                this.minutes,
-                this.halfSecondSteps,
-                this.furniSource,
-                this.quantifier,
-                this.items.stream().map(HabboItem::getId).collect(Collectors.toList())
-        ));
+        return WiredManager.getGson()
+                .toJson(new JsonData(
+                        this.comparison,
+                        this.minutes,
+                        this.halfSecondSteps,
+                        this.furniSource,
+                        this.quantifier,
+                        this.items.stream().map(HabboItem::getId).collect(Collectors.toList())));
     }
 
     @Override
@@ -184,12 +187,13 @@ public class WiredConditionCounterTimeMatches extends InteractionWiredCondition 
         message.appendInt(this.getBaseItem().getSpriteId());
         message.appendInt(this.getId());
         message.appendString("");
-        message.appendInt(5);
-        message.appendInt(this.comparison);
+        // Official layout: [seconds (0-59), minutes (0-99), half second (0-1), comparison (0 less, 1 equal,
+        // 2 more)], the counters in the official source slot, the quantifier (0 all, 1 any) in its slot.
+        message.appendInt(4);
+        message.appendInt(this.halfSecondSteps / 2);
         message.appendInt(this.minutes);
-        message.appendInt(this.halfSecondSteps);
-        message.appendInt(this.furniSource);
-        message.appendInt(this.quantifier);
+        message.appendInt(this.halfSecondSteps % 2);
+        message.appendInt(this.comparison);
         message.appendInt(0);
         message.appendInt(this.getType().code);
         message.appendInt(0);
@@ -199,12 +203,18 @@ public class WiredConditionCounterTimeMatches extends InteractionWiredCondition 
     @Override
     public boolean saveData(WiredSettings settings) {
         int[] params = settings.getIntParams();
+        refuseNonCounterPicks(settings);
 
-        this.comparison = (params.length > 0) ? this.normalizeComparison(params[0]) : COMPARISON_EQUAL;
+        int seconds = (params.length > 0) ? Math.clamp(params[0], 0, 59) : 0;
         this.minutes = (params.length > 1) ? this.normalizeMinutes(params[1]) : 0;
-        this.halfSecondSteps = (params.length > 2) ? this.normalizeHalfSecondSteps(params[2]) : 0;
-        this.furniSource = (params.length > 3) ? this.normalizeFurniSource(params[3]) : WiredSourceUtil.SOURCE_TRIGGER;
-        this.quantifier = (params.length > 4) ? this.normalizeQuantifier(params[4]) : QUANTIFIER_ALL;
+        int half = (params.length > 2) ? Math.clamp(params[2], 0, 1) : 0;
+        this.halfSecondSteps = this.normalizeHalfSecondSteps(seconds * 2 + half);
+        this.comparison = (params.length > 3) ? this.normalizeComparison(params[3]) : COMPARISON_EQUAL;
+        // A fresh box opens on "any": officially one counter is enough.
+        this.quantifier = this.normalizeQuantifier(settings.getQuantifierCode());
+        this.furniSource = settings.getFurniSourceTypes().length > 0
+                ? this.normalizeFurniSource(settings.getFurniSourceTypes()[0])
+                : WiredSourceUtil.SOURCE_TRIGGER;
 
         this.items.clear();
 
@@ -260,8 +270,23 @@ public class WiredConditionCounterTimeMatches extends InteractionWiredCondition 
         return (this.minutes * 60_000) + (this.halfSecondSteps * 500);
     }
 
+    /** Official: picking anything but a counter refuses the save with the counter text. */
+    private void refuseNonCounterPicks(WiredSettings settings) {
+        int[] sources = settings.getFurniSourceTypes();
+        if (sources.length == 0 || this.normalizeFurniSource(sources[0]) != WiredSourceUtil.SOURCE_SELECTED) return;
+
+        Room room = settings.getRoom();
+        if (room == null) return;
+
+        for (int itemId : settings.getFurniIds()) {
+            if (!(room.getHabboItem(itemId) instanceof InteractionGameUpCounter)) {
+                throw new WiredSaveRefusedException("wiredfurni.error.require_counter_furni");
+            }
+        }
+    }
+
     private boolean matchesCounter(InteractionGameUpCounter counter, int targetTimeInMs) {
-        int currentTimeInMs = counter.getCurrentTimeInMs();
+        long currentTimeInMs = counter.getCurrentTimeMs();
 
         switch (this.comparison) {
             case COMPARISON_LESS:
@@ -313,7 +338,13 @@ public class WiredConditionCounterTimeMatches extends InteractionWiredCondition 
         int quantifier;
         List<Integer> itemIds;
 
-        public JsonData(int comparison, int minutes, int halfSecondSteps, int furniSource, int quantifier, List<Integer> itemIds) {
+        public JsonData(
+                int comparison,
+                int minutes,
+                int halfSecondSteps,
+                int furniSource,
+                int quantifier,
+                List<Integer> itemIds) {
             this.comparison = comparison;
             this.minutes = minutes;
             this.halfSecondSteps = halfSecondSteps;
@@ -321,5 +352,10 @@ public class WiredConditionCounterTimeMatches extends InteractionWiredCondition 
             this.quantifier = quantifier;
             this.itemIds = itemIds;
         }
+    }
+
+    @Override
+    public int officialQuantifierCode() {
+        return this.quantifier;
     }
 }

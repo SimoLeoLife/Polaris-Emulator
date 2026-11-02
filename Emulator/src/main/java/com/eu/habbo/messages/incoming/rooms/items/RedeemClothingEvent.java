@@ -3,6 +3,8 @@ package com.eu.habbo.messages.incoming.rooms.items;
 import com.eu.habbo.Emulator;
 import com.eu.habbo.habbohotel.catalog.ClothItem;
 import com.eu.habbo.habbohotel.items.interactions.InteractionClothing;
+import com.eu.habbo.habbohotel.rooms.BuildersClubItemIds;
+import com.eu.habbo.habbohotel.rooms.Room;
 import com.eu.habbo.habbohotel.rooms.RoomTile;
 import com.eu.habbo.habbohotel.users.HabboItem;
 import com.eu.habbo.messages.incoming.MessageHandler;
@@ -21,9 +23,15 @@ import org.slf4j.LoggerFactory;
 public class RedeemClothingEvent extends MessageHandler {
     private static final Logger LOGGER = LoggerFactory.getLogger(RedeemClothingEvent.class);
 
+    // A burst of redeems for the same furni wrote the clothing once per packet.
+    @Override
+    public int getRatelimit() {
+        return 500;
+    }
+
     @Override
     public void handle() throws Exception {
-        int itemId = this.packet.readInt();
+        int itemId = BuildersClubItemIds.fromWire(this.currentRoom(), this.packet.readInt());
 
         if (!RoomItemInputGuard.isPositiveId(itemId)) return;
 
@@ -46,11 +54,9 @@ public class RedeemClothingEvent extends MessageHandler {
                                 .getWardrobeComponent()
                                 .getClothing()
                                 .contains(clothing.id)) {
-                            if (!this.grantClothing(clothing.id)) {
-                                return;
-                            }
-
-                            item.setRoomId(0);
+                            // The tile first, the grant last: the clothing used to be written to the database before
+                            // a missing tile returned, so the furni stayed in the room and the wardrobe in memory
+                            // did not change.
                             RoomTile tile = this.client
                                     .getHabbo()
                                     .getHabboInfo()
@@ -61,11 +67,19 @@ public class RedeemClothingEvent extends MessageHandler {
                                 return;
                             }
 
-                            this.client
-                                    .getHabbo()
-                                    .getHabboInfo()
-                                    .getCurrentRoom()
-                                    .removeHabboItem(item);
+                            // Claimed before the grant: a pickup racing the redeem used to leave the furni in an
+                            // inventory while the clothing was already granted, so it could be redeemed again.
+                            Room room = this.client.getHabbo().getHabboInfo().getCurrentRoom();
+                            if (!room.claimItem(item)) {
+                                return;
+                            }
+
+                            if (!this.grantClothing(clothing.id)) {
+                                room.addHabboItem(item);
+                                return;
+                            }
+
+                            item.setRoomId(0);
                             this.client
                                     .getHabbo()
                                     .getHabboInfo()

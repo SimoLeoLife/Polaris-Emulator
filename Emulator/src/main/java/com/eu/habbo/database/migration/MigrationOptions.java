@@ -8,7 +8,9 @@ public record MigrationOptions(Mode mode, boolean migrationsOnly) {
     public enum Mode {
         CONFIGURED,
         APPLY,
-        VALIDATE
+        VALIDATE,
+        REPAIR,
+        RECONCILE
     }
 
     public static MigrationOptions parse(String[] arguments) {
@@ -21,26 +23,28 @@ public record MigrationOptions(Mode mode, boolean migrationsOnly) {
                 continue;
             }
             if (argument.startsWith("--migrations=")) {
-                String value = argument.substring("--migrations=".length())
-                        .trim()
-                        .toLowerCase(Locale.ROOT);
+                String value =
+                        argument.substring("--migrations=".length()).trim().toLowerCase(Locale.ROOT);
                 mode = switch (value) {
                     case "apply" -> Mode.APPLY;
                     case "validate", "status" -> Mode.VALIDATE;
-                    case "off" -> throw new IllegalArgumentException(
-                            "--migrations=off is intentionally not supported. "
-                                    + "Set db.migrate.on_startup=false explicitly in config.ini instead.");
-                    default -> throw new IllegalArgumentException(
-                            "Unsupported migration mode '" + value + "'; expected apply or validate.");
+                    case "repair" -> Mode.REPAIR;
+                    case "reconcile" -> Mode.RECONCILE;
+                    case "off" ->
+                        throw new IllegalArgumentException("--migrations=off is intentionally not supported. "
+                                + "Set db.migrate.on_startup=false explicitly in config.ini instead.");
+                    default ->
+                        throw new IllegalArgumentException("Unsupported migration mode '" + value
+                                + "'; expected apply, validate, repair or reconcile.");
                 };
                 continue;
             }
             // A silently ignored near-miss (--migration=apply, --migrations-only=true)
             // would boot the hotel when the operator asked for a migration step.
             if (argument.toLowerCase(Locale.ROOT).startsWith("--migration")) {
-                throw new IllegalArgumentException(
-                        "Unrecognised migration option '" + argument
-                                + "'; expected --migrations=apply, --migrations=validate or --migrations-only.");
+                throw new IllegalArgumentException("Unrecognised migration option '" + argument
+                        + "'; expected --migrations=apply, --migrations=validate, "
+                        + "--migrations=repair, --migrations=reconcile or --migrations-only.");
             }
         }
 

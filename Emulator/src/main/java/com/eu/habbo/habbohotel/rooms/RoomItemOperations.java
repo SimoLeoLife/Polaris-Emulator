@@ -36,6 +36,7 @@ final class RoomItemOperations {
             if (RoomAreaHideSupport.isControllerItem(item)) {
                 RoomAreaHideSupport.sendState(this.room, item);
             }
+            this.room.onFurnitureTopologyChanged(item, true);
         } else if (item.getBaseItem().getType() == FurnitureType.WALL) {
             this.room.sendComposer(new WallItemUpdateComposer(item).compose());
         }
@@ -51,10 +52,12 @@ final class RoomItemOperations {
             return;
         }
 
-        if (!item.isLimited()) {
-            this.room.sendComposer(new ItemStateComposer(item).compose());
-        } else {
-            this.room.sendComposer(new FloorItemUpdateComposer(item).compose());
+        // Inside a wired firing the state goes out with the firing's other states, ahead of its movements.
+        if (!WiredFurniStateBatch.defer(this.room, item)) {
+            this.room.sendComposer(
+                    item.isLimited()
+                            ? new FloorItemUpdateComposer(item).compose()
+                            : new ItemStateComposer(item).compose());
         }
 
         if (item.getBaseItem().getType() == FurnitureType.FLOOR) {
@@ -62,13 +65,15 @@ final class RoomItemOperations {
                 return;
             }
 
-            this.room.updateTiles(this.room
-                    .getLayout()
-                    .getTilesAt(
-                            this.room.currentLayout().getTile(item.getX(), item.getY()),
-                            item.getBaseItem().getWidth(),
-                            item.getBaseItem().getLength(),
-                            item.getRotation()));
+            this.room
+                    .getTileManager()
+                    .refreshTiles(this.room
+                            .getLayout()
+                            .getTilesAt(
+                                    this.room.currentLayout().getTile(item.getX(), item.getY()),
+                                    item.getBaseItem().getWidth(),
+                                    item.getBaseItem().getLength(),
+                                    item.getRotation()));
 
             if (item instanceof InteractionMultiHeight multiHeight) {
                 multiHeight.updateUnitsOnItem(this.room);
@@ -82,6 +87,14 @@ final class RoomItemOperations {
 
         if (item.getBaseItem().getType() == FurnitureType.FLOOR && RoomHanditemBlockSupport.isControllerItem(item)) {
             RoomHanditemBlockSupport.sendState(this.room);
+        }
+
+        if (item.getBaseItem().getType() == FurnitureType.FLOOR && RoomChooserDisableSupport.isControllerItem(item)) {
+            RoomHanditemBlockSupport.broadcastConfigurationItemStates(this.room);
+        }
+
+        if (item.getBaseItem().getType() == FurnitureType.FLOOR) {
+            this.room.onFurnitureTopologyChanged(item, false);
         }
     }
 }

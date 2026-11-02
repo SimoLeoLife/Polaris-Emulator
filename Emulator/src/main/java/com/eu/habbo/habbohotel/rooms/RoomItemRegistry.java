@@ -8,7 +8,9 @@ import com.eu.habbo.habbohotel.items.interactions.InteractionJukeBox;
 import com.eu.habbo.habbohotel.items.interactions.InteractionMoodLight;
 import com.eu.habbo.habbohotel.items.interactions.InteractionMusicDisc;
 import com.eu.habbo.habbohotel.items.interactions.InteractionMuteArea;
+import com.eu.habbo.habbohotel.items.interactions.InteractionObstacle;
 import com.eu.habbo.habbohotel.items.interactions.InteractionPyramid;
+import com.eu.habbo.habbohotel.items.interactions.InteractionQueueSpeedControl;
 import com.eu.habbo.habbohotel.items.interactions.InteractionRoller;
 import com.eu.habbo.habbohotel.items.interactions.InteractionSnowboardSlope;
 import com.eu.habbo.habbohotel.items.interactions.InteractionStickyPole;
@@ -18,6 +20,7 @@ import com.eu.habbo.habbohotel.items.interactions.InteractionVoteCounter;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWater;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWaterItem;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredCondition;
+import com.eu.habbo.habbohotel.items.interactions.InteractionWiredDisableControl;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredEffect;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredExtra;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredHighscore;
@@ -39,15 +42,25 @@ import com.eu.habbo.habbohotel.items.interactions.pets.InteractionPetTree;
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredBlob;
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraContextVariable;
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraFurniVariable;
+import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraLabel;
+import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraPointerVariable;
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraRoomVariable;
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraUserVariable;
+import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraVariableAddonImport;
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraVariableEcho;
+import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraVariableFx;
+import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraVariableLeaderboard;
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraVariableReference;
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraVariableTextConnector;
 import com.eu.habbo.habbohotel.users.HabboItem;
+import com.eu.habbo.habbohotel.wired.arrays.WiredArrayVariableDefinition;
+import com.eu.habbo.habbohotel.wired.arrays.WiredArrayVariableType;
 import com.eu.habbo.habbohotel.wired.core.WiredContextVariableSupport;
 import com.eu.habbo.habbohotel.wired.core.WiredManager;
+import com.eu.habbo.habbohotel.wired.label.WiredLabelSupport;
+import com.eu.habbo.habbohotel.wired.leaderboard.WiredLeaderboardSupport;
 import com.eu.habbo.habbohotel.wired.tick.WiredTickable;
+import com.eu.habbo.habbohotel.wired.variablefx.WiredVariableFxSupport;
 
 final class RoomItemRegistry {
 
@@ -69,6 +82,17 @@ final class RoomItemRegistry {
                 WiredManager.registerTickable(this.room, tickable);
             } else if (item instanceof ICycleable cycleable) {
                 specialTypes.addCycleTask(cycleable);
+            }
+
+            // A variable fx box placed or loaded: the room's fx service starts telling players what to draw.
+            // An add-on import box may bring fx from another room, which the same service draws.
+            if (item instanceof WiredExtraVariableFx || item instanceof WiredExtraVariableAddonImport) {
+                WiredVariableFxSupport.ensure(this.room);
+            }
+
+            // A leaderboard box placed or loaded: the room's leaderboard service starts sending panels.
+            if (item instanceof WiredExtraVariableLeaderboard) {
+                WiredLeaderboardSupport.ensure(this.room);
             }
 
             if (item instanceof InteractionWiredTrigger trigger) {
@@ -113,6 +137,12 @@ final class RoomItemRegistry {
         if (wiredItem) {
             WiredManager.invalidateRoom(this.room);
         }
+        this.room.onFurnitureTopologyChanged(item, true);
+
+        // A furniture label placed: the players who may see it get it straight away.
+        if (item instanceof WiredExtraLabel label) {
+            WiredLabelSupport.broadcastChanged(this.room, label);
+        }
     }
 
     void unregister(HabboItem item) {
@@ -121,9 +151,14 @@ final class RoomItemRegistry {
             return;
         }
 
+        if (item instanceof WiredExtraLabel) {
+            WiredLabelSupport.broadcastRemoved(this.room, item.getId());
+        }
+
         boolean cleanedSignalAntennaReferences =
                 isAntennaItem(item) && specialTypes.unlinkSignalAntennaReferences(item.getId());
         this.room.getFurniVariableManager().removeAssignmentsForFurni(item.getId());
+        this.room.getArrayVariableManager().removeOwner(WiredArrayVariableType.FURNI.code(), item.getId());
 
         boolean wiredItem = false;
         if (item instanceof WiredTickable tickable) {
@@ -144,8 +179,8 @@ final class RoomItemRegistry {
             specialTypes.removeCondition(condition);
             wiredItem = true;
         } else if (item instanceof InteractionWiredExtra extra) {
-            boolean broadcastDefinitions = this.removeExtraDefinitions(item);
             specialTypes.removeExtra(extra);
+            boolean broadcastDefinitions = this.removeExtraDefinitions(item);
             if (broadcastDefinitions) {
                 WiredContextVariableSupport.broadcastDefinitions(this.room);
             }
@@ -177,17 +212,63 @@ final class RoomItemRegistry {
         if (wiredItem || cleanedSignalAntennaReferences) {
             WiredManager.invalidateRoom(this.room);
         }
+        this.room.forgetWiredGravity(item);
+        this.room.forgetWiredOpacity(item);
+        RoomWiredRuntime wiredRuntime = this.room.getWiredRuntime();
+        if (wiredRuntime != null) {
+            wiredRuntime.forgetProjectile(item);
+            wiredRuntime.forgetMovesFreely(item);
+        }
+        this.room.onFurnitureTopologyChanged(item, true);
+    }
+
+    /** Removes malformed wired furniture from every executable index without deleting the room item. */
+    void quarantineWired(HabboItem item) {
+        RoomSpecialTypes specialTypes = this.room.getRoomSpecialTypes();
+        if (specialTypes == null || item == null) {
+            return;
+        }
+
+        if (item instanceof WiredTickable tickable) {
+            WiredManager.unregisterTickable(this.room, tickable);
+        } else if (item instanceof ICycleable cycleable) {
+            specialTypes.removeCycleTask(cycleable);
+        }
+
+        boolean wiredItem = false;
+        if (item instanceof InteractionWiredTrigger trigger) {
+            specialTypes.removeTrigger(trigger);
+            wiredItem = true;
+        } else if (item instanceof InteractionWiredEffect effect) {
+            specialTypes.removeEffect(effect);
+            wiredItem = true;
+        } else if (item instanceof InteractionWiredCondition condition) {
+            specialTypes.removeCondition(condition);
+            wiredItem = true;
+        } else if (item instanceof InteractionWiredExtra extra) {
+            specialTypes.removeExtra(extra);
+            wiredItem = true;
+        }
+
+        if (wiredItem) {
+            WiredManager.invalidateRoom(this.room);
+        }
     }
 
     private boolean removeExtraDefinitions(HabboItem item) {
         boolean broadcastDefinitions = false;
+        if (item instanceof WiredArrayVariableDefinition) {
+            this.room.getArrayVariableManager().removeDefinition(item.getId());
+        }
         if (item instanceof WiredExtraUserVariable) {
             this.room.getUserVariableManager().removeDefinition(item.getId());
         } else if (item instanceof WiredExtraFurniVariable) {
             this.room.getFurniVariableManager().removeDefinition(item.getId());
         } else if (item instanceof WiredExtraRoomVariable) {
             this.room.getRoomVariableManager().removeDefinition(item.getId());
-        } else if (item instanceof WiredExtraContextVariable || item instanceof WiredExtraVariableTextConnector) {
+        } else if (item instanceof WiredExtraContextVariable
+                || item instanceof WiredExtraVariableTextConnector
+                || item instanceof WiredExtraPointerVariable) {
             broadcastDefinitions = true;
         } else if (item instanceof WiredExtraVariableReference reference) {
             if (reference.isRoomReference()) {
@@ -231,6 +312,7 @@ final class RoomItemRegistry {
                 || item instanceof InteractionTagField
                 || item instanceof InteractionJukeBox
                 || item instanceof InteractionPetBreedingNest
+                || item instanceof InteractionObstacle
                 || item instanceof InteractionBlackHole
                 || item instanceof InteractionWiredHighscore
                 || item instanceof InteractionStickyPole
@@ -238,7 +320,9 @@ final class RoomItemRegistry {
                 || item instanceof InteractionTent
                 || item instanceof InteractionSnowboardSlope
                 || item instanceof InteractionFireworks
-                || item instanceof InteractionVoteCounter;
+                || item instanceof InteractionVoteCounter
+                || item instanceof InteractionWiredDisableControl
+                || item instanceof InteractionQueueSpeedControl;
     }
 
     private static boolean isUndefinedSpecialTypeOnRemoval(HabboItem item) {
@@ -254,12 +338,15 @@ final class RoomItemRegistry {
                 || item instanceof InteractionTagField
                 || item instanceof InteractionJukeBox
                 || item instanceof InteractionPetBreedingNest
+                || item instanceof InteractionObstacle
                 || item instanceof InteractionBlackHole
                 || item instanceof InteractionWiredHighscore
                 || item instanceof InteractionStickyPole
                 || item instanceof WiredBlob
                 || item instanceof InteractionTent
                 || item instanceof InteractionSnowboardSlope
-                || item instanceof InteractionVoteCounter;
+                || item instanceof InteractionVoteCounter
+                || item instanceof InteractionWiredDisableControl
+                || item instanceof InteractionQueueSpeedControl;
     }
 }

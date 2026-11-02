@@ -10,14 +10,14 @@ import com.eu.habbo.habbohotel.rooms.RoomUnitType;
 import com.eu.habbo.habbohotel.wired.WiredEffectType;
 import com.eu.habbo.habbohotel.wired.core.WiredContext;
 import com.eu.habbo.habbohotel.wired.core.WiredManager;
+import com.eu.habbo.habbohotel.wired.protocol.WiredOfficialSelector;
 import com.eu.habbo.messages.ServerMessage;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.LinkedHashSet;
 import java.util.Set;
 
-public class WiredEffectUsersByType extends InteractionWiredEffect {
+public class WiredEffectUsersByType extends InteractionWiredEffect implements WiredOfficialSelector {
     private static final int ENTITY_HABBO = 1;
     private static final int ENTITY_PET = 2;
     private static final int ENTITY_BOT = 4;
@@ -51,7 +51,8 @@ public class WiredEffectUsersByType extends InteractionWiredEffect {
             }
         }
 
-        result = this.applySelectorModifiers(result, room.getRoomUnits(), ctx.targets().users(), this.filterExisting, this.invert);
+        result = this.applySelectorModifiers(
+                result, room.getRoomUnits(), ctx.targets().users(), this.filterExisting, this.invert);
 
         ctx.targets().setUsers(result);
     }
@@ -60,10 +61,30 @@ public class WiredEffectUsersByType extends InteractionWiredEffect {
     public boolean saveData(WiredSettings settings, GameClient gameClient) {
         int[] params = settings.getIntParams();
         this.entityType = (params.length > 0) ? this.normalizeEntityType(params[0]) : ENTITY_HABBO;
-        this.filterExisting = params.length > 1 && params[1] == 1;
-        this.invert = params.length > 2 && params[2] == 1;
+        this.filterExisting = settings.isSelectorFilter();
+        this.invert = settings.isSelectorInvert();
         this.setDelay(settings.getDelay());
         return true;
+    }
+
+    @Override
+    public boolean selectorFilter() {
+        return this.filterExisting;
+    }
+
+    @Override
+    public boolean selectorInvert() {
+        return this.invert;
+    }
+
+    @Override
+    public int[] officialFurniSources() {
+        return new int[0];
+    }
+
+    @Override
+    public int[] officialUserSources() {
+        return new int[0];
     }
 
     @Override
@@ -83,7 +104,8 @@ public class WiredEffectUsersByType extends InteractionWiredEffect {
 
     @Override
     public String getWiredData() {
-        return WiredManager.getGson().toJson(new JsonData(this.entityType, this.filterExisting, this.invert, this.getDelay()));
+        return WiredManager.getGson()
+                .toJson(new JsonData(this.entityType, this.filterExisting, this.invert, this.getDelay()));
     }
 
     @Override
@@ -122,10 +144,8 @@ public class WiredEffectUsersByType extends InteractionWiredEffect {
         message.appendInt(this.getBaseItem().getSpriteId());
         message.appendInt(this.getId());
         message.appendString("");
-        message.appendInt(3);
+        message.appendInt(1);
         message.appendInt(this.entityType);
-        message.appendInt(this.filterExisting ? 1 : 0);
-        message.appendInt(this.invert ? 1 : 0);
         message.appendInt(0);
         message.appendInt(this.getType().code);
         message.appendInt(this.getDelay());
@@ -137,14 +157,9 @@ public class WiredEffectUsersByType extends InteractionWiredEffect {
         return false;
     }
 
-    private int normalizeEntityType(int value) {
-        switch (value) {
-            case ENTITY_PET:
-            case ENTITY_BOT:
-                return value;
-            default:
-                return ENTITY_HABBO;
-        }
+    /** The official type mask 1-7; anything else is Habbo. */
+    int normalizeEntityType(int value) {
+        return value >= ENTITY_HABBO && value <= (ENTITY_HABBO | ENTITY_PET | ENTITY_BOT) ? value : ENTITY_HABBO;
     }
 
     private boolean matchesType(RoomUnit roomUnit) {
@@ -153,7 +168,8 @@ public class WiredEffectUsersByType extends InteractionWiredEffect {
         }
 
         RoomUnitType roomUnitType = roomUnit.getRoomUnitType();
-        return roomUnitType != null && roomUnitType.getTypeId() == this.entityType;
+        // The official type mask: any of Habbo (1), pet (2) and bot (4).
+        return roomUnitType != null && (roomUnitType.getTypeId() & this.entityType) != 0;
     }
 
     static class JsonData {

@@ -8,20 +8,19 @@ import com.eu.habbo.habbohotel.rooms.RoomUnit;
 import com.eu.habbo.habbohotel.rooms.RoomUnitStatus;
 import com.eu.habbo.habbohotel.wired.WiredConditionType;
 import com.eu.habbo.habbohotel.wired.WiredUserActionType;
+import com.eu.habbo.habbohotel.wired.core.WiredActionMemory;
 import com.eu.habbo.habbohotel.wired.core.WiredContext;
 import com.eu.habbo.habbohotel.wired.core.WiredManager;
+import com.eu.habbo.habbohotel.wired.core.WiredQuantifier;
 import com.eu.habbo.habbohotel.wired.core.WiredSourceUtil;
+import com.eu.habbo.habbohotel.wired.protocol.WiredOfficialQuantifier;
 import com.eu.habbo.messages.ServerMessage;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.List;
 
-public class WiredConditionUserPerformsAction extends InteractionWiredCondition {
-    private static final String CACHE_LAST_ACTION_ID = "wired.last_user_action.id";
-    private static final String CACHE_LAST_ACTION_PARAMETER = "wired.last_user_action.parameter";
-    private static final String CACHE_LAST_ACTION_TIMESTAMP = "wired.last_user_action.timestamp";
-    private static final long TRANSIENT_ACTION_WINDOW_MS = 5_000L;
+public class WiredConditionUserPerformsAction extends InteractionWiredCondition implements WiredOfficialQuantifier {
+    static final int OFFICIAL_ACTION_IDS = 2;
     protected static final int DEFAULT_ACTION = WiredUserActionType.WAVE;
     protected static final int QUANTIFIER_ALL = 0;
     protected static final int QUANTIFIER_ANY = 1;
@@ -40,7 +39,8 @@ public class WiredConditionUserPerformsAction extends InteractionWiredCondition 
         super(set, baseItem);
     }
 
-    public WiredConditionUserPerformsAction(int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
+    public WiredConditionUserPerformsAction(
+            int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
         super(id, userId, item, extradata, limitedStack, limitedSells);
     }
 
@@ -48,7 +48,7 @@ public class WiredConditionUserPerformsAction extends InteractionWiredCondition 
     public boolean evaluate(WiredContext ctx) {
         List<RoomUnit> targets = WiredSourceUtil.resolveUsers(ctx, this.userSource);
         if (targets.isEmpty()) {
-            return false;
+            return WiredQuantifier.overEmpty(this.quantifier != QUANTIFIER_ANY);
         }
 
         if (this.quantifier == QUANTIFIER_ANY) {
@@ -66,15 +66,15 @@ public class WiredConditionUserPerformsAction extends InteractionWiredCondition 
 
     @Override
     public String getWiredData() {
-        return WiredManager.getGson().toJson(new JsonData(
-                this.selectedAction,
-                this.signFilterEnabled,
-                this.signId,
-                this.danceFilterEnabled,
-                this.danceId,
-                this.userSource,
-                this.quantifier
-        ));
+        return WiredManager.getGson()
+                .toJson(new JsonData(
+                        this.selectedAction,
+                        this.signFilterEnabled,
+                        this.signId,
+                        this.danceFilterEnabled,
+                        this.danceId,
+                        this.userSource,
+                        this.quantifier));
     }
 
     @Override
@@ -99,7 +99,10 @@ public class WiredConditionUserPerformsAction extends InteractionWiredCondition 
             return;
         }
 
-        this.selectedAction = normalizeAction(data.selectedAction);
+        this.selectedAction = normalizeAction(
+                data.actionIds >= OFFICIAL_ACTION_IDS
+                        ? data.selectedAction
+                        : WiredUserActionType.fromLegacy(data.selectedAction));
         this.signFilterEnabled = data.signFilterEnabled;
         this.signId = normalizeSignId(data.signId);
         this.danceFilterEnabled = data.danceFilterEnabled;
@@ -125,15 +128,10 @@ public class WiredConditionUserPerformsAction extends InteractionWiredCondition 
         message.appendInt(0);
         message.appendInt(this.getBaseItem().getSpriteId());
         message.appendInt(this.getId());
-        message.appendString("");
-        message.appendInt(7);
+        message.appendString(WiredUserActionType.extraString(
+                this.selectedAction, this.signFilterEnabled, this.signId, this.danceFilterEnabled, this.danceId));
+        message.appendInt(1);
         message.appendInt(this.selectedAction);
-        message.appendInt(this.signFilterEnabled ? 1 : 0);
-        message.appendInt(this.signId);
-        message.appendInt(this.danceFilterEnabled ? 1 : 0);
-        message.appendInt(this.danceId);
-        message.appendInt(this.userSource);
-        message.appendInt(this.quantifier);
         message.appendInt(0);
         message.appendInt(this.getType().code);
         message.appendInt(0);
@@ -147,12 +145,20 @@ public class WiredConditionUserPerformsAction extends InteractionWiredCondition 
         this.resetSettings();
 
         if (intParams.length > 0) this.selectedAction = normalizeAction(intParams[0]);
-        if (intParams.length > 1) this.signFilterEnabled = (intParams[1] == 1);
-        if (intParams.length > 2) this.signId = normalizeSignId(intParams[2]);
-        if (intParams.length > 3) this.danceFilterEnabled = (intParams[3] == 1);
-        if (intParams.length > 4) this.danceId = normalizeDanceId(intParams[4]);
-        if (intParams.length > 5) this.userSource = this.normalizeUserSource(intParams[5]);
-        if (intParams.length > 6) this.quantifier = normalizeQuantifier(intParams[6]);
+        // Official: [action], the sign or dance extra in the string param, the users in the official
+        // source slot, the quantifier (0 all, 1 any) in its slot.
+        int extra = WiredUserActionType.extraCode(this.selectedAction, settings.getStringParam());
+        if (this.selectedAction == WiredUserActionType.SIGN && extra >= 0) {
+            this.signFilterEnabled = true;
+            this.signId = extra;
+        }
+        if (this.selectedAction == WiredUserActionType.DANCE && extra >= 0) {
+            this.danceFilterEnabled = true;
+            this.danceId = extra;
+        }
+        if (settings.getUserSourceTypes().length > 0)
+            this.userSource = this.normalizeUserSource(settings.getUserSourceTypes()[0]);
+        this.quantifier = normalizeQuantifier(settings.getQuantifierCode());
 
         return true;
     }
@@ -168,22 +174,7 @@ public class WiredConditionUserPerformsAction extends InteractionWiredCondition 
     }
 
     protected int normalizeAction(int action) {
-        switch (action) {
-            case WiredUserActionType.WAVE:
-            case WiredUserActionType.BLOW_KISS:
-            case WiredUserActionType.LAUGH:
-            case WiredUserActionType.AWAKE:
-            case WiredUserActionType.RELAX:
-            case WiredUserActionType.SIT:
-            case WiredUserActionType.STAND:
-            case WiredUserActionType.LAY:
-            case WiredUserActionType.SIGN:
-            case WiredUserActionType.DANCE:
-            case WiredUserActionType.THUMB_UP:
-                return action;
-            default:
-                return DEFAULT_ACTION;
-        }
+        return WiredUserActionType.isAction(action) ? action : DEFAULT_ACTION;
     }
 
     protected int normalizeQuantifier(int value) {
@@ -229,7 +220,8 @@ public class WiredConditionUserPerformsAction extends InteractionWiredCondition 
             return false;
         }
 
-        return this.matchesConfiguredAction(ctx.event().getActionId(), ctx.event().getActionParameter());
+        return this.matchesConfiguredAction(
+                ctx.event().getActionId(), ctx.event().getActionParameter());
     }
 
     protected boolean matchesCurrentState(RoomUnit roomUnit) {
@@ -238,8 +230,12 @@ public class WiredConditionUserPerformsAction extends InteractionWiredCondition 
                 return roomUnit.hasStatus(RoomUnitStatus.SIT);
             case WiredUserActionType.LAY:
                 return roomUnit.hasStatus(RoomUnitStatus.LAY);
-            case WiredUserActionType.RELAX:
-                return roomUnit.isIdle();
+            case WiredUserActionType.STAND:
+                return !roomUnit.hasStatus(RoomUnitStatus.SIT) && !roomUnit.hasStatus(RoomUnitStatus.LAY);
+            case WiredUserActionType.AWAKE:
+                // AIR's sleep lasts 2 s: awake unless the avatar fell asleep in the last 2 s.
+                return !WiredActionMemory.recentExpression(
+                        roomUnit, WiredUserActionType.RELAX, System.currentTimeMillis());
             case WiredUserActionType.SIGN:
                 return this.matchesSignState(roomUnit);
             case WiredUserActionType.DANCE:
@@ -249,24 +245,15 @@ public class WiredConditionUserPerformsAction extends InteractionWiredCondition 
         }
     }
 
+    /**
+     * AIR sees a wave, respect or sleep for 2 s after it; other actions only in their own event or by the
+     * avatar's current state.
+     */
     protected boolean matchesRecentAction(RoomUnit roomUnit) {
-        Object actionValue = roomUnit.getCacheable().get(CACHE_LAST_ACTION_ID);
-        Object parameterValue = roomUnit.getCacheable().get(CACHE_LAST_ACTION_PARAMETER);
-        Object timestampValue = roomUnit.getCacheable().get(CACHE_LAST_ACTION_TIMESTAMP);
-
-        if (!(actionValue instanceof Integer) || !(timestampValue instanceof Long)) {
-            return false;
-        }
-
-        long timestamp = (Long) timestampValue;
-        if (!WiredUserActionInputGuard.isRecentTimestamp(timestamp, System.currentTimeMillis(), TRANSIENT_ACTION_WINDOW_MS)) {
-            return false;
-        }
-
-        int actionId = (Integer) actionValue;
-        int parameter = (parameterValue instanceof Integer) ? (Integer) parameterValue : -1;
-
-        return this.matchesConfiguredAction(actionId, parameter);
+        return (this.selectedAction == WiredUserActionType.WAVE
+                        || this.selectedAction == WiredUserActionType.RESPECT
+                        || this.selectedAction == WiredUserActionType.RELAX)
+                && WiredActionMemory.recentExpression(roomUnit, this.selectedAction, System.currentTimeMillis());
     }
 
     protected boolean matchesConfiguredAction(int actionId, int actionParameter) {
@@ -324,6 +311,9 @@ public class WiredConditionUserPerformsAction extends InteractionWiredCondition 
     }
 
     static class JsonData {
+        /** 2: the official action ids; rows saved before have none and use the old ids. */
+        int actionIds = OFFICIAL_ACTION_IDS;
+
         int selectedAction;
         boolean signFilterEnabled;
         int signId;
@@ -332,7 +322,14 @@ public class WiredConditionUserPerformsAction extends InteractionWiredCondition 
         int userSource;
         int quantifier;
 
-        public JsonData(int selectedAction, boolean signFilterEnabled, int signId, boolean danceFilterEnabled, int danceId, int userSource, int quantifier) {
+        public JsonData(
+                int selectedAction,
+                boolean signFilterEnabled,
+                int signId,
+                boolean danceFilterEnabled,
+                int danceId,
+                int userSource,
+                int quantifier) {
             this.selectedAction = selectedAction;
             this.signFilterEnabled = signFilterEnabled;
             this.signId = signId;
@@ -341,5 +338,10 @@ public class WiredConditionUserPerformsAction extends InteractionWiredCondition 
             this.userSource = userSource;
             this.quantifier = quantifier;
         }
+    }
+
+    @Override
+    public int officialQuantifierCode() {
+        return this.getQuantifier();
     }
 }

@@ -3,9 +3,7 @@ package com.eu.habbo.habbohotel.rooms;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 
-record RoomSnapshot(
-        Initial initial,
-        PostBanLoad postBanLoad) {
+record RoomSnapshot(Initial initial, PostBanLoad postBanLoad) {
 
     static Initial readInitial(ResultSet set) throws SQLException {
         return new Initial(
@@ -33,7 +31,7 @@ record RoomSnapshot(
                 set.getBoolean("allow_walkthrough"),
                 set.getBoolean("allow_hidewall"),
                 optionalBoolean(set, "youtube_enabled"),
-                optionalBoolean(set, "soundboard_enabled"),
+                optionalInt(set, "soundboard_enabled"),
                 set.getInt("chat_mode"),
                 set.getInt("chat_weight"),
                 set.getInt("chat_speed"),
@@ -61,7 +59,14 @@ record RoomSnapshot(
                         set.getInt("trade_mode"),
                         set.getString("move_diagonally").equals("1"),
                         set.getString("allow_underpass").equals("1"),
-                        set.getString("moodlight_data")));
+                        set.getBoolean("mute_all_pets"),
+                        set.getBoolean("leave_on_door_tile"),
+                        set.getBoolean("idle_sleep_enabled"),
+                        set.getInt("idle_sleep_timeout_seconds"),
+                        set.getBoolean("idle_autokick_enabled"),
+                        set.getInt("idle_autokick_timeout_seconds"),
+                        set.getString("moodlight_data"),
+                        optionalInt(set, "date_created")));
     }
 
     private static boolean optionalBoolean(ResultSet set, String column) {
@@ -69,6 +74,14 @@ record RoomSnapshot(
             return set.getBoolean(column);
         } catch (Exception ignored) {
             return false;
+        }
+    }
+
+    private static int optionalInt(ResultSet set, String column) {
+        try {
+            return set.getInt(column);
+        } catch (Exception ignored) {
+            return 0;
         }
     }
 
@@ -113,7 +126,7 @@ record RoomSnapshot(
             boolean allowWalkthrough,
             boolean hideWall,
             boolean youtubeEnabled,
-            boolean soundboardEnabled,
+            int soundboardMode,
             int chatMode,
             int chatWeight,
             int chatSpeed,
@@ -131,13 +144,18 @@ record RoomSnapshot(
             boolean jukeboxActive,
             boolean hideWired,
             boolean buildersClubTrialLocked,
-            RoomState buildersClubOriginalState) {
-    }
+            RoomState buildersClubOriginalState) {}
 
     record PostBanLoad(
             int tradeMode,
             boolean moveDiagonally,
             boolean allowUnderpass,
-            String moodlightData) {
-    }
+            boolean muteAllPets,
+            boolean leaveOnDoorTileEnabled,
+            boolean idleSleepEnabled,
+            int idleSleepTimeoutSeconds,
+            boolean idleAutokickEnabled,
+            int idleAutokickTimeoutSeconds,
+            String moodlightData,
+            int dateCreated) {}
 }

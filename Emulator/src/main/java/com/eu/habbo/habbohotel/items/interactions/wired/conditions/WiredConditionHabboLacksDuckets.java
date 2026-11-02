@@ -2,6 +2,7 @@ package com.eu.habbo.habbohotel.items.interactions.wired.conditions;
 
 import com.eu.habbo.habbohotel.games.GameTeamColors;
 import com.eu.habbo.habbohotel.items.Item;
+import com.eu.habbo.habbohotel.items.interactions.wired.WiredComparison;
 import com.eu.habbo.habbohotel.items.interactions.wired.WiredSettings;
 import com.eu.habbo.habbohotel.rooms.Room;
 import com.eu.habbo.habbohotel.rooms.RoomUnit;
@@ -10,19 +11,27 @@ import com.eu.habbo.habbohotel.wired.WiredConditionType;
 import com.eu.habbo.habbohotel.wired.core.WiredContext;
 import com.eu.habbo.habbohotel.wired.core.WiredManager;
 import com.eu.habbo.habbohotel.wired.core.WiredSourceUtil;
+import com.eu.habbo.habbohotel.wired.protocol.WiredOfficialQuantifier;
 import com.eu.habbo.messages.ServerMessage;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.List;
 
-public class WiredConditionHabboLacksDuckets extends WiredConditionTeamGameBase {
-    public static final WiredConditionType type = WiredConditionType.TEAM_HAS_SCORE;
+/**
+ * Passes when the resolved user's duckets do NOT compare to {@code amount} as the operator says - the
+ * opposite of {@link WiredConditionHabboHasDuckets} with the same settings. It keeps
+ * {@link WiredConditionTeamGameBase}'s storage - the amount, the user source and the quantifier are the
+ * settings it needs - but answers {@link WiredConditionType#USER_AMOUNT}, whose dialog leaves out the
+ * team colour. A row saved before the operator was honoured reads as {@code >=}, so it still passes
+ * below the amount - the one way this box used to compare.
+ */
+public class WiredConditionHabboLacksDuckets extends WiredConditionTeamGameBase implements WiredOfficialQuantifier {
+    public static final WiredConditionType type = WiredConditionType.USER_AMOUNT;
 
     private static final int DUCKETS_CURRENCY = 0;
 
     private int teamType = GameTeamColors.RED.type;
-    private int comparison = COMPARISON_EQUAL;
+    private int comparison = WiredComparison.GREATER_EQUAL;
     private int amount = 0;
     private int userSource = WiredSourceUtil.SOURCE_TRIGGER;
     private int quantifier = QUANTIFIER_ALL;
@@ -31,7 +40,8 @@ public class WiredConditionHabboLacksDuckets extends WiredConditionTeamGameBase 
         super(set, baseItem);
     }
 
-    public WiredConditionHabboLacksDuckets(int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
+    public WiredConditionHabboLacksDuckets(
+            int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
         super(id, userId, item, extradata, limitedStack, limitedSells);
     }
 
@@ -51,13 +61,8 @@ public class WiredConditionHabboLacksDuckets extends WiredConditionTeamGameBase 
 
     @Override
     public String getWiredData() {
-        return WiredManager.getGson().toJson(new JsonData(
-                this.teamType,
-                this.comparison,
-                this.amount,
-                this.userSource,
-                this.quantifier
-        ));
+        return WiredManager.getGson()
+                .toJson(new JsonData(this.teamType, this.comparison, this.amount, this.userSource, this.quantifier));
     }
 
     @Override
@@ -81,7 +86,10 @@ public class WiredConditionHabboLacksDuckets extends WiredConditionTeamGameBase 
         }
 
         this.teamType = this.normalizeExplicitTeamType(data.teamType);
-        this.comparison = this.normalizeComparison(data.comparison);
+        // Rows written before the operator was honoured carry no "operator" field. They keep the one
+        // way this box always compared, whatever comparison the dialog echoed back into them.
+        this.comparison =
+                (data.operator == null) ? WiredComparison.GREATER_EQUAL : WiredComparison.normalize(data.operator);
         this.amount = this.normalizeScore(data.score);
         this.userSource = this.normalizeUserSource(data.userSource);
         this.quantifier = this.normalizeQuantifier(data.quantifier);
@@ -105,12 +113,11 @@ public class WiredConditionHabboLacksDuckets extends WiredConditionTeamGameBase 
         message.appendInt(this.getBaseItem().getSpriteId());
         message.appendInt(this.getId());
         message.appendString("");
-        message.appendInt(5);
+        message.appendInt(4);
         message.appendInt(this.teamType);
         message.appendInt(this.comparison);
         message.appendInt(this.amount);
         message.appendInt(this.userSource);
-        message.appendInt(this.quantifier);
         message.appendInt(0);
         message.appendInt(this.getType().code);
         message.appendInt(0);
@@ -123,10 +130,10 @@ public class WiredConditionHabboLacksDuckets extends WiredConditionTeamGameBase 
         this.resetSettings();
 
         if (params.length > 0) this.teamType = this.normalizeExplicitTeamType(params[0]);
-        if (params.length > 1) this.comparison = this.normalizeComparison(params[1]);
+        if (params.length > 1) this.comparison = WiredComparison.normalize(params[1]);
         if (params.length > 2) this.amount = this.normalizeScore(params[2]);
         if (params.length > 3) this.userSource = this.normalizeUserSource(params[3]);
-        if (params.length > 4) this.quantifier = this.normalizeQuantifier(params[4]);
+        this.quantifier = this.normalizeQuantifier(settings.getQuantifierCode());
 
         return true;
     }
@@ -143,12 +150,12 @@ public class WiredConditionHabboLacksDuckets extends WiredConditionTeamGameBase 
 
         int value = habbo.getHabboInfo().getCurrencyAmount(DUCKETS_CURRENCY);
 
-        return value < this.amount;
+        return !WiredComparison.compare(value, this.amount, this.comparison);
     }
 
     private void resetSettings() {
         this.teamType = GameTeamColors.RED.type;
-        this.comparison = COMPARISON_EQUAL;
+        this.comparison = WiredComparison.GREATER_EQUAL;
         this.amount = 0;
         this.userSource = WiredSourceUtil.SOURCE_TRIGGER;
         this.quantifier = QUANTIFIER_ALL;
@@ -156,17 +163,24 @@ public class WiredConditionHabboLacksDuckets extends WiredConditionTeamGameBase 
 
     static class JsonData {
         int teamType;
-        int comparison;
+        /** Null on rows written before the box honoured an operator. */
+        Integer operator;
+
         int score;
         int userSource;
         int quantifier;
 
-        public JsonData(int teamType, int comparison, int score, int userSource, int quantifier) {
+        public JsonData(int teamType, int operator, int score, int userSource, int quantifier) {
             this.teamType = teamType;
-            this.comparison = comparison;
+            this.operator = operator;
             this.score = score;
             this.userSource = userSource;
             this.quantifier = quantifier;
         }
+    }
+
+    @Override
+    public int officialQuantifierCode() {
+        return this.quantifier;
     }
 }

@@ -3,19 +3,20 @@ package com.eu.habbo.habbohotel.catalog;
 import com.eu.habbo.Emulator;
 import com.eu.habbo.habbohotel.items.FurnitureType;
 import com.eu.habbo.habbohotel.items.Item;
+import com.eu.habbo.habbohotel.items.rentable.RentableFurniture;
+import com.eu.habbo.habbohotel.users.ChatStyleRepository;
 import com.eu.habbo.messages.ISerialize;
 import com.eu.habbo.messages.ServerMessage;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.HashMap;
-import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class CatalogItem implements ISerialize, Runnable, Comparable<CatalogItem> {
     private static final Logger LOGGER = LoggerFactory.getLogger(CatalogItem.class);
@@ -31,24 +32,21 @@ public class CatalogItem implements ISerialize, Runnable, Comparable<CatalogItem
     private boolean allowGift = false;
     private int limitedSells;
 
-
     private String extradata;
-
 
     private boolean clubOnly;
 
-
     private boolean haveOffer;
-
 
     private int offerId;
 
-
     private boolean needsUpdate;
-
 
     private int orderNumber;
 
+    private int rentDays;
+
+    private int habbiconId;
 
     private Map<Integer, Integer> bundle;
 
@@ -58,24 +56,21 @@ public class CatalogItem implements ISerialize, Runnable, Comparable<CatalogItem
     }
 
     public static boolean haveOffer(CatalogItem item) {
-        if (!item.haveOffer)
-            return false;
+        if (!item.haveOffer || item.getHabbiconId() > 0) return false;
 
-        if (item.getAmount() != 1)
-            return false;
+        if (item.getAmount() != 1) return false;
 
-        if (item.isLimited())
-            return false;
+        if (item.isLimited()) return false;
 
-        if (item.bundle.size() > 1)
-            return false;
+        if (item.bundle.size() > 1) return false;
 
-        if (item.getName().toLowerCase().startsWith("cf_") || item.getName().toLowerCase().startsWith("cfc_"))
-            return false;
+        if (item.getName().toLowerCase().startsWith("cf_")
+                || item.getName().toLowerCase().startsWith("cfc_")) return false;
 
         for (Item i : item.getBaseItems()) {
-            if (i.getName().toLowerCase().startsWith("cf_") || i.getName().toLowerCase().startsWith("cfc_") || i.getName().toLowerCase().startsWith("rentable_bot"))
-                return false;
+            if (i.getName().toLowerCase().startsWith("cf_")
+                    || i.getName().toLowerCase().startsWith("cfc_")
+                    || i.getName().toLowerCase().startsWith("rentable_bot")) return false;
         }
 
         return !item.getName().toLowerCase().startsWith("rentable_bot_");
@@ -101,9 +96,21 @@ public class CatalogItem implements ISerialize, Runnable, Comparable<CatalogItem
         this.haveOffer = set.getBoolean("have_offer");
         this.offerId = set.getInt("offer_id");
         this.orderNumber = set.getInt("order_number");
+        this.rentDays = RentableFurniture.readRentDays(set);
+        this.habbiconId = 0;
+        for (int column = 1; column <= set.getMetaData().getColumnCount(); column++) {
+            if ("habbicon_id".equalsIgnoreCase(set.getMetaData().getColumnLabel(column))) {
+                this.habbiconId = set.getInt("habbicon_id");
+                break;
+            }
+        }
 
         this.bundle = new HashMap<>();
         this.loadBundle();
+    }
+
+    public int getHabbiconId() {
+        return this.habbiconId;
     }
 
     public int getId() {
@@ -151,7 +158,8 @@ public class CatalogItem implements ISerialize, Runnable, Comparable<CatalogItem
     }
 
     public int getLimitedSells() {
-        CatalogLimitedConfiguration ltdConfig = Emulator.getGameEnvironment().getCatalogManager().getLimitedConfig(this);
+        CatalogLimitedConfiguration ltdConfig =
+                Emulator.getGameEnvironment().getCatalogManager().getLimitedConfig(this);
 
         if (ltdConfig != null) {
             return this.limitedStack - ltdConfig.available();
@@ -164,12 +172,58 @@ public class CatalogItem implements ISerialize, Runnable, Comparable<CatalogItem
         return this.extradata;
     }
 
+    /** Default length of a bought effect when the offer does not set one (one day). */
+    public static final int DEFAULT_EFFECT_DURATION = 86400;
+
+    /** Longest effect an offer can sell (one year); 0 is permanent. */
+    public static final int MAX_EFFECT_DURATION = 31536000;
+
+    /**
+     * How long an effect from this offer lasts, from catalog_items.extradata: "permanent" or "0" for a
+     * permanent effect, a number of seconds for a timed one, empty for the one-day default.
+     */
+    public int getEffectDuration() {
+        return effectDuration(this.extradata);
+    }
+
+    static int effectDuration(String extradata) {
+        String value = extradata == null ? "" : extradata.trim();
+
+        if (value.isEmpty()) return DEFAULT_EFFECT_DURATION;
+        if (value.equalsIgnoreCase("permanent")) return 0;
+
+        try {
+            int seconds = Integer.parseInt(value);
+
+            if (seconds <= 0) return 0;
+
+            return Math.min(seconds, MAX_EFFECT_DURATION);
+        } catch (NumberFormatException exception) {
+            return DEFAULT_EFFECT_DURATION;
+        }
+    }
+
+    /** Class id the client gets for a product: the effect id for effects (icon and preview), else the sprite id. */
+    static int catalogClassId(Item item) {
+        if (item.getType() == FurnitureType.EFFECT && item.getEffectM() > 0) return item.getEffectM();
+
+        return item.getSpriteId();
+    }
+
     public boolean isClubOnly() {
         return this.clubOnly;
     }
 
     public boolean isHaveOffer() {
         return this.haveOffer;
+    }
+
+    public int getRentDays() {
+        return this.rentDays;
+    }
+
+    public boolean isRentOffer() {
+        return this.rentDays > 0;
     }
 
     public int getOfferId() {
@@ -205,22 +259,17 @@ public class CatalogItem implements ISerialize, Runnable, Comparable<CatalogItem
 
         this.needsUpdate = true;
 
-        if (this.limitedSells == this.limitedStack) {
-            Emulator.getGameEnvironment().getCatalogManager().moveCatalogItem(this, Emulator.getConfig().getInt("catalog.ltd.page.soldout"));
-        }
-
         Emulator.getThreading().run(this);
     }
 
     public Set<Item> getBaseItems() {
-        Set<Item> items = new HashSet<>();
+        Set<Item> items = new LinkedHashSet<>();
 
         if (!this.itemId.isEmpty()) {
             String[] itemIds = this.itemId.split(";");
 
             for (String itemId : itemIds) {
-                if (itemId.isEmpty())
-                    continue;
+                if (itemId.isEmpty()) continue;
 
                 if (itemId.contains(":")) {
                     itemId = itemId.split(":")[0];
@@ -231,14 +280,16 @@ public class CatalogItem implements ISerialize, Runnable, Comparable<CatalogItem
 
                     identifier = Integer.parseInt(itemId);
                 } catch (Exception e) {
-                    LOGGER.info("Invalid value ({}) for items_base column for catalog_item id ({}). Value must be integer or of the format of integer:amount;integer:amount", itemId, this.id);
+                    LOGGER.info(
+                            "Invalid value ({}) for items_base column for catalog_item id ({}). Value must be integer or of the format of integer:amount;integer:amount",
+                            itemId,
+                            this.id);
                     continue;
                 }
                 if (identifier > 0) {
                     Item item = Emulator.getGameEnvironment().getItemManager().getItem(identifier);
 
-                    if (item != null)
-                        items.add(item);
+                    if (item != null) items.add(item);
                 }
             }
         }
@@ -247,10 +298,8 @@ public class CatalogItem implements ISerialize, Runnable, Comparable<CatalogItem
     }
 
     public int getItemAmount(int id) {
-        if (this.bundle.containsKey(id))
-            return this.bundle.get(id);
-        else
-            return this.amount;
+        if (this.bundle.containsKey(id)) return this.bundle.get(id);
+        else return this.amount;
     }
 
     public Map<Integer, Integer> getBundle() {
@@ -297,15 +346,25 @@ public class CatalogItem implements ISerialize, Runnable, Comparable<CatalogItem
     public void serialize(ServerMessage message) {
         message.appendInt(this.getId());
         message.appendString(this.getName());
-        message.appendBoolean(false);
+        message.appendBoolean(this.isRentOffer());
         message.appendInt(this.getCredits());
         message.appendInt(this.getPoints());
         message.appendInt(this.getPointsType());
-        message.appendBoolean(this.allowGift); //Can gift
+        // A chat bubble style is granted to the buyer's account, so it cannot be wrapped as a gift.
+        int chatStyleId = this.habbiconId > 0 ? 0 : ChatStyleRepository.styleForCatalogItem(this.getId());
+        message.appendBoolean(this.habbiconId <= 0 && chatStyleId <= 0 && this.allowGift);
 
-        Set<Item> items = this.getBaseItems();
+        Set<Item> items = this.habbiconId > 0 ? Set.of() : this.getBaseItems();
 
-        message.appendInt(items.size());
+        message.appendInt(this.habbiconId > 0 ? 1 : items.size() + (chatStyleId > 0 ? 1 : 0));
+
+        if (this.habbiconId > 0) {
+            message.appendString("habbicon");
+            message.appendInt(this.habbiconId);
+            message.appendString(Integer.toString(this.habbiconId));
+            message.appendInt(1);
+            message.appendBoolean(false);
+        }
 
         for (Item item : items) {
             message.appendString(item.getType().code.toLowerCase());
@@ -313,9 +372,11 @@ public class CatalogItem implements ISerialize, Runnable, Comparable<CatalogItem
             if (item.getType() == FurnitureType.BADGE) {
                 message.appendString(item.getName());
             } else {
-                message.appendInt(item.getSpriteId());
+                message.appendInt(catalogClassId(item));
 
-                if (this.getName().contains("wallpaper_single") || this.getName().contains("floor_single") || this.getName().contains("landscape_single")) {
+                if (this.getName().contains("wallpaper_single")
+                        || this.getName().contains("floor_single")
+                        || this.getName().contains("landscape_single")) {
                     message.appendString(this.getName().split("_")[2]);
                 } else if (item.getName().contains("bot") && item.getType() == FurnitureType.ROBOT) {
                     boolean lookFound = false;
@@ -336,6 +397,9 @@ public class CatalogItem implements ISerialize, Runnable, Comparable<CatalogItem
                     message.appendString(this.getExtradata());
                 } else if (this.getName().startsWith("SONG ")) {
                     message.appendString(this.getExtradata());
+                } else if (item.getType() == FurnitureType.EFFECT) {
+                    // The effect's length in seconds, 0 for permanent, so the catalog can show it.
+                    message.appendString(Integer.toString(this.getEffectDuration()));
                 } else {
                     message.appendString("");
                 }
@@ -348,9 +412,19 @@ public class CatalogItem implements ISerialize, Runnable, Comparable<CatalogItem
             }
         }
 
+        if (chatStyleId > 0) {
+            // AIR 13 PRODUCT_TYPE_CHAT_STYLE: the style id is the class id (recycler reward
+            // wrapper) and the extra param (catalog preview, Offer chat style id).
+            message.appendString("chat_style");
+            message.appendInt(chatStyleId);
+            message.appendString(Integer.toString(chatStyleId));
+            message.appendInt(1);
+            message.appendBoolean(false);
+        }
+
         message.appendInt(this.clubOnly);
         message.appendBoolean(haveOffer(this));
-        message.appendBoolean(false); //unknown
+        message.appendBoolean(false);
         message.appendString(this.name + ".png");
         message.appendString(this.itemId == null ? "" : this.itemId);
         message.appendBoolean(this.haveOffer);
@@ -359,7 +433,9 @@ public class CatalogItem implements ISerialize, Runnable, Comparable<CatalogItem
     @Override
     public void run() {
         if (this.needsUpdate) {
-            try (Connection connection = Emulator.getDatabase().getDataSource().getConnection(); PreparedStatement statement = connection.prepareStatement("UPDATE catalog_items SET limited_sells = ?, page_id = ? WHERE id = ?")) {
+            try (Connection connection = Emulator.getDatabase().getDataSource().getConnection();
+                    PreparedStatement statement = connection.prepareStatement(
+                            "UPDATE catalog_items SET limited_sells = ?, page_id = ? WHERE id = ?")) {
                 statement.setInt(1, this.getLimitedSells());
                 statement.setInt(2, this.pageId);
                 statement.setInt(3, this.getId());

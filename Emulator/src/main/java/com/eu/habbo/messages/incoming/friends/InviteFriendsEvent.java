@@ -1,9 +1,15 @@
 package com.eu.habbo.messages.incoming.friends;
 
 import com.eu.habbo.Emulator;
+import com.eu.habbo.habbohotel.messenger.MessengerBuddy;
 import com.eu.habbo.habbohotel.users.Habbo;
 import com.eu.habbo.messages.incoming.MessageHandler;
 import com.eu.habbo.messages.outgoing.friends.RoomInviteComposer;
+import com.eu.habbo.messages.outgoing.friends.RoomInviteErrorComposer;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Set;
 
 public class InviteFriendsEvent extends MessageHandler {
     @Override
@@ -17,10 +23,11 @@ public class InviteFriendsEvent extends MessageHandler {
             final int count = this.packet.readInt();
             if (count <= 0 || count > 100) return;
 
-            final int[] userIds = new int[count];
+            // Each friend once: the same id repeated sent the same invite once per copy.
+            final Set<Integer> userIds = new LinkedHashSet<>();
 
-            for (int i = 0; i < userIds.length; i++) {
-                userIds[i] = this.packet.readInt();
+            for (int i = 0; i < count; i++) {
+                userIds.add(this.packet.readInt());
             }
 
             String message = FriendInputGuard.normalizeMessage(this.packet.readString());
@@ -32,20 +39,40 @@ public class InviteFriendsEvent extends MessageHandler {
             message = Emulator.getGameEnvironment().getWordFilter().filter(message, this.client.getHabbo());
             message = FriendInputGuard.normalizeMessage(message);
 
-            for (int i : userIds) {
-                if (!FriendInputGuard.isPositiveId(i))
-                    continue;
+            // Friends who did not get it: offline, or they have room invites switched off. The
+            // sender used to be told nothing at all and had no way of knowing.
+            List<MessengerBuddy> missed = new ArrayList<>();
+            boolean delivered = false;
 
-                if (!this.client.getHabbo().getMessenger().getFriends().containsKey(i))
-                    continue;
+            for (int i : userIds) {
+                if (!FriendInputGuard.isPositiveId(i)) continue;
+
+                MessengerBuddy buddy =
+                        this.client.getHabbo().getMessenger().getFriends().get(i);
+
+                if (buddy == null) continue;
 
                 Habbo habbo = Emulator.getGameEnvironment().getHabboManager().getHabbo(i);
 
-                if (habbo != null) {
-                    if (!habbo.getHabboStats().blockRoomInvites) {
-                        habbo.getClient().sendResponse(new RoomInviteComposer(this.client.getHabbo().getHabboInfo().getId(), message));
-                    }
+                if (habbo == null || habbo.getClient() == null || habbo.getHabboStats().blockRoomInvites) {
+                    missed.add(buddy);
+                    continue;
                 }
+
+                habbo.getClient()
+                        .sendResponse(new RoomInviteComposer(
+                                this.client.getHabbo().getHabboInfo().getId(), message));
+                delivered = true;
+            }
+
+            if (delivered) {
+                com.eu.habbo.habbohotel.quests.QuestProgressEvents.progress(
+                        this.client.getHabbo(), com.eu.habbo.habbohotel.quests.QuestGoalType.SEND_MESSENGER_INVITE, 1);
+            }
+
+            if (!missed.isEmpty()) {
+                this.client.sendResponse(
+                        new RoomInviteErrorComposer(RoomInviteErrorComposer.ERROR_RECIPIENT_UNAVAILABLE, missed));
             }
         }
     }

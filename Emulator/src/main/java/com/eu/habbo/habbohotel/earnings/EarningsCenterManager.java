@@ -1,14 +1,18 @@
 package com.eu.habbo.habbohotel.earnings;
 
 import com.eu.habbo.Emulator;
+import com.eu.habbo.WiredPlatform;
+import com.eu.habbo.habbohotel.GameEnvironment;
 import com.eu.habbo.habbohotel.catalog.marketplace.MarketPlace;
+import com.eu.habbo.habbohotel.items.Item;
+import com.eu.habbo.habbohotel.items.ItemManager;
 import com.eu.habbo.habbohotel.users.Habbo;
 import com.eu.habbo.habbohotel.users.HabboBadge;
+import com.eu.habbo.habbohotel.users.HabboItem;
 import com.eu.habbo.habbohotel.users.subscriptions.SubscriptionHabboClub;
+import com.eu.habbo.messages.outgoing.inventory.AddHabboItemComposer;
+import com.eu.habbo.messages.outgoing.inventory.InventoryRefreshComposer;
 import com.eu.habbo.messages.outgoing.users.AddUserBadgeComposer;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -18,6 +22,8 @@ import java.time.Clock;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class EarningsCenterManager {
     private static final Logger LOGGER = LoggerFactory.getLogger(EarningsCenterManager.class);
@@ -35,14 +41,24 @@ public class EarningsCenterManager {
     private final Clock clock;
 
     public EarningsCenterManager() {
-        this(new EmulatorConfigSource(), new JdbcClaimRepository(), new HabboRewardApplier(), new DefaultNativeIntegration(), Clock.systemUTC());
+        this(
+                new EmulatorConfigSource(),
+                new JdbcClaimRepository(),
+                new HabboRewardApplier(),
+                new DefaultNativeIntegration(),
+                Clock.systemUTC());
     }
 
     public EarningsCenterManager(ConfigSource config, ClaimRepository claims, RewardApplier rewards, Clock clock) {
         this(config, claims, rewards, new NoopNativeIntegration(), clock);
     }
 
-    public EarningsCenterManager(ConfigSource config, ClaimRepository claims, RewardApplier rewards, NativeIntegration nativeIntegration, Clock clock) {
+    public EarningsCenterManager(
+            ConfigSource config,
+            ClaimRepository claims,
+            RewardApplier rewards,
+            NativeIntegration nativeIntegration,
+            Clock clock) {
         this.config = config;
         this.claims = claims;
         this.rewards = rewards;
@@ -60,6 +76,34 @@ public class EarningsCenterManager {
         }
 
         return entries;
+    }
+
+    /**
+     * Whether the window collects what the hotel's own source of {@code category} pays (marketplace sales, HC payday,
+     * wired credits): the window and the row are on and the row is not swapped for a configured periodic reward.
+     */
+    public boolean collectsInWindow(EarningsCategory category) {
+        return category != null
+                && this.config.getBoolean(CONFIG_PREFIX + "enabled", false)
+                && this.config.getBoolean(CONFIG_PREFIX + category.getKey() + ".enabled", true)
+                && nativeEnabled(category)
+                && this.nativeIntegration.handles(category);
+    }
+
+    /** Whether the player can claim the row now (what the window would show). */
+    public boolean isClaimable(Habbo habbo, EarningsCategory category) {
+        EarningsEntry entry = buildEntry(habbo, getUserId(habbo), category, now());
+        return entry.isEnabled() && entry.isClaimable();
+    }
+
+    /**
+     * The claim period of a row that progress opens (achievement score steps, talent levels), or null for a row that
+     * time or another source opens. A new period after a change means a new reward may be waiting.
+     */
+    public String progressPeriod(Habbo habbo, EarningsCategory category) {
+        if (category != EarningsCategory.ACHIEVEMENTS && category != EarningsCategory.LEVEL_PROGRESS) return null;
+        if (!nativeEnabled(category) || habbo == null || habbo.getHabboStats() == null) return null;
+        return periodKey(habbo, category, now(), DEFAULT_COOLDOWN_SECONDS);
     }
 
     public EarningsClaimResult claim(Habbo habbo, String categoryKey) {
@@ -87,7 +131,8 @@ public class EarningsCenterManager {
         CategoryDefinition definition = loadDefinition(habbo, category);
 
         if (!definition.enabled()) {
-            return new EarningsClaimResult(category, EarningsClaimResult.Status.DISABLED, buildEntry(habbo, userId, category, now));
+            return new EarningsClaimResult(
+                    category, EarningsClaimResult.Status.DISABLED, buildEntry(habbo, userId, category, now));
         }
 
         if (this.nativeIntegration.handles(category) && nativeEnabled(category)) {
@@ -95,11 +140,13 @@ public class EarningsCenterManager {
         }
 
         if (definition.rewards().isEmpty()) {
-            return new EarningsClaimResult(category, EarningsClaimResult.Status.NO_REWARD, buildEntry(habbo, userId, category, now));
+            return new EarningsClaimResult(
+                    category, EarningsClaimResult.Status.NO_REWARD, buildEntry(habbo, userId, category, now));
         }
 
         if (!isEligibleForProgressClaim(habbo, category)) {
-            return new EarningsClaimResult(category, EarningsClaimResult.Status.NO_REWARD, buildEntry(habbo, userId, category, now));
+            return new EarningsClaimResult(
+                    category, EarningsClaimResult.Status.NO_REWARD, buildEntry(habbo, userId, category, now));
         }
 
         String periodKey = periodKey(habbo, category, now, definition.cooldownSeconds());
@@ -110,40 +157,57 @@ public class EarningsCenterManager {
         } catch (SQLException e) {
             // The claim marker was never written and no reward was applied, so a
             // retry is safe and cannot duplicate anything.
-            LOGGER.error("Earnings claim marker could not be recorded; no reward granted, retry is safe userId={} category={} period={}",
-                    userId, category.getKey(), periodKey, e);
-            return new EarningsClaimResult(category, EarningsClaimResult.Status.ERROR, buildEntry(habbo, userId, category, now));
+            LOGGER.error(
+                    "Earnings claim marker could not be recorded; no reward granted, retry is safe userId={} category={} period={}",
+                    userId,
+                    category.getKey(),
+                    periodKey,
+                    e);
+            return new EarningsClaimResult(
+                    category, EarningsClaimResult.Status.ERROR, buildEntry(habbo, userId, category, now));
         }
 
         if (!claimRecorded) {
-            return new EarningsClaimResult(category, EarningsClaimResult.Status.ALREADY_CLAIMED, buildEntry(habbo, userId, category, now));
+            return new EarningsClaimResult(
+                    category, EarningsClaimResult.Status.ALREADY_CLAIMED, buildEntry(habbo, userId, category, now));
         }
 
         try {
             this.rewards.grant(habbo, definition.rewards());
-            return new EarningsClaimResult(category, EarningsClaimResult.Status.SUCCESS, buildEntry(habbo, userId, category, now));
+            return new EarningsClaimResult(
+                    category, EarningsClaimResult.Status.SUCCESS, buildEntry(habbo, userId, category, now));
         } catch (SQLException e) {
             // A reward applier may have completed earlier grants before a later
             // database-backed reward failed. Keep the unique claim marker so a
             // retry cannot duplicate the already-applied portion. Operators can
             // reconcile the retained claim and missing reward from this log.
-            LOGGER.error("Earnings grant failed after claim marker was recorded; retaining claim userId={} category={} period={}",
-                    userId, category.getKey(), periodKey, e);
-            return new EarningsClaimResult(category, EarningsClaimResult.Status.ERROR, buildEntry(habbo, userId, category, now));
+            LOGGER.error(
+                    "Earnings grant failed after claim marker was recorded; retaining claim userId={} category={} period={}",
+                    userId,
+                    category.getKey(),
+                    periodKey,
+                    e);
+            return new EarningsClaimResult(
+                    category, EarningsClaimResult.Status.ERROR, buildEntry(habbo, userId, category, now));
         }
     }
 
-    private EarningsClaimResult claimNative(Habbo habbo, int userId, EarningsCategory category, int now, CategoryDefinition definition) {
+    private EarningsClaimResult claimNative(
+            Habbo habbo, int userId, EarningsCategory category, int now, CategoryDefinition definition) {
         try {
             if (definition.rewards().isEmpty() || !this.nativeIntegration.hasClaim(habbo, category)) {
-                return new EarningsClaimResult(category, EarningsClaimResult.Status.NO_REWARD, buildEntry(habbo, userId, category, now));
+                return new EarningsClaimResult(
+                        category, EarningsClaimResult.Status.NO_REWARD, buildEntry(habbo, userId, category, now));
             }
 
             return this.nativeIntegration.claim(habbo, category)
-                    ? new EarningsClaimResult(category, EarningsClaimResult.Status.SUCCESS, buildEntry(habbo, userId, category, now))
-                    : new EarningsClaimResult(category, EarningsClaimResult.Status.ERROR, buildEntry(habbo, userId, category, now));
+                    ? new EarningsClaimResult(
+                            category, EarningsClaimResult.Status.SUCCESS, buildEntry(habbo, userId, category, now))
+                    : new EarningsClaimResult(
+                            category, EarningsClaimResult.Status.ERROR, buildEntry(habbo, userId, category, now));
         } catch (SQLException e) {
-            return new EarningsClaimResult(category, EarningsClaimResult.Status.ERROR, buildEntry(habbo, userId, category, now));
+            return new EarningsClaimResult(
+                    category, EarningsClaimResult.Status.ERROR, buildEntry(habbo, userId, category, now));
         }
     }
 
@@ -199,7 +263,8 @@ public class EarningsCenterManager {
             addReward(rewards, EarningsReward.TYPE_PIXELS, this.config.getInt(key + "pixels", 0), 0);
             addReward(rewards, EarningsReward.TYPE_POINTS, this.config.getInt(key + "points", 0), pointsType);
             addBadgeReward(rewards, this.config.getValue(key + "badge", ""));
-            addItemReward(rewards, this.config.getInt(key + "item_id", 0), this.config.getInt(key + "item.quantity", 1));
+            addItemReward(
+                    rewards, this.config.getInt(key + "item_id", 0), this.config.getInt(key + "item.quantity", 1));
             addHcReward(rewards, this.config.getInt(key + "hc.days", 0));
         }
 
@@ -249,7 +314,8 @@ public class EarningsCenterManager {
             return;
         }
 
-        rewards.add(new EarningsReward(EarningsReward.TYPE_ITEM, Math.min(quantity, MAX_ITEM_QUANTITY), 0, String.valueOf(itemId)));
+        rewards.add(new EarningsReward(
+                EarningsReward.TYPE_ITEM, Math.min(quantity, MAX_ITEM_QUANTITY), 0, String.valueOf(itemId)));
     }
 
     private void addHcReward(List<EarningsReward> rewards, int days) {
@@ -292,8 +358,7 @@ public class EarningsCenterManager {
         return ((now / cooldownSeconds) + 1) * cooldownSeconds;
     }
 
-    private record CategoryDefinition(boolean enabled, int cooldownSeconds, List<EarningsReward> rewards) {
-    }
+    private record CategoryDefinition(boolean enabled, int cooldownSeconds, List<EarningsReward> rewards) {}
 
     public interface ConfigSource {
         boolean getBoolean(String key, boolean defaultValue);
@@ -344,7 +409,8 @@ public class EarningsCenterManager {
         @Override
         public boolean hasClaim(int userId, String category, String periodKey) throws SQLException {
             try (Connection connection = Emulator.getDatabase().getDataSource().getConnection();
-                 PreparedStatement statement = connection.prepareStatement("SELECT 1 FROM users_earnings_claims WHERE user_id = ? AND category = ? AND period_key = ? LIMIT 1")) {
+                    PreparedStatement statement = connection.prepareStatement(
+                            "SELECT 1 FROM users_earnings_claims WHERE user_id = ? AND category = ? AND period_key = ? LIMIT 1")) {
                 statement.setInt(1, userId);
                 statement.setString(2, category);
                 statement.setString(3, periodKey);
@@ -355,7 +421,8 @@ public class EarningsCenterManager {
         @Override
         public boolean recordClaim(int userId, String category, String periodKey, int claimedAt) throws SQLException {
             try (Connection connection = Emulator.getDatabase().getDataSource().getConnection();
-                 PreparedStatement statement = connection.prepareStatement("INSERT INTO users_earnings_claims (user_id, category, period_key, claimed_at) VALUES (?, ?, ?, FROM_UNIXTIME(?))")) {
+                    PreparedStatement statement = connection.prepareStatement(
+                            "INSERT INTO users_earnings_claims (user_id, category, period_key, claimed_at) VALUES (?, ?, ?, FROM_UNIXTIME(?))")) {
                 statement.setInt(1, userId);
                 statement.setString(2, category);
                 statement.setString(3, periodKey);
@@ -374,16 +441,22 @@ public class EarningsCenterManager {
                 return;
             }
 
-            for (EarningsReward reward : rewards) {
+            // Furni first: they are the only reward that can fail halfway, and they are written in one transaction, so
+            // a failure leaves the player with none of this claim's rewards rather than with part of them.
+            List<EarningsReward> ordered = new ArrayList<>(rewards);
+            ordered.sort((a, b) ->
+                    Boolean.compare(b.getType() == EarningsReward.TYPE_ITEM, a.getType() == EarningsReward.TYPE_ITEM));
+
+            for (EarningsReward reward : ordered) {
                 switch (reward.getType()) {
                     case EarningsReward.TYPE_CREDITS -> habbo.giveCredits(reward.getAmount());
                     case EarningsReward.TYPE_PIXELS -> habbo.givePixels(reward.getAmount());
                     case EarningsReward.TYPE_POINTS -> habbo.givePoints(reward.getPointsType(), reward.getAmount());
                     case EarningsReward.TYPE_BADGE -> grantBadge(habbo, reward.getData());
-                    case EarningsReward.TYPE_ITEM -> grantItem(habbo, Integer.parseInt(reward.getData()), reward.getAmount());
+                    case EarningsReward.TYPE_ITEM ->
+                        grantItem(habbo, Integer.parseInt(reward.getData()), reward.getAmount());
                     case EarningsReward.TYPE_HC_DAYS -> grantHcDays(habbo, reward.getAmount());
-                    default -> {
-                    }
+                    default -> {}
                 }
             }
         }
@@ -401,30 +474,46 @@ public class EarningsCenterManager {
             }
         }
 
+        /**
+         * Creates the furni and puts it in the open inventory. Writing only the database row left it invisible until
+         * the next login. All the copies are written in one transaction: a copy that failed used to leave the earlier
+         * ones in the inventory while the claim reported an error.
+         */
         private void grantItem(Habbo habbo, int itemId, int quantity) throws SQLException {
-            if (!itemExists(itemId)) {
+            // WiredEarnings in this package reaches the hotel through WiredPlatform too.
+            GameEnvironment environment = WiredPlatform.gameEnvironment();
+            ItemManager itemManager = environment == null ? null : environment.getItemManager();
+            Item baseItem = itemManager == null ? null : itemManager.getItem(itemId);
+            if (baseItem == null) {
                 throw new SQLException("Unknown earnings item reward " + itemId);
             }
 
-            try (Connection connection = Emulator.getDatabase().getDataSource().getConnection();
-                 PreparedStatement statement = connection.prepareStatement("INSERT INTO items (user_id, item_id, extra_data) VALUES (?, ?, '')")) {
-                for (int i = 0; i < quantity; i++) {
-                    statement.setInt(1, habbo.getHabboInfo().getId());
-                    statement.setInt(2, itemId);
-                    statement.addBatch();
+            List<HabboItem> created = new ArrayList<>();
+            try (Connection connection = Emulator.getDatabase().getDataSource().getConnection()) {
+                boolean autoCommit = connection.getAutoCommit();
+                connection.setAutoCommit(false);
+                try {
+                    for (int i = 0; i < quantity; i++) {
+                        HabboItem item = itemManager.createItem(
+                                connection, habbo.getHabboInfo().getId(), baseItem, 0, 0, "");
+                        if (item == null) {
+                            throw new SQLException("Earnings item reward " + itemId + " could not be created");
+                        }
+                        created.add(item);
+                    }
+                    connection.commit();
+                } catch (SQLException | RuntimeException e) {
+                    connection.rollback();
+                    throw e;
+                } finally {
+                    connection.setAutoCommit(autoCommit);
                 }
-
-                statement.executeBatch();
             }
-        }
 
-        private boolean itemExists(int itemId) throws SQLException {
-            try (Connection connection = Emulator.getDatabase().getDataSource().getConnection();
-                 PreparedStatement statement = connection.prepareStatement("SELECT id FROM items_base WHERE id = ? LIMIT 1")) {
-                statement.setInt(1, itemId);
-                try (ResultSet set = statement.executeQuery()) {
-                    return set.next();
-                }
+            habbo.getInventory().getItemsComponent().addItems(created);
+            if (habbo.getClient() != null) {
+                habbo.getClient().sendResponse(new AddHabboItemComposer(created));
+                habbo.getClient().sendResponse(new InventoryRefreshComposer());
             }
         }
 
@@ -436,7 +525,8 @@ public class EarningsCenterManager {
             habbo.getHabboStats().setClubExpireTimestamp(newExpire);
 
             try (Connection connection = Emulator.getDatabase().getDataSource().getConnection();
-                 PreparedStatement statement = connection.prepareStatement("UPDATE users_settings SET club_expire_timestamp = ? WHERE user_id = ? LIMIT 1")) {
+                    PreparedStatement statement = connection.prepareStatement(
+                            "UPDATE users_settings SET club_expire_timestamp = ? WHERE user_id = ? LIMIT 1")) {
                 statement.setInt(1, newExpire);
                 statement.setInt(2, habbo.getHabboInfo().getId());
                 statement.executeUpdate();
@@ -469,7 +559,9 @@ public class EarningsCenterManager {
     private static class DefaultNativeIntegration implements NativeIntegration {
         @Override
         public boolean handles(EarningsCategory category) {
-            return category == EarningsCategory.MARKETPLACE || category == EarningsCategory.HC_PAYDAY;
+            return category == EarningsCategory.MARKETPLACE
+                    || category == EarningsCategory.HC_PAYDAY
+                    || WiredEarnings.airCategoryOf(category) >= 0;
         }
 
         @Override
@@ -483,6 +575,12 @@ public class EarningsCenterManager {
                 return List.of();
             }
 
+            // The games and agency rows hold the credits wired handed out, until they are claimed.
+            if (WiredEarnings.airCategoryOf(category) >= 0) {
+                int credits = WiredEarnings.get().pending(habbo, category);
+                return credits > 0 ? List.of(new EarningsReward(EarningsReward.TYPE_CREDITS, credits, 0)) : List.of();
+            }
+
             if (category == EarningsCategory.MARKETPLACE) {
                 int soldPriceTotal = habbo.getInventory().getSoldPriceTotal();
                 if (soldPriceTotal <= 0) {
@@ -493,7 +591,8 @@ public class EarningsCenterManager {
                     return List.of(new EarningsReward(EarningsReward.TYPE_CREDITS, soldPriceTotal, 0));
                 }
 
-                return List.of(new EarningsReward(EarningsReward.TYPE_POINTS, soldPriceTotal, MarketPlace.MARKETPLACE_CURRENCY));
+                return List.of(new EarningsReward(
+                        EarningsReward.TYPE_POINTS, soldPriceTotal, MarketPlace.MARKETPLACE_CURRENCY));
             }
 
             if (category == EarningsCategory.HC_PAYDAY) {
@@ -509,13 +608,17 @@ public class EarningsCenterManager {
                 return false;
             }
 
+            if (WiredEarnings.airCategoryOf(category) >= 0) {
+                return WiredEarnings.get().claim(habbo, category);
+            }
+
             if (category == EarningsCategory.MARKETPLACE) {
                 if (habbo.getInventory().getSoldPriceTotal() <= 0) {
                     return false;
                 }
 
-                MarketPlace.getCredits(habbo.getClient());
-                return true;
+                // Only a payout that went through is a successful claim.
+                return MarketPlace.claimSoldCredits(habbo.getClient()) > 0;
             }
 
             if (category == EarningsCategory.HC_PAYDAY) {
@@ -523,8 +626,8 @@ public class EarningsCenterManager {
                     return false;
                 }
 
-                SubscriptionHabboClub.processUnclaimed(habbo);
-                return true;
+                // Only the payday rows: the club gift popup and the HC achievement belong to the login.
+                return SubscriptionHabboClub.claimUnclaimedPayDays(habbo) > 0;
             }
 
             return false;
@@ -534,7 +637,8 @@ public class EarningsCenterManager {
             List<EarningsReward> rewards = new ArrayList<>();
 
             try (Connection connection = Emulator.getDatabase().getDataSource().getConnection();
-                 PreparedStatement statement = connection.prepareStatement("SELECT currency, SUM(total_payout) AS amount FROM logs_hc_payday WHERE user_id = ? AND claimed = 0 GROUP BY currency")) {
+                    PreparedStatement statement = connection.prepareStatement(
+                            "SELECT currency, SUM(total_payout) AS amount FROM logs_hc_payday WHERE user_id = ? AND claimed = 0 GROUP BY currency")) {
                 statement.setInt(1, habbo.getHabboInfo().getId());
 
                 try (ResultSet set = statement.executeQuery()) {
@@ -558,11 +662,13 @@ public class EarningsCenterManager {
             String normalized = currency == null ? "" : currency.trim().toLowerCase();
             return switch (normalized) {
                 case "credits", "credit", "coins", "coin" -> new EarningsReward(EarningsReward.TYPE_CREDITS, amount, 0);
-                case "duckets", "ducket", "pixels", "pixel" -> new EarningsReward(EarningsReward.TYPE_PIXELS, amount, 0);
+                case "duckets", "ducket", "pixels", "pixel" ->
+                    new EarningsReward(EarningsReward.TYPE_PIXELS, amount, 0);
                 case "diamonds", "diamond" -> new EarningsReward(EarningsReward.TYPE_POINTS, amount, 5);
                 default -> {
                     try {
-                        yield new EarningsReward(EarningsReward.TYPE_POINTS, amount, Math.max(0, Integer.parseInt(normalized)));
+                        yield new EarningsReward(
+                                EarningsReward.TYPE_POINTS, amount, Math.max(0, Integer.parseInt(normalized)));
                     } catch (NumberFormatException e) {
                         yield null;
                     }

@@ -4,16 +4,17 @@ import com.eu.habbo.Emulator;
 import com.eu.habbo.habbohotel.items.Item;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredTrigger;
 import com.eu.habbo.habbohotel.items.interactions.wired.WiredSettings;
+import com.eu.habbo.habbohotel.items.interactions.wired.interfaces.InteractionWiredMatchFurniSettings;
 import com.eu.habbo.habbohotel.rooms.Room;
 import com.eu.habbo.habbohotel.rooms.RoomUnit;
 import com.eu.habbo.habbohotel.users.HabboItem;
-import com.eu.habbo.habbohotel.wired.core.WiredManager;
+import com.eu.habbo.habbohotel.wired.WiredMatchFurniSetting;
 import com.eu.habbo.habbohotel.wired.WiredTriggerType;
 import com.eu.habbo.habbohotel.wired.core.WiredEvent;
+import com.eu.habbo.habbohotel.wired.core.WiredManager;
 import com.eu.habbo.habbohotel.wired.core.WiredSourceUtil;
 import com.eu.habbo.habbohotel.wired.core.WiredTriggerSourceUtil;
 import com.eu.habbo.messages.ServerMessage;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
@@ -22,7 +23,8 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 
-public class WiredTriggerFurniStateToggled extends InteractionWiredTrigger {
+public class WiredTriggerFurniStateToggled extends InteractionWiredTrigger
+        implements InteractionWiredMatchFurniSettings {
     private static final WiredTriggerType type = WiredTriggerType.STATE_CHANGED;
     private static final int MODE_ALL_STATES = 0;
     private static final int MODE_SAVED_STATE = 1;
@@ -36,7 +38,8 @@ public class WiredTriggerFurniStateToggled extends InteractionWiredTrigger {
         this.snapshots = new LinkedHashSet<>();
     }
 
-    public WiredTriggerFurniStateToggled(int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
+    public WiredTriggerFurniStateToggled(
+            int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
         super(id, userId, item, extradata, limitedStack, limitedSells);
         this.snapshots = new LinkedHashSet<>();
     }
@@ -47,6 +50,11 @@ public class WiredTriggerFurniStateToggled extends InteractionWiredTrigger {
             return false;
         }
 
+        return this.matchesStateChange(event);
+    }
+
+    /** Whether the event's furni is one this box watches, in the state it asks for. */
+    protected boolean matchesStateChange(WiredEvent event) {
         HabboItem sourceItem = event.getSourceItem().orElse(null);
         if (sourceItem == null) {
             return false;
@@ -75,11 +83,8 @@ public class WiredTriggerFurniStateToggled extends InteractionWiredTrigger {
 
     @Override
     public String getWiredData() {
-        return WiredManager.getGson().toJson(new JsonData(
-            this.triggerMode,
-            this.furniSource,
-            new ArrayList<>(this.snapshots)
-        ));
+        return WiredManager.getGson()
+                .toJson(new JsonData(this.triggerMode, this.furniSource, new ArrayList<>(this.snapshots)));
     }
 
     @Override
@@ -92,7 +97,8 @@ public class WiredTriggerFurniStateToggled extends InteractionWiredTrigger {
         if (wiredData != null && wiredData.startsWith("{")) {
             JsonData data = WiredManager.getGson().fromJson(wiredData, JsonData.class);
             this.triggerMode = (data != null) ? data.triggerMode : MODE_ALL_STATES;
-            this.furniSource = (data != null) ? this.normalizeFurniSource(data.furniSource) : WiredSourceUtil.SOURCE_TRIGGER;
+            this.furniSource =
+                    (data != null) ? this.normalizeFurniSource(data.furniSource) : WiredSourceUtil.SOURCE_TRIGGER;
 
             if (data != null && data.snapshots != null && !data.snapshots.isEmpty()) {
                 for (StateSnapshot snapshot : data.snapshots) {
@@ -134,7 +140,8 @@ public class WiredTriggerFurniStateToggled extends InteractionWiredTrigger {
                 }
             }
 
-            this.furniSource = this.snapshots.isEmpty() ? WiredSourceUtil.SOURCE_TRIGGER : WiredSourceUtil.SOURCE_SELECTED;
+            this.furniSource =
+                    this.snapshots.isEmpty() ? WiredSourceUtil.SOURCE_TRIGGER : WiredSourceUtil.SOURCE_SELECTED;
         }
     }
 
@@ -175,9 +182,8 @@ public class WiredTriggerFurniStateToggled extends InteractionWiredTrigger {
         message.appendInt(this.getBaseItem().getSpriteId());
         message.appendInt(this.getId());
         message.appendString("");
-        message.appendInt(2);
+        message.appendInt(1);
         message.appendInt(this.triggerMode);
-        message.appendInt(this.furniSource);
         message.appendInt(0);
         message.appendInt(this.getType().code);
         message.appendInt(0);
@@ -189,9 +195,13 @@ public class WiredTriggerFurniStateToggled extends InteractionWiredTrigger {
         this.triggerMode = (settings.getIntParams().length > 0 && settings.getIntParams()[0] == MODE_SAVED_STATE)
                 ? MODE_SAVED_STATE
                 : MODE_ALL_STATES;
-        this.furniSource = (settings.getIntParams().length > 1)
-                ? this.normalizeFurniSource(settings.getIntParams()[1])
-                : ((settings.getFurniIds().length > 0) ? WiredSourceUtil.SOURCE_SELECTED : WiredSourceUtil.SOURCE_TRIGGER);
+        // Official: [mode] (state change, code 20; ours on the user toggle, code 4); the furni source
+        // is the official source slot.
+        this.furniSource = (settings.getFurniSourceTypes().length > 0)
+                ? this.normalizeFurniSource(settings.getFurniSourceTypes()[0])
+                : ((settings.getFurniIds().length > 0)
+                        ? WiredSourceUtil.SOURCE_SELECTED
+                        : WiredSourceUtil.SOURCE_TRIGGER);
 
         Room room = Emulator.getGameEnvironment().getRoomManager().getRoom(this.getRoomId());
         if (room == null) {
@@ -208,6 +218,40 @@ public class WiredTriggerFurniStateToggled extends InteractionWiredTrigger {
         }
 
         return true;
+    }
+
+    /**
+     * Official "apply snapshot" header button (on "furni state is changed", code 20): puts the picks back in the
+     * states saved with the box. An empty saved state is left alone, as the match-to-snapshot boxes do.
+     */
+    @Override
+    public Set<WiredMatchFurniSetting> getMatchFurniSettings() {
+        Set<WiredMatchFurniSetting> settings = new LinkedHashSet<>();
+        for (StateSnapshot snapshot : this.snapshots) {
+            settings.add(new WiredMatchFurniSetting(
+                    snapshot.itemId, snapshot.state.isEmpty() ? " " : snapshot.state, 0, 0, 0));
+        }
+        return settings;
+    }
+
+    @Override
+    public boolean shouldMatchState() {
+        return true;
+    }
+
+    @Override
+    public boolean shouldMatchRotation() {
+        return false;
+    }
+
+    @Override
+    public boolean shouldMatchPosition() {
+        return false;
+    }
+
+    @Override
+    public boolean shouldMatchAltitude() {
+        return false;
     }
 
     @Override
@@ -268,8 +312,7 @@ public class WiredTriggerFurniStateToggled extends InteractionWiredTrigger {
         List<StateSnapshot> snapshots;
         List<Integer> itemIds;
 
-        public JsonData() {
-        }
+        public JsonData() {}
 
         public JsonData(List<Integer> itemIds) {
             this.itemIds = itemIds;
@@ -286,8 +329,7 @@ public class WiredTriggerFurniStateToggled extends InteractionWiredTrigger {
         int itemId;
         String state;
 
-        public StateSnapshot() {
-        }
+        public StateSnapshot() {}
 
         public StateSnapshot(int itemId, String state) {
             this.itemId = itemId;

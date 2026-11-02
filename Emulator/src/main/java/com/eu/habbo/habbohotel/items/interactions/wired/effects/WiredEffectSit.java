@@ -5,29 +5,28 @@ import com.eu.habbo.habbohotel.gameclients.GameClient;
 import com.eu.habbo.habbohotel.items.Item;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredEffect;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredTrigger;
+import com.eu.habbo.habbohotel.items.interactions.wired.WiredInputGuard;
 import com.eu.habbo.habbohotel.items.interactions.wired.WiredSettings;
 import com.eu.habbo.habbohotel.rooms.Room;
 import com.eu.habbo.habbohotel.rooms.RoomUnit;
 import com.eu.habbo.habbohotel.users.Habbo;
 import com.eu.habbo.habbohotel.wired.WiredEffectType;
-import com.eu.habbo.habbohotel.wired.core.WiredManager;
 import com.eu.habbo.habbohotel.wired.core.WiredContext;
+import com.eu.habbo.habbohotel.wired.core.WiredManager;
 import com.eu.habbo.habbohotel.wired.core.WiredSourceUtil;
 import com.eu.habbo.habbohotel.wired.core.WiredTextPlaceholderUtil;
 import com.eu.habbo.messages.ServerMessage;
 import com.eu.habbo.messages.incoming.wired.WiredSaveException;
-
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class WiredEffectSit extends InteractionWiredEffect {
     private static final Logger LOGGER = LoggerFactory.getLogger(WiredEffectSit.class);
-    public static final WiredEffectType type = WiredEffectType.KICK_USER;
+    public static final WiredEffectType type = WiredEffectType.USER_TARGET;
 
     private String message = "";
     private int userSource = WiredSourceUtil.SOURCE_TRIGGER;
@@ -53,6 +52,7 @@ public class WiredEffectSit extends InteractionWiredEffect {
             if (unit.isWalking()) unit.stopWalking();
 
             room.makeSit(habbo);
+            WiredEffectUserMessage.whisper(ctx, habbo, this.message);
         }
     }
 
@@ -71,13 +71,12 @@ public class WiredEffectSit extends InteractionWiredEffect {
     public void loadWiredData(ResultSet set, Room room) throws SQLException {
         String wiredData = set.getString("wired_data");
 
-        if(wiredData.startsWith("{")) {
+        if (wiredData.startsWith("{")) {
             JsonData data = WiredManager.getGson().fromJson(wiredData, JsonData.class);
             this.setDelay(data.delay);
             this.message = data.message;
             this.userSource = data.userSource;
-        }
-        else {
+        } else {
             try {
                 String[] data = set.getString("wired_data").split("\t");
 
@@ -118,8 +117,7 @@ public class WiredEffectSit extends InteractionWiredEffect {
         message.appendInt(this.getBaseItem().getSpriteId());
         message.appendInt(this.getId());
         message.appendString(this.message);
-        message.appendInt(1);
-        message.appendInt(this.userSource);
+        message.appendInt(0);
         message.appendInt(0);
         message.appendInt(this.getType().code);
         message.appendInt(this.getDelay());
@@ -144,13 +142,15 @@ public class WiredEffectSit extends InteractionWiredEffect {
     public boolean saveData(WiredSettings settings, GameClient gameClient) throws WiredSaveException {
         String message = settings.getStringParam();
         int[] params = settings.getIntParams();
-        this.userSource = (params.length > 0) ? params[0] : WiredSourceUtil.SOURCE_TRIGGER;
+        // Official: no int params; the user source is the official source slot.
+        this.userSource = settings.userSource(0, WiredSourceUtil.SOURCE_TRIGGER);
         int delay = settings.getDelay();
 
-        if(delay > Emulator.getConfig().getInt("hotel.wired.max_delay", 20))
+        if (delay > Emulator.getConfig().getInt("hotel.wired.max_delay", WiredInputGuard.DEFAULT_MAX_DELAY))
             throw new WiredSaveException("Delay too long");
 
-        this.message = message.substring(0, Math.min(message.length(), Emulator.getConfig().getInt("hotel.wired.message.max_length", 100)));
+        this.message = message.substring(
+                0, Math.min(message.length(), Emulator.getConfig().getInt("hotel.wired.message.max_length", 100)));
         this.setDelay(delay);
 
         return true;
@@ -158,7 +158,8 @@ public class WiredEffectSit extends InteractionWiredEffect {
 
     @Override
     public boolean requiresTriggeringUser() {
-        return this.userSource == WiredSourceUtil.SOURCE_TRIGGER || WiredTextPlaceholderUtil.requiresActor(this.getRoom(), this);
+        return this.userSource == WiredSourceUtil.SOURCE_TRIGGER
+                || WiredTextPlaceholderUtil.requiresActor(this.getRoom(), this);
     }
 
     static class JsonData {

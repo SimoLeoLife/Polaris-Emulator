@@ -5,6 +5,7 @@ import com.eu.habbo.habbohotel.gameclients.GameClient;
 import com.eu.habbo.habbohotel.items.Item;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredEffect;
 import com.eu.habbo.habbohotel.items.interactions.games.InteractionGameUpCounter;
+import com.eu.habbo.habbohotel.items.interactions.wired.WiredInputGuard;
 import com.eu.habbo.habbohotel.items.interactions.wired.WiredSettings;
 import com.eu.habbo.habbohotel.rooms.Room;
 import com.eu.habbo.habbohotel.rooms.RoomUnit;
@@ -15,7 +16,6 @@ import com.eu.habbo.habbohotel.wired.core.WiredManager;
 import com.eu.habbo.habbohotel.wired.core.WiredSourceUtil;
 import com.eu.habbo.messages.ServerMessage;
 import com.eu.habbo.messages.incoming.wired.WiredSaveException;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
@@ -56,9 +56,8 @@ public class WiredEffectAdjustClock extends InteractionWiredEffect {
         List<HabboItem> effectiveItems = WiredSourceUtil.resolveItems(ctx, this.furniSource, this.items);
 
         if (this.furniSource == WiredSourceUtil.SOURCE_SELECTED) {
-            this.items.removeIf(item -> item == null
-                    || item.getRoomId() != this.getRoomId()
-                    || room.getHabboItem(item.getId()) == null);
+            this.items.removeIf(item ->
+                    item == null || item.getRoomId() != this.getRoomId() || room.getHabboItem(item.getId()) == null);
         }
 
         for (HabboItem item : effectiveItems) {
@@ -70,6 +69,11 @@ public class WiredEffectAdjustClock extends InteractionWiredEffect {
         }
     }
 
+    /** Whether this box sets the clock, rather than increasing or decreasing it. */
+    public boolean isSet() {
+        return this.operator == OPERATOR_SET;
+    }
+
     @Deprecated
     @Override
     public boolean execute(RoomUnit roomUnit, Room room, Object[] stuff) {
@@ -78,14 +82,14 @@ public class WiredEffectAdjustClock extends InteractionWiredEffect {
 
     @Override
     public String getWiredData() {
-        return WiredManager.getGson().toJson(new JsonData(
-                this.getDelay(),
-                this.items.stream().map(HabboItem::getId).collect(Collectors.toList()),
-                this.operator,
-                this.furniSource,
-                this.minutes,
-                this.halfSecondSteps
-        ));
+        return WiredManager.getGson()
+                .toJson(new JsonData(
+                        this.getDelay(),
+                        this.items.stream().map(HabboItem::getId).collect(Collectors.toList()),
+                        this.operator,
+                        this.furniSource,
+                        this.minutes,
+                        this.halfSecondSteps));
     }
 
     @Override
@@ -140,9 +144,8 @@ public class WiredEffectAdjustClock extends InteractionWiredEffect {
     @Override
     public void serializeWiredData(ServerMessage message, Room room) {
         List<HabboItem> itemsSnapshot = new ArrayList<>(this.items);
-        itemsSnapshot.removeIf(item -> item == null
-                || item.getRoomId() != this.getRoomId()
-                || room.getHabboItem(item.getId()) == null);
+        itemsSnapshot.removeIf(item ->
+                item == null || item.getRoomId() != this.getRoomId() || room.getHabboItem(item.getId()) == null);
 
         this.items.clear();
         this.items.addAll(itemsSnapshot);
@@ -158,10 +161,10 @@ public class WiredEffectAdjustClock extends InteractionWiredEffect {
         message.appendInt(this.getId());
         message.appendString("");
         message.appendInt(4);
-        message.appendInt(this.operator);
-        message.appendInt(this.furniSource);
+        message.appendInt(this.halfSecondSteps / 2);
         message.appendInt(this.minutes);
-        message.appendInt(this.halfSecondSteps);
+        message.appendInt(this.halfSecondSteps % 2);
+        message.appendInt(this.operator);
         message.appendInt(0);
         message.appendInt(this.getType().code);
         message.appendInt(this.getDelay());
@@ -172,17 +175,19 @@ public class WiredEffectAdjustClock extends InteractionWiredEffect {
     public boolean saveData(WiredSettings settings, GameClient gameClient) throws WiredSaveException {
         int[] params = settings.getIntParams();
 
+        // Official layout: [whole seconds, minutes, half a second (0/1), operator]; the furni source is
+        // the official source slot.
         if (params.length < 4) {
             throw new WiredSaveException("Invalid data");
         }
 
-        this.operator = this.normalizeOperator(params[0]);
-        this.furniSource = params[1];
-        this.minutes = this.normalizeMinutes(params[2]);
-        this.halfSecondSteps = this.normalizeHalfSecondSteps(params[3]);
+        this.halfSecondSteps = this.normalizeHalfSecondSteps(Math.max(0, params[0]) * 2 + (params[2] == 1 ? 1 : 0));
+        this.minutes = this.normalizeMinutes(params[1]);
+        this.operator = this.normalizeOperator(params[3]);
+        this.furniSource = settings.furniSource(0, WiredSourceUtil.SOURCE_TRIGGER);
 
         int delay = settings.getDelay();
-        if (delay > Emulator.getConfig().getInt("hotel.wired.max_delay", 20)) {
+        if (delay > Emulator.getConfig().getInt("hotel.wired.max_delay", WiredInputGuard.DEFAULT_MAX_DELAY)) {
             throw new WiredSaveException("Delay too long");
         }
 
@@ -208,6 +213,12 @@ public class WiredEffectAdjustClock extends InteractionWiredEffect {
             }
 
             newItems.add(item);
+        }
+
+        // Picked clocks with the dropdown left on "triggering furni" resolved the trigger item at
+        // run time, so the validated clocks were stored and never adjusted.
+        if (!newItems.isEmpty() && this.furniSource == WiredSourceUtil.SOURCE_TRIGGER) {
+            this.furniSource = WiredSourceUtil.SOURCE_SELECTED;
         }
 
         this.items.clear();
@@ -241,7 +252,8 @@ public class WiredEffectAdjustClock extends InteractionWiredEffect {
         int minutes;
         int halfSecondSteps;
 
-        public JsonData(int delay, List<Integer> itemIds, int operator, int furniSource, int minutes, int halfSecondSteps) {
+        public JsonData(
+                int delay, List<Integer> itemIds, int operator, int furniSource, int minutes, int halfSecondSteps) {
             this.delay = delay;
             this.itemIds = itemIds;
             this.operator = operator;

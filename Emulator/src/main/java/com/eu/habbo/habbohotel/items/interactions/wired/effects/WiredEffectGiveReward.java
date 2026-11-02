@@ -1,6 +1,7 @@
 package com.eu.habbo.habbohotel.items.interactions.wired.effects;
 
 import com.eu.habbo.Emulator;
+import com.eu.habbo.WiredCompatibilityDiagnostics;
 import com.eu.habbo.habbohotel.gameclients.GameClient;
 import com.eu.habbo.habbohotel.items.Item;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredEffect;
@@ -19,7 +20,6 @@ import com.eu.habbo.habbohotel.wired.core.WiredSourceUtil;
 import com.eu.habbo.messages.ServerMessage;
 import com.eu.habbo.messages.incoming.wired.WiredSaveException;
 import com.eu.habbo.messages.outgoing.generic.alerts.UpdateFailedComposer;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
@@ -34,7 +34,7 @@ public class WiredEffectGiveReward extends InteractionWiredEffect {
     public static final int LIMIT_N_MINUTES = 3;
 
     public static final WiredEffectType type = WiredEffectType.GIVE_REWARD;
-    
+
     public int limit;
     public int limitationInterval;
     public AtomicInteger given = new AtomicInteger(0);
@@ -72,14 +72,23 @@ public class WiredEffectGiveReward extends InteractionWiredEffect {
     @Override
     public String getWiredData() {
         ArrayList<WiredGiveRewardItem> rewards = new ArrayList<>(this.rewardItems);
-        return WiredManager.getGson().toJson(new JsonData(this.limit, this.given.get(), this.rewardTime, this.uniqueRewards, this.limitationInterval, rewards, this.getDelay(), this.userSource));
+        return WiredManager.getGson()
+                .toJson(new JsonData(
+                        this.limit,
+                        this.given.get(),
+                        this.rewardTime,
+                        this.uniqueRewards,
+                        this.limitationInterval,
+                        rewards,
+                        this.getDelay(),
+                        this.userSource));
     }
 
     @Override
     public void loadWiredData(ResultSet set, Room room) throws SQLException {
         String wiredData = set.getString("wired_data");
 
-        if(wiredData.startsWith("{")) {
+        if (wiredData.startsWith("{")) {
             JsonData data = WiredManager.getGson().fromJson(wiredData, JsonData.class);
             this.setDelay(data.delay);
             this.limit = data.limit;
@@ -88,12 +97,14 @@ public class WiredEffectGiveReward extends InteractionWiredEffect {
             this.uniqueRewards = data.unique_rewards;
             this.limitationInterval = data.limit_interval;
             this.rewardItems.clear();
-            this.rewardItems.addAll(data.rewards);
+            if (data.rewards != null) {
+                this.rewardItems.addAll(data.rewards);
+            }
             this.userSource = data.userSource;
-        }
-        else {
+        } else {
             String[] data = wiredData.split(":");
-            if (data.length > 0) {
+            // The legacy row reads six fixed fields before the optional reward list.
+            if (data.length >= 6) {
                 this.limit = Integer.parseInt(data[0]);
                 this.given.set(Integer.parseInt(data[1]));
                 this.rewardTime = Integer.parseInt(data[2]);
@@ -111,6 +122,11 @@ public class WiredEffectGiveReward extends InteractionWiredEffect {
                             try {
                                 this.rewardItems.add(new WiredGiveRewardItem(s));
                             } catch (Exception e) {
+                                WiredCompatibilityDiagnostics.record(
+                                        WiredCompatibilityDiagnostics.FailurePoint.EFFECT_GIVE_REWARD_ROW,
+                                        this.getRoomId(),
+                                        this.getId(),
+                                        e);
                             }
                         }
                     }
@@ -152,12 +168,11 @@ public class WiredEffectGiveReward extends InteractionWiredEffect {
             s.append(item.wiredString()).append(";");
         }
         message.appendString(s.toString());
-        message.appendInt(5);
+        message.appendInt(4);
         message.appendInt(this.rewardTime);
         message.appendInt(this.uniqueRewards);
         message.appendInt(this.limit);
         message.appendInt(this.limitationInterval);
-        message.appendInt(this.userSource);
         message.appendInt(this.limit > 0);
         message.appendInt(this.getType().code);
         message.appendInt(this.getDelay());
@@ -181,19 +196,21 @@ public class WiredEffectGiveReward extends InteractionWiredEffect {
     @Override
     public boolean saveData(WiredSettings settings, GameClient gameClient) throws WiredSaveException {
         if (gameClient.getHabbo().hasPermission(Permission.ACC_SUPERWIRED)) {
-            if(settings.getIntParams().length < 5) throw new WiredSaveException("Invalid data");
-            this.rewardTime = settings.getIntParams()[0];
-            this.uniqueRewards = settings.getIntParams()[1] == 1;
-            this.limit = settings.getIntParams()[2];
-            this.limitationInterval = settings.getIntParams()[3];
-            this.userSource = settings.getIntParams()[4];
-            this.given.set(0);
+            // Official layout: [interval, unique, limit, n]; the user source is the official slot.
+            if (settings.getIntParams().length < 4) throw new WiredSaveException("Invalid data");
+            // Everything is read and checked before the box changes: a bad reward row used to leave the box with the
+            // new interval and limit, the given counter at zero and an empty reward list.
+            int newRewardTime = settings.getIntParams()[0];
+            boolean newUniqueRewards = settings.getIntParams()[1] == 1;
+            int newLimit = settings.getIntParams()[2];
+            int newLimitationInterval = Math.max(1, settings.getIntParams()[3]);
+            int newUserSource = settings.userSource(0, WiredSourceUtil.SOURCE_TRIGGER);
 
             String data = settings.getStringParam();
 
             String[] items = data.split(";");
 
-            this.rewardItems.clear();
+            List<WiredGiveRewardItem> newRewardItems = new ArrayList<>();
 
             int i = 1;
             for (String s : items) {
@@ -202,19 +219,42 @@ public class WiredEffectGiveReward extends InteractionWiredEffect {
                 if (d.length == 3) {
                     if (!(d[1].contains(":") || d[1].contains(";"))) {
                         try {
-                            this.rewardItems.add(new WiredGiveRewardItem(i, d[0].equalsIgnoreCase("0"), d[1], Integer.parseInt(d[2].trim())));
+                            newRewardItems.add(new WiredGiveRewardItem(
+                                    i, d[0].equalsIgnoreCase("0"), d[1], Integer.parseInt(d[2].trim())));
                             continue;
                         } catch (IllegalArgumentException ignored) {
+                            WiredCompatibilityDiagnostics.record(
+                                    WiredCompatibilityDiagnostics.FailurePoint.EFFECT_GIVE_REWARD_ROW,
+                                    this.getRoomId(),
+                                    this.getId(),
+                                    ignored);
                         }
                     }
                 }
 
-                gameClient.sendResponse(new UpdateFailedComposer(Emulator.getTexts().getValue("alert.superwired.invalid")));
+                gameClient.sendResponse(
+                        new UpdateFailedComposer(Emulator.getTexts().getValue("alert.superwired.invalid")));
                 return false;
             }
 
+            // The rewards already given count against the limit unless the limit or the rewards themselves change:
+            // saving the box with nothing changed used to hand everything out again.
+            boolean rewardsChanged = newLimit != this.limit
+                    || !newRewardItems.toString().equals(new ArrayList<>(this.rewardItems).toString());
+
+            this.rewardTime = newRewardTime;
+            this.uniqueRewards = newUniqueRewards;
+            this.limit = newLimit;
+            this.limitationInterval = newLimitationInterval;
+            this.userSource = newUserSource;
+            this.rewardItems.clear();
+            this.rewardItems.addAll(newRewardItems);
+
             this.setDelay(settings.getDelay());
 
+            if (!rewardsChanged) return true;
+
+            this.given.set(0);
             WiredManager.dropRewards(this.getId());
             return true;
         }
@@ -243,7 +283,15 @@ public class WiredEffectGiveReward extends InteractionWiredEffect {
         int delay;
         int userSource;
 
-        public JsonData(int limit, int given, int reward_time, boolean unique_rewards, int limit_interval, List<WiredGiveRewardItem> rewards, int delay, int userSource) {
+        public JsonData(
+                int limit,
+                int given,
+                int reward_time,
+                boolean unique_rewards,
+                int limit_interval,
+                List<WiredGiveRewardItem> rewards,
+                int delay,
+                int userSource) {
             this.limit = limit;
             this.given = given;
             this.reward_time = reward_time;
@@ -254,57 +302,59 @@ public class WiredEffectGiveReward extends InteractionWiredEffect {
             this.userSource = userSource;
         }
     }
-    
+
     // Getters and Setters
-    
+
     public int getLimit() {
         return this.limit;
     }
-    
+
     public void setLimit(int limit) {
         this.limit = limit;
     }
-    
+
     public int getLimitationInterval() {
         return this.limitationInterval;
     }
-    
+
     public void setLimitationInterval(int limitationInterval) {
         this.limitationInterval = limitationInterval;
     }
-    
+
     public int getGiven() {
         return this.given.get();
     }
-    
+
     public void setGiven(int given) {
         this.given.set(given);
     }
-    
+
     public void incrementGiven() {
         this.given.incrementAndGet();
+        // The count is part of the saved wired data: without this a restart forgets rewards already given.
+        this.needsUpdate(true);
     }
-    
+
     public int getRewardTime() {
         return this.rewardTime;
     }
-    
+
     public void setRewardTime(int rewardTime) {
         this.rewardTime = rewardTime;
     }
-    
+
     public boolean isUniqueRewards() {
         return this.uniqueRewards;
     }
-    
+
     public void setUniqueRewards(boolean uniqueRewards) {
         this.uniqueRewards = uniqueRewards;
     }
-    
+
     public List<WiredGiveRewardItem> getRewardItems() {
         return this.rewardItems;
     }
-    
+
     public void setRewardItems(List<WiredGiveRewardItem> rewardItems) {
         this.rewardItems = rewardItems;
     }

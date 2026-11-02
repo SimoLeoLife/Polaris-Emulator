@@ -1,5 +1,8 @@
 package com.eu.habbo.messages.incoming.rooms.items;
 
+import com.eu.habbo.Emulator;
+import com.eu.habbo.habbohotel.items.interactions.InteractionPlant;
+import com.eu.habbo.habbohotel.rooms.BuildersClubItemIds;
 import com.eu.habbo.habbohotel.rooms.Room;
 import com.eu.habbo.habbohotel.users.HabboItem;
 import com.eu.habbo.habbohotel.wired.core.WiredManager;
@@ -16,7 +19,7 @@ public class ClickFurniEvent extends MessageHandler {
             return;
         }
 
-        int itemId = this.packet.readInt();
+        int itemId = BuildersClubItemIds.fromWire(this.currentRoom(), this.packet.readInt());
         this.packet.readInt();
 
         if (!RoomItemInputGuard.isPositiveId(itemId)) {
@@ -31,8 +34,18 @@ public class ClickFurniEvent extends MessageHandler {
 
         WiredManager.queueUserClicksFurni(room, this.client.getHabbo().getRoomUnit(), item);
 
+        // AIR 13 treasure hunt: the official client has no "find" packet - a find is a
+        // click on one of the items the hunt hid, which answers TreasureHuntUpdate / Fail.
+        if (Emulator.getConfig().getBoolean("hotel.treasurehunt.enabled", true)) {
+            Emulator.getGameEnvironment().getTreasureHuntManager().onItemClicked(this.client.getHabbo(), itemId);
+        }
+
         if (isClickTileItem(item)) {
             WiredManager.triggerUserClicksTile(room, this.client.getHabbo().getRoomUnit(), item);
+        }
+
+        if (item instanceof InteractionPlant) {
+            item.onClick(this.client, room, new Object[] {0});
         }
     }
 

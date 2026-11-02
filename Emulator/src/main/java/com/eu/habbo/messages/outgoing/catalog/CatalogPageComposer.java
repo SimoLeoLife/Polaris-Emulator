@@ -37,18 +37,24 @@ public class CatalogPageComposer extends MessageComposer {
         this.page.serialize(this.response);
 
         if (this.page instanceof RecentPurchasesLayout) {
-            this.response.appendInt(
-                    this.habbo.getHabboStats().getRecentPurchases().size());
+            Map<Integer, CatalogItem> recentPurchases =
+                    this.habbo.getHabboStats().getRecentPurchases();
+            List<CatalogItem> recentItems;
+            synchronized (recentPurchases) {
+                recentItems = new ArrayList<>(recentPurchases.values());
+            }
 
-            for (Map.Entry<Integer, CatalogItem> item :
-                    this.habbo.getHabboStats().getRecentPurchases().entrySet()) {
-                item.getValue().serialize(this.response);
+            Collections.reverse(recentItems);
+
+            this.response.appendInt(recentItems.size());
+            for (CatalogItem item : recentItems) {
+                item.serialize(this.response);
             }
         } else {
-            this.response.appendInt(this.page.getCatalogItems().size());
             List<CatalogItem> items =
-                    new ArrayList<>(this.page.getCatalogItems().values());
+                    Emulator.getGameEnvironment().getCatalogManager().getEffectivePageItems(this.page);
             Collections.sort(items);
+            this.response.appendInt(items.size());
             for (CatalogItem item : items) {
                 item.serialize(this.response);
             }

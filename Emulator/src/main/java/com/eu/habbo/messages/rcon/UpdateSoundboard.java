@@ -1,6 +1,7 @@
 package com.eu.habbo.messages.rcon;
 
 import com.eu.habbo.Emulator;
+import com.eu.habbo.messages.incoming.soundboard.SoundboardSettingsSender;
 import com.google.gson.Gson;
 
 // Ricarica i suoni della Soundboard dal DB (live), così i suoni aggiunti/caricati
@@ -13,9 +14,11 @@ public class UpdateSoundboard extends RCONMessage<UpdateSoundboard.SoundboardJSO
 
     @Override
     public void handle(Gson gson, SoundboardJSON object) {
-        Emulator.getGameEnvironment().getSoundboardManager().reload();
+        var environment = Emulator.getGameEnvironment();
+        environment.getPermissionsManager().reload();
+        environment.getSoundboardManager().reload();
+        SoundboardSettingsSender.sendToActiveRooms(environment.getSoundboardManager(), environment.getRoomManager());
     }
 
-    static class SoundboardJSON {
-    }
+    static class SoundboardJSON {}
 }

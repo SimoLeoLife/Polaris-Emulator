@@ -1,5 +1,6 @@
 package com.eu.habbo.habbohotel.items.interactions.wired.chest;
 
+import com.eu.habbo.WiredCompatibilityDiagnostics;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -32,7 +33,14 @@ public class ContractTerm {
     public final String legacyPosterId;
     public final int amount;
 
-    public ContractTerm(int direction, int kind, int currencyType, boolean wallItem, int baseItemId, String legacyPosterId, int amount) {
+    public ContractTerm(
+            int direction,
+            int kind,
+            int currencyType,
+            boolean wallItem,
+            int baseItemId,
+            String legacyPosterId,
+            int amount) {
         this.direction = (direction == DIR_RECEIVE) ? DIR_RECEIVE : DIR_PAY;
         this.kind = (kind == KIND_FURNI) ? KIND_FURNI : KIND_CURRENCY;
         this.currencyType = currencyType;
@@ -46,7 +54,8 @@ public class ContractTerm {
         return new ContractTerm(direction, KIND_CURRENCY, currencyType, false, 0, "", amount);
     }
 
-    public static ContractTerm furni(int direction, boolean wallItem, int baseItemId, String legacyPosterId, int amount) {
+    public static ContractTerm furni(
+            int direction, boolean wallItem, int baseItemId, String legacyPosterId, int amount) {
         return new ContractTerm(direction, KIND_FURNI, 0, wallItem, baseItemId, legacyPosterId, amount);
     }
 
@@ -69,7 +78,7 @@ public class ContractTerm {
         }
 
         int stride = detectStride(params, count);
-        List<String> posters = parsePosters(stringParam);
+        List<String> posters = parsePosters(stringParam, count);
 
         List<ContractTerm> terms = new ArrayList<>();
         for (int i = 0; i < count; i++) {
@@ -157,8 +166,14 @@ public class ContractTerm {
         return STRIDE_V1;
     }
 
-    private static List<String> parsePosters(String stringParam) {
-        List<String> posters = new ArrayList<>();
+    private static List<String> parsePosters(String stringParam, int count) {
+        // The poster slots are consumed only at indices [0, count) via
+        // posterAt(), and count is bounded by the wired int-param cap. Size the
+        // list to count up front and ignore any index outside that window: a
+        // user-supplied "2000000000=x" pair must never grow the backing list
+        // (OOM on the packet thread) and a negative "-1=x" must never reach
+        // List.set (uncaught IndexOutOfBoundsException out of the save handler).
+        List<String> posters = new ArrayList<>(Collections.nCopies(count, ""));
         if (stringParam == null || stringParam.isEmpty()) {
             return posters;
         }
@@ -172,12 +187,13 @@ public class ContractTerm {
             }
             try {
                 int index = Integer.parseInt(part.substring(0, eq).trim());
-                String poster = part.substring(eq + 1);
-                while (posters.size() <= index) {
-                    posters.add("");
+                if (index < 0 || index >= count) {
+                    continue;
                 }
-                posters.set(index, poster);
+                posters.set(index, part.substring(eq + 1));
             } catch (NumberFormatException ignored) {
+                WiredCompatibilityDiagnostics.record(
+                        WiredCompatibilityDiagnostics.FailurePoint.CONTRACT_POSTER_INDEX, ignored);
             }
         }
         return posters;

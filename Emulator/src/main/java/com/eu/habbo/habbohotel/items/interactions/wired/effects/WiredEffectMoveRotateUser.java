@@ -1,10 +1,12 @@
 package com.eu.habbo.habbohotel.items.interactions.wired.effects;
 
 import com.eu.habbo.Emulator;
+import com.eu.habbo.WiredPlatform;
 import com.eu.habbo.habbohotel.gameclients.GameClient;
 import com.eu.habbo.habbohotel.items.Item;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredEffect;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredTrigger;
+import com.eu.habbo.habbohotel.items.interactions.wired.WiredInputGuard;
 import com.eu.habbo.habbohotel.items.interactions.wired.WiredSettings;
 import com.eu.habbo.habbohotel.rooms.Room;
 import com.eu.habbo.habbohotel.rooms.RoomTile;
@@ -14,13 +16,12 @@ import com.eu.habbo.habbohotel.rooms.RoomUserRotation;
 import com.eu.habbo.habbohotel.wired.WiredEffectType;
 import com.eu.habbo.habbohotel.wired.core.WiredContext;
 import com.eu.habbo.habbohotel.wired.core.WiredManager;
-import com.eu.habbo.habbohotel.wired.core.WiredMovementPhysics;
 import com.eu.habbo.habbohotel.wired.core.WiredMoveCarryHelper;
+import com.eu.habbo.habbohotel.wired.core.WiredMovementPhysics;
 import com.eu.habbo.habbohotel.wired.core.WiredSourceUtil;
 import com.eu.habbo.habbohotel.wired.core.WiredUserMovementHelper;
 import com.eu.habbo.messages.ServerMessage;
 import com.eu.habbo.messages.incoming.wired.WiredSaveException;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
@@ -40,14 +41,20 @@ public class WiredEffectMoveRotateUser extends InteractionWiredEffect {
         super(set, baseItem);
     }
 
-    public WiredEffectMoveRotateUser(int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
+    public WiredEffectMoveRotateUser(
+            int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
         super(id, userId, item, extradata, limitedStack, limitedSells);
     }
 
     @Override
     public void execute(WiredContext ctx) {
+        WiredUserMovementHelper.joiningFiringMovements(() -> this.moveAndTurn(ctx));
+    }
+
+    private void moveAndTurn(WiredContext ctx) {
         Room room = ctx.room();
         WiredMovementPhysics movementPhysics = WiredMoveCarryHelper.getUserMovementPhysics(room, this, ctx);
+        int jumpStrength = WiredMoveCarryHelper.getUserJumpStrength(room, this, ctx);
 
         for (RoomUnit roomUnit : WiredSourceUtil.resolveUsers(ctx, this.userSource)) {
             if (roomUnit == null || roomUnit.getRoom() != room) {
@@ -55,27 +62,52 @@ public class WiredEffectMoveRotateUser extends InteractionWiredEffect {
             }
 
             boolean hasRotation = this.rotationDirection >= 0;
-            RoomUserRotation targetBodyRotation = hasRotation ? this.getTargetRotation(roomUnit) : roomUnit.getBodyRotation();
+            RoomUserRotation targetBodyRotation =
+                    hasRotation ? this.getTargetRotation(roomUnit) : roomUnit.getBodyRotation();
             RoomUserRotation targetHeadRotation = hasRotation ? targetBodyRotation : roomUnit.getHeadRotation();
 
             if (roomUnit.isWalking()) {
-                if (hasRotation) {
-                    WiredUserMovementHelper.updateUserDirection(room, roomUnit, targetBodyRotation, targetHeadRotation);
+                if (this.movementDirection < 0
+                        || !this.pushWalkingUser(
+                                room,
+                                roomUnit,
+                                targetBodyRotation,
+                                targetHeadRotation,
+                                movementPhysics,
+                                jumpStrength)) {
+                    if (hasRotation) {
+                        WiredUserMovementHelper.updateUserDirection(
+                                room, roomUnit, targetBodyRotation, targetHeadRotation);
+                    }
                 }
                 continue;
             }
 
-            RoomTile targetTile = (this.movementDirection >= 0) ? this.getTargetTile(room, roomUnit, this.movementDirection) : null;
+            RoomTile targetTile =
+                    (this.movementDirection >= 0) ? this.getTargetTile(room, roomUnit, this.movementDirection) : null;
             boolean canMove = this.canMoveTo(room, roomUnit, targetTile, movementPhysics);
             boolean noAnimation = WiredMoveCarryHelper.hasNoAnimationExtra(room, this);
-            int animationDuration = noAnimation ? 0 : WiredMoveCarryHelper.getAnimationDuration(room, this, WiredUserMovementHelper.DEFAULT_ANIMATION_DURATION);
+            int animationDuration = noAnimation
+                    ? 0
+                    : WiredMoveCarryHelper.getAnimationDuration(
+                            room, this, WiredUserMovementHelper.DEFAULT_ANIMATION_DURATION);
 
             if (canMove) {
                 double targetZ = targetTile.getStackHeight() + ((targetTile.state == RoomTileState.SIT) ? -0.5 : 0);
-                if (!WiredUserMovementHelper.moveUser(room, roomUnit, targetTile, targetZ, targetBodyRotation, targetHeadRotation,
-                        animationDuration, noAnimation, movementPhysics)) {
+                if (!WiredUserMovementHelper.moveUser(
+                        room,
+                        roomUnit,
+                        targetTile,
+                        targetZ,
+                        targetBodyRotation,
+                        targetHeadRotation,
+                        animationDuration,
+                        noAnimation,
+                        movementPhysics,
+                        jumpStrength)) {
                     if (hasRotation) {
-                        WiredUserMovementHelper.updateUserDirection(room, roomUnit, targetBodyRotation, targetHeadRotation);
+                        WiredUserMovementHelper.updateUserDirection(
+                                room, roomUnit, targetBodyRotation, targetHeadRotation);
                     }
                 }
                 continue;
@@ -87,14 +119,67 @@ public class WiredEffectMoveRotateUser extends InteractionWiredEffect {
         }
     }
 
+    /**
+     * Habbo replaces the step in progress: the push runs from the step's start tile to the tile being
+     * stepped onto plus the push, and the walk then resumes towards its goal. Pushed on the last
+     * step the walk ends there; pushed back onto the start tile the user walks on the spot.
+     */
+    private boolean pushWalkingUser(
+            Room room,
+            RoomUnit roomUnit,
+            RoomUserRotation bodyRotation,
+            RoomUserRotation headRotation,
+            WiredMovementPhysics movementPhysics,
+            int jumpStrength) {
+        RoomTile stepStart = roomUnit.getPreviousLocation();
+        RoomTile goal = roomUnit.getGoal();
+        // The user's tile is already the one being stepped onto.
+        RoomTile targetTile = this.getTargetTile(room, roomUnit, this.movementDirection);
+
+        if (!this.canMoveTo(room, roomUnit, targetTile, movementPhysics)) {
+            return false;
+        }
+
+        boolean noAnimation = WiredMoveCarryHelper.hasNoAnimationExtra(room, this);
+        int animationDuration = noAnimation
+                ? 0
+                : WiredMoveCarryHelper.getAnimationDuration(
+                        room, this, WiredUserMovementHelper.DEFAULT_ANIMATION_DURATION);
+        double targetZ = targetTile.getStackHeight() + ((targetTile.state == RoomTileState.SIT) ? -0.5 : 0);
+
+        if (!WiredUserMovementHelper.moveUser(
+                room,
+                roomUnit,
+                stepStart,
+                targetTile,
+                targetZ,
+                bodyRotation,
+                headRotation,
+                animationDuration,
+                noAnimation,
+                movementPhysics,
+                jumpStrength)) {
+            return false;
+        }
+
+        if (goal != null && goal != targetTile) {
+            WiredPlatform.threading()
+                    .run(
+                            () -> {
+                                if (roomUnit.getRoom() == room && roomUnit.getCurrentLocation() == targetTile) {
+                                    roomUnit.setGoalLocation(goal);
+                                }
+                            },
+                            animationDuration);
+        }
+
+        return true;
+    }
+
     @Override
     public String getWiredData() {
-        return WiredManager.getGson().toJson(new JsonData(
-            this.getDelay(),
-            this.movementDirection,
-            this.rotationDirection,
-            this.userSource
-        ));
+        return WiredManager.getGson()
+                .toJson(new JsonData(this.getDelay(), this.movementDirection, this.rotationDirection, this.userSource));
     }
 
     @Override
@@ -137,10 +222,9 @@ public class WiredEffectMoveRotateUser extends InteractionWiredEffect {
         message.appendInt(this.getBaseItem().getSpriteId());
         message.appendInt(this.getId());
         message.appendString("");
-        message.appendInt(3);
+        message.appendInt(2);
         message.appendInt(this.movementDirection);
-        message.appendInt(this.rotationDirection);
-        message.appendInt(this.userSource);
+        message.appendInt(toOfficialRotation(this.rotationDirection));
         message.appendInt(0);
         message.appendInt(this.getType().code);
         message.appendInt(this.getDelay());
@@ -163,18 +247,20 @@ public class WiredEffectMoveRotateUser extends InteractionWiredEffect {
 
     @Override
     public boolean saveData(WiredSettings settings, GameClient gameClient) throws WiredSaveException {
-        if (settings.getIntParams().length < 3) {
+        if (settings.getIntParams().length < 2) {
             throw new WiredSaveException("Invalid data");
         }
 
         int delay = settings.getDelay();
-        if (delay > Emulator.getConfig().getInt("hotel.wired.max_delay", 20)) {
+        if (delay > Emulator.getConfig().getInt("hotel.wired.max_delay", WiredInputGuard.DEFAULT_MAX_DELAY)) {
             throw new WiredSaveException("Delay too long");
         }
 
         this.movementDirection = this.normalizeDirection(settings.getIntParams()[0]);
-        this.rotationDirection = this.normalizeRotation(settings.getIntParams()[1]);
-        this.userSource = settings.getIntParams()[2];
+        // Official layout: [movement, rotation (9 clockwise, 10 counter-clockwise; ours 8 and 9)]; the
+        // user source is the official source slot.
+        this.rotationDirection = this.normalizeRotation(fromOfficialRotation(settings.getIntParams()[1]));
+        this.userSource = settings.userSource(0, WiredSourceUtil.SOURCE_TRIGGER);
         this.setDelay(delay);
 
         return true;
@@ -200,12 +286,33 @@ public class WiredEffectMoveRotateUser extends InteractionWiredEffect {
         return (direction >= 0 && direction <= 7) ? direction : -1;
     }
 
+    private static final int OFFICIAL_ROTATION_CLOCKWISE = 9;
+    private static final int OFFICIAL_ROTATION_COUNTER_CLOCKWISE = 10;
+
+    static int toOfficialRotation(int rotation) {
+        if (rotation == ROTATION_CLOCKWISE) return OFFICIAL_ROTATION_CLOCKWISE;
+        if (rotation == ROTATION_COUNTER_CLOCKWISE) return OFFICIAL_ROTATION_COUNTER_CLOCKWISE;
+        return rotation;
+    }
+
+    static int fromOfficialRotation(int rotation) {
+        if (rotation == OFFICIAL_ROTATION_CLOCKWISE) return ROTATION_CLOCKWISE;
+        if (rotation == OFFICIAL_ROTATION_COUNTER_CLOCKWISE) return ROTATION_COUNTER_CLOCKWISE;
+        return (rotation == ROTATION_CLOCKWISE) ? -1 : rotation;
+    }
+
     private int normalizeRotation(int rotation) {
-        return ((rotation >= 0 && rotation <= 7) || rotation == ROTATION_CLOCKWISE || rotation == ROTATION_COUNTER_CLOCKWISE) ? rotation : -1;
+        return ((rotation >= 0 && rotation <= 7)
+                        || rotation == ROTATION_CLOCKWISE
+                        || rotation == ROTATION_COUNTER_CLOCKWISE)
+                ? rotation
+                : -1;
     }
 
     private RoomUserRotation getTargetRotation(RoomUnit roomUnit) {
-        RoomUserRotation currentRotation = (roomUnit != null && roomUnit.getBodyRotation() != null) ? roomUnit.getBodyRotation() : RoomUserRotation.NORTH;
+        RoomUserRotation currentRotation = (roomUnit != null && roomUnit.getBodyRotation() != null)
+                ? roomUnit.getBodyRotation()
+                : RoomUserRotation.NORTH;
 
         if (this.rotationDirection == ROTATION_CLOCKWISE) {
             return RoomUserRotation.clockwise(currentRotation);

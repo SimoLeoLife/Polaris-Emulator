@@ -4,6 +4,7 @@ import com.eu.habbo.Emulator;
 import com.eu.habbo.habbohotel.gameclients.GameClient;
 import com.eu.habbo.habbohotel.items.Item;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredEffect;
+import com.eu.habbo.habbohotel.items.interactions.wired.WiredInputGuard;
 import com.eu.habbo.habbohotel.items.interactions.wired.WiredSettings;
 import com.eu.habbo.habbohotel.rooms.Room;
 import com.eu.habbo.habbohotel.rooms.RoomTile;
@@ -16,7 +17,6 @@ import com.eu.habbo.habbohotel.wired.core.WiredMoveCarryHelper;
 import com.eu.habbo.habbohotel.wired.core.WiredSourceUtil;
 import com.eu.habbo.messages.ServerMessage;
 import com.eu.habbo.messages.incoming.wired.WiredSaveException;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
@@ -43,7 +43,8 @@ public class WiredEffectRelativeMove extends InteractionWiredEffect {
         super(set, baseItem);
     }
 
-    public WiredEffectRelativeMove(int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
+    public WiredEffectRelativeMove(
+            int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
         super(id, userId, item, extradata, limitedStack, limitedSells);
     }
 
@@ -57,9 +58,8 @@ public class WiredEffectRelativeMove extends InteractionWiredEffect {
         List<HabboItem> effectiveItems = WiredSourceUtil.resolveItems(ctx, this.furniSource, this.items);
 
         if (this.furniSource == WiredSourceUtil.SOURCE_SELECTED) {
-            this.items.removeIf(item -> item == null
-                    || item.getRoomId() != this.getRoomId()
-                    || room.getHabboItem(item.getId()) == null);
+            this.items.removeIf(item ->
+                    item == null || item.getRoomId() != this.getRoomId() || room.getHabboItem(item.getId()) == null);
         }
 
         int deltaX = this.getHorizontalOffset();
@@ -82,7 +82,8 @@ public class WiredEffectRelativeMove extends InteractionWiredEffect {
                 continue;
             }
 
-            WiredMoveCarryHelper.moveFurni(room, this, item, targetTile, item.getRotation(), null, true, ctx);
+            // Joins the firing's movement packet, so a match back in the same firing cancels it out.
+            WiredMoveCarryHelper.moveFurni(room, this, item, targetTile, item.getRotation(), null, false, ctx);
         }
     }
 
@@ -94,15 +95,15 @@ public class WiredEffectRelativeMove extends InteractionWiredEffect {
 
     @Override
     public String getWiredData() {
-        return WiredManager.getGson().toJson(new JsonData(
-                this.getDelay(),
-                this.items.stream().map(HabboItem::getId).collect(Collectors.toList()),
-                this.horizontalDirection,
-                this.horizontalDistance,
-                this.verticalDirection,
-                this.verticalDistance,
-                this.furniSource
-        ));
+        return WiredManager.getGson()
+                .toJson(new JsonData(
+                        this.getDelay(),
+                        this.items.stream().map(HabboItem::getId).collect(Collectors.toList()),
+                        this.horizontalDirection,
+                        this.horizontalDistance,
+                        this.verticalDirection,
+                        this.verticalDistance,
+                        this.furniSource));
     }
 
     @Override
@@ -159,9 +160,8 @@ public class WiredEffectRelativeMove extends InteractionWiredEffect {
     @Override
     public void serializeWiredData(ServerMessage message, Room room) {
         List<HabboItem> itemsSnapshot = new ArrayList<>(this.items);
-        itemsSnapshot.removeIf(item -> item == null
-                || item.getRoomId() != this.getRoomId()
-                || room.getHabboItem(item.getId()) == null);
+        itemsSnapshot.removeIf(item ->
+                item == null || item.getRoomId() != this.getRoomId() || room.getHabboItem(item.getId()) == null);
 
         this.items.clear();
         this.items.addAll(itemsSnapshot);
@@ -176,12 +176,9 @@ public class WiredEffectRelativeMove extends InteractionWiredEffect {
         message.appendInt(this.getBaseItem().getSpriteId());
         message.appendInt(this.getId());
         message.appendString("");
-        message.appendInt(5);
-        message.appendInt(this.horizontalDirection);
-        message.appendInt(this.horizontalDistance);
-        message.appendInt(this.verticalDirection);
-        message.appendInt(this.verticalDistance);
-        message.appendInt(this.furniSource);
+        message.appendInt(2);
+        message.appendInt(this.getHorizontalOffset());
+        message.appendInt(this.getVerticalOffset());
         message.appendInt(0);
         message.appendInt(this.getType().code);
         message.appendInt(this.getDelay());
@@ -192,18 +189,20 @@ public class WiredEffectRelativeMove extends InteractionWiredEffect {
     public boolean saveData(WiredSettings settings, GameClient gameClient) throws WiredSaveException {
         int[] params = settings.getIntParams();
 
-        if (params.length < 5) {
+        // Official layout: [horizontal, vertical], each a signed number of tiles; the furni source is
+        // the official source slot.
+        if (params.length < 2) {
             throw new WiredSaveException("Invalid data");
         }
 
-        this.horizontalDirection = this.normalizeBinary(params[0], HORIZONTAL_POSITIVE);
-        this.horizontalDistance = this.normalizeDistance(params[1]);
-        this.verticalDirection = this.normalizeBinary(params[2], VERTICAL_POSITIVE);
-        this.verticalDistance = this.normalizeDistance(params[3]);
-        this.furniSource = params[4];
+        this.horizontalDirection = (params[0] < 0) ? HORIZONTAL_NEGATIVE : HORIZONTAL_POSITIVE;
+        this.horizontalDistance = this.normalizeDistance(Math.abs(params[0]));
+        this.verticalDirection = (params[1] < 0) ? VERTICAL_NEGATIVE : VERTICAL_POSITIVE;
+        this.verticalDistance = this.normalizeDistance(Math.abs(params[1]));
+        this.furniSource = settings.furniSource(0, WiredSourceUtil.SOURCE_TRIGGER);
 
         int delay = settings.getDelay();
-        if (delay > Emulator.getConfig().getInt("hotel.wired.max_delay", 20)) {
+        if (delay > Emulator.getConfig().getInt("hotel.wired.max_delay", WiredInputGuard.DEFAULT_MAX_DELAY)) {
             throw new WiredSaveException("Delay too long");
         }
 
@@ -271,7 +270,14 @@ public class WiredEffectRelativeMove extends InteractionWiredEffect {
         int verticalDistance;
         int furniSource;
 
-        public JsonData(int delay, List<Integer> itemIds, int horizontalDirection, int horizontalDistance, int verticalDirection, int verticalDistance, int furniSource) {
+        public JsonData(
+                int delay,
+                List<Integer> itemIds,
+                int horizontalDirection,
+                int horizontalDistance,
+                int verticalDirection,
+                int verticalDistance,
+                int furniSource) {
             this.delay = delay;
             this.itemIds = itemIds;
             this.horizontalDirection = horizontalDirection;

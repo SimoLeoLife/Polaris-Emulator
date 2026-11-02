@@ -1,6 +1,7 @@
 package com.eu.habbo.threading.runnables;
 
 import com.eu.habbo.Emulator;
+import com.eu.habbo.habbohotel.items.ItemManager;
 import com.eu.habbo.habbohotel.items.interactions.InteractionGift;
 import com.eu.habbo.habbohotel.rooms.Room;
 import com.eu.habbo.habbohotel.rooms.RoomTile;
@@ -15,6 +16,7 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -31,12 +33,31 @@ public class OpenGift implements Runnable {
         this.room = room;
     }
 
+    /**
+     * A furni the gift still holds: on no room, and with no owner yet, or owned by the gift's owner for gifts
+     * made before contents were ownerless. One that was given away since is not taken back by opening.
+     */
+    static boolean stillWrapped(HabboItem content, int giftOwnerId) {
+        return content.getRoomId() == 0
+                && (content.getUserId() == ItemManager.GIFT_CONTENT_OWNER || content.getUserId() == giftOwnerId);
+    }
+
     @Override
     public void run() {
         try {
+            // The gift has to still be in this room: removed or picked up since the open was scheduled,
+            // delivering its contents would leave the wrapper and the contents both.
+            if (this.room.getHabboItem(this.item.getId()) != this.item) {
+                return;
+            }
+
             HabboItem inside = null;
 
             Collection<HabboItem> items = ((InteractionGift) this.item).loadItems();
+            // An item that no longer loads is skipped instead of failing the whole gift.
+            items.removeIf(Objects::isNull);
+            int giftOwnerId = this.item.getUserId();
+            items.removeIf(content -> !stillWrapped(content, giftOwnerId));
             for (HabboItem i : items) {
                 if (inside == null) inside = i;
 

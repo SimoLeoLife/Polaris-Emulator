@@ -1,6 +1,7 @@
 package com.eu.habbo.habbohotel.items.interactions.wired.triggers;
 
 import com.eu.habbo.Emulator;
+import com.eu.habbo.WiredCompatibilityDiagnostics;
 import com.eu.habbo.habbohotel.gameclients.GameClient;
 import com.eu.habbo.habbohotel.items.Item;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredTrigger;
@@ -16,8 +17,6 @@ import com.eu.habbo.habbohotel.wired.core.WiredSourceUtil;
 import com.eu.habbo.habbohotel.wired.core.WiredTriggerSourceUtil;
 import com.eu.habbo.messages.ServerMessage;
 import com.eu.habbo.messages.incoming.wired.WiredTriggerSaveException;
-import com.eu.habbo.messages.outgoing.rooms.items.ItemStateComposer;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
@@ -25,27 +24,25 @@ import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
-import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
 
 public class WiredTriggerReceiveSignal extends InteractionWiredTrigger {
     public static final WiredTriggerType type = WiredTriggerType.RECEIVE_SIGNAL;
 
-    private static final long ACTIVATION_PULSE_MS = 300L;
     private static final String ANTENNA_INTERACTION = "antenna";
     private static final String REQUIRE_ANTENNA_ERROR = "You can only select antenna furni.";
 
     private int channel = 0; // signal channel (0-based)
     private Set<HabboItem> items;
     private int furniSource = WiredSourceUtil.SOURCE_SELECTED;
-    private final AtomicLong activationToken = new AtomicLong();
 
     public WiredTriggerReceiveSignal(ResultSet set, Item baseItem) throws SQLException {
         super(set, baseItem);
         this.items = new LinkedHashSet<>();
     }
 
-    public WiredTriggerReceiveSignal(int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
+    public WiredTriggerReceiveSignal(
+            int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
         super(id, userId, item, extradata, limitedStack, limitedSells);
         this.items = new LinkedHashSet<>();
     }
@@ -54,16 +51,28 @@ public class WiredTriggerReceiveSignal extends InteractionWiredTrigger {
     public boolean matches(HabboItem triggerItem, WiredEvent event) {
         if (event.getType() != WiredEvent.Type.SIGNAL_RECEIVED) return false;
 
-        List<HabboItem> resolvedAntennas = WiredTriggerSourceUtil.resolveItems(this, event, this.furniSource, this.items).stream()
-                .filter(this::isAntennaItem)
-                .collect(Collectors.toList());
+        List<HabboItem> resolvedAntennas =
+                WiredTriggerSourceUtil.resolveItems(this, event, this.furniSource, this.items).stream()
+                        .filter(this::isAntennaItem)
+                        .collect(Collectors.toList());
 
-        if (!resolvedAntennas.isEmpty()) {
-            return resolvedAntennas.stream()
-                    .anyMatch(item -> item != null && item.getId() == event.getSignalChannel());
+        boolean heard = !resolvedAntennas.isEmpty()
+                ? resolvedAntennas.stream().anyMatch(item -> item != null && item.getId() == event.getSignalChannel())
+                : this.channel > 0 && event.getSignalChannel() == this.channel;
+
+        return heard && admitRun(event);
+    }
+
+    /** AIR's loop limit: at most 100 runs of this stack per 500 ms window and per signal chain. */
+    private boolean admitRun(WiredEvent event) {
+        Room room = event.getRoom();
+        if (room == null || room.getWiredRuntime() == null) {
+            return true;
         }
 
-        return this.channel > 0 && event.getSignalChannel() == this.channel;
+        return room.getWiredRuntime()
+                .getSignalLoops()
+                .admit(this.getId(), event.getSignalChain(), System.currentTimeMillis());
     }
 
     public int getChannel() {
@@ -136,10 +145,15 @@ public class WiredTriggerReceiveSignal extends InteractionWiredTrigger {
     public void serializeWiredData(ServerMessage message, Room room) {
         int senderCount = 0;
         try {
-            if (room != null && room.getRoomSpecialTypes() != null) {
+            if (room.getRoomSpecialTypes() != null) {
                 senderCount = this.getSenderCount(room);
             }
         } catch (Exception e) {
+            WiredCompatibilityDiagnostics.record(
+                    WiredCompatibilityDiagnostics.FailurePoint.TRIGGER_RECEIVE_SIGNAL_SERIALIZE,
+                    room.getId(),
+                    this.getId(),
+                    e);
         }
 
         Set<HabboItem> itemsToRemove = new HashSet<>();
@@ -161,11 +175,11 @@ public class WiredTriggerReceiveSignal extends InteractionWiredTrigger {
         message.appendInt(this.getBaseItem().getSpriteId());
         message.appendInt(this.getId());
         message.appendString("");
-        message.appendInt(4);
+        // Ours (official has none): [channel, senders connected, the most senders].
+        message.appendInt(3);
         message.appendInt(channel);
         message.appendInt(senderCount);
         message.appendInt(RoomSpecialTypes.MAX_SENDERS_PER_RECEIVER);
-        message.appendInt(this.furniSource);
         message.appendInt(0);
         message.appendInt(this.getType().code);
         message.appendInt(0);
@@ -186,9 +200,9 @@ public class WiredTriggerReceiveSignal extends InteractionWiredTrigger {
 
         int[] params = settings.getIntParams();
         this.channel = params.length > 0 ? params[0] : 0;
-        this.furniSource = (params.length > 1)
-                ? this.normalizeFurniSource(params[params.length - 1])
-                : WiredSourceUtil.SOURCE_SELECTED;
+        // Official: no int params (ours: [channel]); the antenna source is the official source slot.
+        int[] furni = settings.getFurniSourceTypes();
+        this.furniSource = (furni.length > 0) ? this.normalizeFurniSource(furni[0]) : WiredSourceUtil.SOURCE_SELECTED;
 
         if (this.furniSource == WiredSourceUtil.SOURCE_SELECTED && room != null) {
             for (int i = 0; i < count; i++) {
@@ -210,40 +224,17 @@ public class WiredTriggerReceiveSignal extends InteractionWiredTrigger {
 
     @Override
     public void activateBox(Room room, RoomUnit roomUnit, long millis) {
-        if (roomUnit != null) {
-            this.addUserExecutionCache(roomUnit.getId(), millis);
-        }
-
-        if (room == null || room.isHideWired() || this.getBaseItem().getStateCount() <= 1) {
-            return;
-        }
-
-        final long token = this.activationToken.incrementAndGet();
-
-        if ("1".equals(this.getExtradata())) {
-            this.setExtradata("0");
-            room.sendComposer(new ItemStateComposer(this).compose());
-        }
-
-        this.setExtradata("1");
-        room.sendComposer(new ItemStateComposer(this).compose());
-
-        Emulator.getThreading().run(() -> {
-            if (!room.isLoaded()) return;
-            if (this.activationToken.get() != token) return;
-
-            this.setExtradata("0");
-            room.sendComposer(new ItemStateComposer(this).compose());
-        }, ACTIVATION_PULSE_MS);
+        // Flashes like every other box (once per 500 ms window), no separate light-up pulse.
+        super.activateBox(room, roomUnit, millis);
     }
 
     @Override
     public String getWiredData() {
-        return WiredManager.getGson().toJson(new JsonData(
-                channel,
-                furniSource,
-                this.items.stream().map(HabboItem::getId).collect(Collectors.toList())
-        ));
+        return WiredManager.getGson()
+                .toJson(new JsonData(
+                        channel,
+                        furniSource,
+                        this.items.stream().map(HabboItem::getId).collect(Collectors.toList())));
     }
 
     @Override

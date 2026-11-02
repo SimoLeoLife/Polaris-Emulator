@@ -6,17 +6,18 @@ import com.eu.habbo.habbohotel.items.interactions.InteractionWiredEffect;
 import com.eu.habbo.habbohotel.items.interactions.wired.WiredSettings;
 import com.eu.habbo.habbohotel.rooms.Room;
 import com.eu.habbo.habbohotel.rooms.RoomUnit;
+import com.eu.habbo.habbohotel.rooms.RoomUnitType;
 import com.eu.habbo.habbohotel.wired.WiredEffectType;
 import com.eu.habbo.habbohotel.wired.core.WiredContext;
 import com.eu.habbo.habbohotel.wired.core.WiredManager;
+import com.eu.habbo.habbohotel.wired.protocol.WiredOfficialSelector;
 import com.eu.habbo.messages.ServerMessage;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.LinkedHashSet;
 import java.util.Set;
 
-public class WiredEffectUsersHandItem extends InteractionWiredEffect {
+public class WiredEffectUsersHandItem extends InteractionWiredEffect implements WiredOfficialSelector {
     public static final WiredEffectType type = WiredEffectType.USERS_HANDITEM_SELECTOR;
 
     private int handItemId = 0;
@@ -27,7 +28,8 @@ public class WiredEffectUsersHandItem extends InteractionWiredEffect {
         super(set, baseItem);
     }
 
-    public WiredEffectUsersHandItem(int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
+    public WiredEffectUsersHandItem(
+            int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
         super(id, userId, item, extradata, limitedStack, limitedSells);
     }
 
@@ -41,12 +43,16 @@ public class WiredEffectUsersHandItem extends InteractionWiredEffect {
         Set<RoomUnit> result = new LinkedHashSet<>();
 
         for (RoomUnit roomUnit : room.getRoomUnits()) {
-            if (roomUnit != null && roomUnit.getHandItem() == this.handItemId) {
+            // AIR: only avatars, holding exactly this hand item; 0 ("None" in the editor) is an empty hand.
+            if (roomUnit != null
+                    && roomUnit.getRoomUnitType() == RoomUnitType.USER
+                    && roomUnit.getHandItem() == this.handItemId) {
                 result.add(roomUnit);
             }
         }
 
-        result = this.applySelectorModifiers(result, room.getRoomUnits(), ctx.targets().users(), this.filterExisting, this.invert);
+        result = this.applySelectorModifiers(
+                result, room.getRoomUnits(), ctx.targets().users(), this.filterExisting, this.invert);
 
         ctx.targets().setUsers(result);
     }
@@ -55,12 +61,33 @@ public class WiredEffectUsersHandItem extends InteractionWiredEffect {
     public boolean saveData(WiredSettings settings, GameClient gameClient) {
         int[] params = settings.getIntParams();
 
-        this.handItemId = (params.length > 0) ? Math.max(0, params[0]) : 0;
-        this.filterExisting = params.length > 1 && params[1] == 1;
-        this.invert = params.length > 2 && params[2] == 1;
+        // Stored as sent, as AIR does.
+        this.handItemId = (params.length > 0) ? params[0] : 0;
+        this.filterExisting = settings.isSelectorFilter();
+        this.invert = settings.isSelectorInvert();
         this.setDelay(settings.getDelay());
 
         return true;
+    }
+
+    @Override
+    public boolean selectorFilter() {
+        return this.filterExisting;
+    }
+
+    @Override
+    public boolean selectorInvert() {
+        return this.invert;
+    }
+
+    @Override
+    public int[] officialFurniSources() {
+        return new int[0];
+    }
+
+    @Override
+    public int[] officialUserSources() {
+        return new int[0];
     }
 
     @Override
@@ -80,7 +107,8 @@ public class WiredEffectUsersHandItem extends InteractionWiredEffect {
 
     @Override
     public String getWiredData() {
-        return WiredManager.getGson().toJson(new JsonData(this.handItemId, this.filterExisting, this.invert, this.getDelay()));
+        return WiredManager.getGson()
+                .toJson(new JsonData(this.handItemId, this.filterExisting, this.invert, this.getDelay()));
     }
 
     @Override
@@ -97,7 +125,7 @@ public class WiredEffectUsersHandItem extends InteractionWiredEffect {
             return;
         }
 
-        this.handItemId = Math.max(0, data.handItemId);
+        this.handItemId = data.handItemId;
         this.filterExisting = data.filterExisting;
         this.invert = data.invert;
         this.setDelay(data.delay);
@@ -119,10 +147,8 @@ public class WiredEffectUsersHandItem extends InteractionWiredEffect {
         message.appendInt(this.getBaseItem().getSpriteId());
         message.appendInt(this.getId());
         message.appendString("");
-        message.appendInt(3);
+        message.appendInt(1);
         message.appendInt(this.handItemId);
-        message.appendInt(this.filterExisting ? 1 : 0);
-        message.appendInt(this.invert ? 1 : 0);
         message.appendInt(0);
         message.appendInt(this.getType().code);
         message.appendInt(this.getDelay());

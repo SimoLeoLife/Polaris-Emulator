@@ -1,24 +1,36 @@
 package com.eu.habbo.habbohotel.campaign.calendar;
 
-import com.eu.habbo.Emulator;
-import com.eu.habbo.database.SqlQueries;
-import com.eu.habbo.habbohotel.users.Habbo;
-import com.eu.habbo.messages.outgoing.events.calendar.AdventCalendarProductComposer;
-import com.eu.habbo.plugin.events.users.calendar.UserClaimRewardEvent;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import java.sql.*;
-import java.util.*;
-import java.util.Date;
-
 import static java.time.temporal.ChronoUnit.DAYS;
 
+import com.eu.habbo.Emulator;
+import com.eu.habbo.database.SqlQueries;
+import com.eu.habbo.habbohotel.items.Item;
+import com.eu.habbo.habbohotel.users.Habbo;
+import com.eu.habbo.messages.outgoing.events.calendar.AdventCalendarProductComposer;
+import com.eu.habbo.messages.outgoing.generic.alerts.BubbleAlertComposer;
+import com.eu.habbo.plugin.events.users.calendar.UserClaimRewardEvent;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
+import java.sql.Timestamp;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Comparator;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.function.IntUnaryOperator;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class CalendarManager {
     private static final Logger LOGGER = LoggerFactory.getLogger(CalendarCampaign.class);
 
-    final private static Map<Integer, CalendarCampaign> calendarCampaigns = new HashMap<>();
+    private static final Map<Integer, CalendarCampaign> calendarCampaigns = new HashMap<>();
     public static double HC_MODIFIER;
 
     public CalendarManager() {
@@ -27,16 +39,14 @@ public class CalendarManager {
         LOGGER.info("Calendar Manager -> Loaded! ({} MS)", (System.currentTimeMillis() - millis));
     }
 
-    public void dispose(){
+    public void dispose() {
         calendarCampaigns.clear();
     }
 
     public boolean reload() {
         this.dispose();
         try {
-            SqlQueries.query(
-                    "SELECT * FROM calendar_campaigns WHERE enabled = 1",
-                    CalendarCampaign::new)
+            SqlQueries.query("SELECT * FROM calendar_campaigns WHERE enabled = 1", CalendarCampaign::new)
                     .forEach(c -> calendarCampaigns.put(c.getId(), c));
         } catch (SqlQueries.DataAccessException e) {
             LOGGER.error("Caught SQL exception", e);
@@ -45,8 +55,8 @@ public class CalendarManager {
 
         try {
             SqlQueries.query(
-                    "SELECT * FROM calendar_rewards",
-                    rs -> Map.entry(rs.getInt("campaign_id"), new CalendarRewardObject(rs)))
+                            "SELECT * FROM calendar_rewards",
+                            rs -> Map.entry(rs.getInt("campaign_id"), new CalendarRewardObject(rs)))
                     .forEach(entry -> {
                         CalendarCampaign campaign = calendarCampaigns.get(entry.getKey());
                         if (campaign != null) {
@@ -65,7 +75,10 @@ public class CalendarManager {
 
     public void addCampaign(CalendarCampaign campaign) {
 
-        try (Connection connection = Emulator.getDatabase().getDataSource().getConnection(); PreparedStatement statement = connection.prepareStatement("INSERT INTO calendar_campaigns ( name, image, start_timestamp, total_days, lock_expired) VALUES (?, ?, ?, ? , ?)", Statement.RETURN_GENERATED_KEYS)) {
+        try (Connection connection = Emulator.getDatabase().getDataSource().getConnection();
+                PreparedStatement statement = connection.prepareStatement(
+                        "INSERT INTO calendar_campaigns ( name, image, start_timestamp, total_days, lock_expired) VALUES (?, ?, ?, ? , ?)",
+                        Statement.RETURN_GENERATED_KEYS)) {
             statement.setString(1, campaign.getName());
             statement.setString(2, campaign.getImage());
             statement.setInt(3, campaign.getStartTimestamp());
@@ -103,51 +116,116 @@ public class CalendarManager {
     }
 
     public CalendarCampaign getCalendarCampaign(String campaignName) {
-        return calendarCampaigns.values().stream().filter(cc -> Objects.equals(cc.getName(), campaignName)).findFirst().orElse(null);
+        return calendarCampaigns.values().stream()
+                .filter(cc -> Objects.equals(cc.getName(), campaignName))
+                .findFirst()
+                .orElse(null);
     }
+
     public Map<Integer, CalendarCampaign> getCalendarCampaigns() {
         return calendarCampaigns;
     }
 
+    /** The days the client can ask for: 0 .. totalDays - 1, as the calendar renders them. */
+    public static boolean isDayInCampaign(CalendarCampaign campaign, int day) {
+        return campaign != null && day >= 0 && day < campaign.getTotalDays();
+    }
+
+    /**
+     * The reward for a claimed day ({@code day} counted from 0, as the calendar sends it): one of the rewards set for
+     * that day ({@code calendar_rewards.day = day + 1}), otherwise one of the rewards without a day. When several
+     * rewards qualify, {@code randomIndex} picks one (it is given the number of candidates). Null when none qualifies.
+     */
+    static CalendarRewardObject pickReward(
+            Collection<CalendarRewardObject> rewards, int day, IntUnaryOperator randomIndex) {
+        List<CalendarRewardObject> forDay = new ArrayList<>();
+        List<CalendarRewardObject> anyDay = new ArrayList<>();
+        for (CalendarRewardObject reward : rewards) {
+            if (reward.getDay() == day + 1) forDay.add(reward);
+            else if (reward.getDay() == 0) anyDay.add(reward);
+        }
+        List<CalendarRewardObject> candidates = forDay.isEmpty() ? anyDay : forDay;
+        if (candidates.isEmpty()) return null;
+        candidates.sort(Comparator.comparingInt(CalendarRewardObject::getId));
+        return candidates.get(randomIndex.applyAsInt(candidates.size()));
+    }
+
+    /** One bubble for each part of an opened day's reward (see {@link CalendarRewardNotifications}). */
+    private static void sendRewardBubbles(Habbo habbo, CalendarRewardObject reward) {
+        Item item = reward.getItem();
+        int pixels = (int) (reward.getPixels() * (habbo.getHabboStats().hasActiveClub() ? HC_MODIFIER : 1.0));
+        CalendarRewardNotifications.bubbles(reward, pixels, item == null ? null : item.getName())
+                .forEach(bubble ->
+                        habbo.getClient().sendResponse(new BubbleAlertComposer(bubble.type(), bubble.keys())));
+    }
+
     public void claimCalendarReward(Habbo habbo, String campaignName, int day, boolean force) {
-        CalendarCampaign campaign = calendarCampaigns.values().stream().filter(cc -> Objects.equals(cc.getName(), campaignName)).findFirst().orElse(null);
-        if(campaign == null) return;
-        if (habbo.getHabboStats().calendarRewardsClaimed.stream().noneMatch(claimed -> claimed.getCampaignId() == campaign.getId() && claimed.getDay() == day)) {
+        CalendarCampaign campaign = calendarCampaigns.values().stream()
+                .filter(cc -> Objects.equals(cc.getName(), campaignName))
+                .findFirst()
+                .orElse(null);
+        if (campaign == null) return;
+        // The day comes straight off the packet. A negative one makes the window
+        // check (daysBetween - day >= 0) pass for every day before the campaign
+        // started, and every (campaign, day) pair is distinct, so the already-claimed
+        // check never fires: day = -1, -2, -3 ... is one random reward per packet.
+        if (!isDayInCampaign(campaign, day)) return;
+        if (habbo.getHabboStats().calendarRewardsClaimed.stream()
+                .noneMatch(claimed -> claimed.getCampaignId() == campaign.getId() && claimed.getDay() == day)) {
 
-            Set<Integer> keys = campaign.getRewards().keySet();
-            Map<Integer, Integer> rewards = new HashMap<>();
-            if(keys.isEmpty()) return;
-            keys.forEach(key -> rewards.put(rewards.size() + 1, key));
-            int rand = Emulator.getRandom().nextInt(rewards.size() - 1 + 1) + 1;
-            int random = rewards.get(rand);
-            CalendarRewardObject object = campaign.getRewards().get(random);
-            if (object == null) return;
-                int daysBetween = (int) DAYS.between(new Timestamp(campaign.getStartTimestamp() * 1000L).toInstant(), new Date().toInstant());
-            if(daysBetween >= 0 && daysBetween <= campaign.getTotalDays()) {
+            CalendarRewardObject object =
+                    pickReward(campaign.getRewards().values(), day, Emulator.getRandom()::nextInt);
+            if (object == null) {
+                LOGGER.warn(
+                        "Calendar campaign '{}' has no reward for day {} and no reward without a day; nothing was given.",
+                        campaign.getName(),
+                        day + 1);
+                return;
+            }
+            int daysBetween = (int) DAYS.between(
+                    new Timestamp(campaign.getStartTimestamp() * 1000L).toInstant(), new Date().toInstant());
+            if (daysBetween >= 0 && daysBetween <= campaign.getTotalDays()) {
                 int diff = (daysBetween - day);
-                if ((((diff <= 2 || !campaign.getLockExpired()) && diff >= 0) || (force && habbo.hasPermission("acc_calendar_force")))) {
+                if ((((diff <= 2 || !campaign.getLockExpired()) && diff >= 0)
+                        || (force && habbo.hasPermission("acc_calendar_force")))) {
 
-                    if (Emulator.getPluginManager().fireEvent(new UserClaimRewardEvent(habbo, campaign, day, object, force)).isCancelled()) {
+                    if (Emulator.getPluginManager()
+                            .fireEvent(new UserClaimRewardEvent(habbo, campaign, day, object, force))
+                            .isCancelled()) {
                         return;
                     }
 
-                    habbo.getHabboStats().calendarRewardsClaimed.add(new CalendarRewardClaimed(habbo.getHabboInfo().getId(), campaign.getId(), day, object.getId(), new Timestamp(System.currentTimeMillis())));
-                    habbo.getClient().sendResponse(new AdventCalendarProductComposer(true, object, habbo));
-                    object.give(habbo);
+                    // Claim the day in the database before handing anything over: with the
+                    // UNIQUE (user_id, campaign_id, day) key the insert is the claim, so a
+                    // second attempt - from another session, or a row this session never
+                    // loaded - gets nothing instead of a second reward.
                     try {
-                        SqlQueries.update(
-                                "INSERT INTO calendar_rewards_claimed (user_id, campaign_id, day, reward_id, timestamp) VALUES (?, ?, ?, ?, ?)",
+                        int claimed = SqlQueries.update(
+                                "INSERT IGNORE INTO calendar_rewards_claimed (user_id, campaign_id, day, reward_id, timestamp) VALUES (?, ?, ?, ?, ?)",
                                 habbo.getHabboInfo().getId(),
                                 campaign.getId(),
                                 day,
                                 object.getId(),
                                 Emulator.getIntUnixTimestamp());
+                        if (claimed == 0) return;
                     } catch (SqlQueries.DataAccessException e) {
                         LOGGER.error("Caught SQL exception", e);
+                        return;
                     }
+
+                    habbo.getHabboStats()
+                            .calendarRewardsClaimed
+                            .add(new CalendarRewardClaimed(
+                                    habbo.getHabboInfo().getId(),
+                                    campaign.getId(),
+                                    day,
+                                    object.getId(),
+                                    new Timestamp(System.currentTimeMillis())));
+                    habbo.getClient().sendResponse(new AdventCalendarProductComposer(true, object, habbo));
+                    object.give(habbo);
+                    sendRewardBubbles(habbo, object);
                 }
             }
         }
     }
 }
-

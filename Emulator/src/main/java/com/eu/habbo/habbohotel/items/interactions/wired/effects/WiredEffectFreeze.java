@@ -5,6 +5,7 @@ import com.eu.habbo.habbohotel.gameclients.GameClient;
 import com.eu.habbo.habbohotel.items.Item;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredEffect;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredTrigger;
+import com.eu.habbo.habbohotel.items.interactions.wired.WiredInputGuard;
 import com.eu.habbo.habbohotel.items.interactions.wired.WiredSettings;
 import com.eu.habbo.habbohotel.rooms.Room;
 import com.eu.habbo.habbohotel.rooms.RoomUnit;
@@ -15,7 +16,6 @@ import com.eu.habbo.habbohotel.wired.core.WiredManager;
 import com.eu.habbo.habbohotel.wired.core.WiredSourceUtil;
 import com.eu.habbo.messages.ServerMessage;
 import com.eu.habbo.messages.incoming.wired.WiredSaveException;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
@@ -24,6 +24,9 @@ import java.util.Set;
 
 public class WiredEffectFreeze extends InteractionWiredEffect {
     private static final Set<Integer> ALLOWED_EFFECT_IDS = Set.of(218, 12, 11, 53, 163);
+    /** The official dropdown order (wiredfurni.params.freeze.effect.0..4). */
+    private static final int[] OFFICIAL_EFFECTS = {218, 12, 11, 53, 163};
+
     public static final WiredEffectType type = WiredEffectType.FREEZE;
 
     private int effectId = 218;
@@ -59,7 +62,8 @@ public class WiredEffectFreeze extends InteractionWiredEffect {
 
     @Override
     public String getWiredData() {
-        return WiredManager.getGson().toJson(new JsonData(this.effectId, this.cancelOnTeleport, this.getDelay(), this.userSource));
+        return WiredManager.getGson()
+                .toJson(new JsonData(this.effectId, this.cancelOnTeleport, this.getDelay(), this.userSource));
     }
 
     @Override
@@ -101,10 +105,10 @@ public class WiredEffectFreeze extends InteractionWiredEffect {
         message.appendInt(this.getBaseItem().getSpriteId());
         message.appendInt(this.getId());
         message.appendString("");
-        message.appendInt(3);
-        message.appendInt(this.effectId);
+        message.appendInt(2);
+        message.appendInt(Math.max(
+                0, java.util.Arrays.stream(OFFICIAL_EFFECTS).boxed().toList().indexOf(this.effectId)));
         message.appendInt(this.cancelOnTeleport ? 1 : 0);
-        message.appendInt(this.userSource);
         message.appendInt(0);
         message.appendInt(this.getType().code);
         message.appendInt(this.getDelay());
@@ -127,23 +131,26 @@ public class WiredEffectFreeze extends InteractionWiredEffect {
 
     @Override
     public boolean saveData(WiredSettings settings, GameClient gameClient) throws WiredSaveException {
-        if (settings.getIntParams().length < 3) {
+        // Official layout: [effect (index 0..4 of the official list), cancel on teleport]; the user
+        // source is the official source slot.
+        if (settings.getIntParams().length < 2) {
             throw new WiredSaveException("Invalid data");
         }
 
-        int nextEffectId = settings.getIntParams()[0];
-        if (!ALLOWED_EFFECT_IDS.contains(nextEffectId)) {
+        int index = settings.getIntParams()[0];
+        if (index < 0 || index >= OFFICIAL_EFFECTS.length) {
             throw new WiredSaveException("Invalid freeze effect");
         }
+        int nextEffectId = OFFICIAL_EFFECTS[index];
 
         int delay = settings.getDelay();
-        if (delay > Emulator.getConfig().getInt("hotel.wired.max_delay", 20)) {
+        if (delay > Emulator.getConfig().getInt("hotel.wired.max_delay", WiredInputGuard.DEFAULT_MAX_DELAY)) {
             throw new WiredSaveException("Delay too long");
         }
 
         this.effectId = nextEffectId;
         this.cancelOnTeleport = settings.getIntParams()[1] == 1;
-        this.userSource = settings.getIntParams()[2];
+        this.userSource = settings.userSource(0, WiredSourceUtil.SOURCE_TRIGGER);
         this.setDelay(delay);
 
         return true;

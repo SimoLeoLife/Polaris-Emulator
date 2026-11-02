@@ -29,12 +29,15 @@ public class StalkFriendEvent extends MessageHandler {
 
         Habbo habbo = Emulator.getGameEnvironment().getHabboManager().getHabbo(friendId);
 
-        if (habbo == null || !habbo.isOnline()) {
+        boolean canStalk = this.client.getHabbo().hasPermission("acc_can_stalk");
+
+        // A friend who hides being online looks offline here too, so following does not give it away.
+        if (habbo == null || !habbo.isOnline() || hiddenFrom(habbo.getHabboStats().hideOnline, canStalk)) {
             this.client.sendResponse(new StalkErrorComposer(StalkErrorComposer.FRIEND_OFFLINE));
             return;
         }
 
-        if (habbo.getHabboStats().blockFollowing && !this.client.getHabbo().hasPermission("acc_can_stalk")) {
+        if (habbo.getHabboStats().blockFollowing && !canStalk) {
             this.client.sendResponse(new StalkErrorComposer(StalkErrorComposer.FRIEND_BLOCKED_STALKING));
             return;
         }
@@ -44,10 +47,24 @@ public class StalkFriendEvent extends MessageHandler {
             return;
         }
 
-        if (habbo.getHabboInfo().getCurrentRoom() != this.client.getHabbo().getHabboInfo().getCurrentRoom()) {
-            this.client.sendResponse(new ForwardToRoomComposer(habbo.getHabboInfo().getCurrentRoom().getId()));
+        if (habbo.getHabboInfo().getCurrentRoom()
+                != this.client.getHabbo().getHabboInfo().getCurrentRoom()) {
+            this.client.sendResponse(new ForwardToRoomComposer(
+                    habbo.getHabboInfo().getCurrentRoom().getId()));
+            com.eu.habbo.habbohotel.quests.QuestProgressEvents.progress(
+                    this.client.getHabbo(), com.eu.habbo.habbohotel.quests.QuestGoalType.FOLLOW_FRIEND, 1);
         } else {
-            this.client.sendResponse(new RoomUserWhisperComposer(new RoomChatMessage(Emulator.getTexts().getValue("stalk.failed.same.room").replace("%user%", habbo.getHabboInfo().getUsername()), this.client.getHabbo(), this.client.getHabbo(), RoomChatMessageBubbles.ALERT)));
+            this.client.sendResponse(new RoomUserWhisperComposer(new RoomChatMessage(
+                    Emulator.getTexts()
+                            .getValue("stalk.failed.same.room")
+                            .replace("%user%", habbo.getHabboInfo().getUsername()),
+                    this.client.getHabbo(),
+                    this.client.getHabbo(),
+                    RoomChatMessageBubbles.ALERT)));
         }
+    }
+
+    static boolean hiddenFrom(boolean hidesOnline, boolean canStalk) {
+        return hidesOnline && !canStalk;
     }
 }

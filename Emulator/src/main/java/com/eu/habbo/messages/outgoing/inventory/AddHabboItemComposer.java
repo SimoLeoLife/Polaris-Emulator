@@ -1,10 +1,10 @@
 package com.eu.habbo.messages.outgoing.inventory;
 
+import com.eu.habbo.habbohotel.rooms.BuildersClubItemIds;
 import com.eu.habbo.habbohotel.users.HabboItem;
 import com.eu.habbo.messages.ServerMessage;
 import com.eu.habbo.messages.outgoing.MessageComposer;
 import com.eu.habbo.messages.outgoing.Outgoing;
-
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
@@ -32,7 +32,7 @@ public class AddHabboItemComposer extends MessageComposer {
     }
 
     public AddHabboItemComposer(int id, AddHabboItemCategory category) {
-        this.ids = new int[]{id};
+        this.ids = new int[] {id};
         this.category = category;
     }
 
@@ -68,13 +68,13 @@ public class AddHabboItemComposer extends MessageComposer {
             this.response.appendInt(1);
             this.response.appendInt(this.itemsList.size());
             for (HabboItem habboItem : this.itemsList) {
-                this.response.appendInt(habboItem.getId());
+                this.response.appendInt(BuildersClubItemIds.toWire(habboItem.getId()));
             }
         } else {
             this.response.appendInt(1);
             this.response.appendInt(1);
             this.response.appendInt(1);
-            this.response.appendInt(this.item.getId());
+            this.response.appendInt(BuildersClubItemIds.toWire(this.item.getId()));
         }
 
         return this.response;
@@ -86,7 +86,8 @@ public class AddHabboItemComposer extends MessageComposer {
         PET(3),
         BADGE(4),
         BOT(5),
-        GAME(6);
+        GAME(6),
+        HABBICON(8);
 
         public final int number;
 

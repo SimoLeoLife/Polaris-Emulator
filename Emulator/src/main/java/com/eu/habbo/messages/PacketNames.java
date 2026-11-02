@@ -2,16 +2,21 @@ package com.eu.habbo.messages;
 
 import com.eu.habbo.messages.incoming.Incoming;
 import com.eu.habbo.messages.outgoing.Outgoing;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
 import java.util.HashMap;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class PacketNames {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(PacketNames.class);
+
+    /**
+     * The header of the empty frame GameClientManager.CFKeepAlive sends every client every 30 seconds, so a
+     * proxy such as Cloudflare does not close an idle websocket. No packet has it; the client ignores it.
+     */
+    public static final int KEEP_ALIVE_HEADER = -1;
 
     private final HashMap<Integer, String> incoming;
     private final HashMap<Integer, String> outgoing;
@@ -29,6 +34,7 @@ public class PacketNames {
 
         PacketNames.getNames(Incoming.class, this.incoming);
         PacketNames.getNames(Outgoing.class, this.outgoing);
+        this.outgoing.putIfAbsent(KEEP_ALIVE_HEADER, "KeepAlive");
     }
 
     public String getIncomingName(int key) {
@@ -42,7 +48,15 @@ public class PacketNames {
     private static void getNames(Class<?> clazz, HashMap<Integer, String> target) {
         for (Field field : clazz.getFields()) {
             int modifiers = field.getModifiers();
-            if (Modifier.isPublic(modifiers) && Modifier.isStatic(modifiers) && Modifier.isFinal(modifiers) && field.getType() == int.class) {
+            // Deprecated constants are aliases of a name that is already in the table.
+            if (field.isAnnotationPresent(Deprecated.class)) {
+                continue;
+            }
+
+            if (Modifier.isPublic(modifiers)
+                    && Modifier.isStatic(modifiers)
+                    && Modifier.isFinal(modifiers)
+                    && field.getType() == int.class) {
                 try {
                     int packetId = field.getInt(null);
                     if (packetId > 0) {
@@ -59,5 +73,4 @@ public class PacketNames {
             }
         }
     }
-
 }

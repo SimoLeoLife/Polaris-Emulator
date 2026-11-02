@@ -1,7 +1,6 @@
 package com.eu.habbo.habbohotel.items.interactions.wired.conditions;
 
 import com.eu.habbo.Emulator;
-import java.util.HashSet;
 import com.eu.habbo.habbohotel.items.Item;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredCondition;
 import com.eu.habbo.habbohotel.items.interactions.wired.WiredSettings;
@@ -12,24 +11,29 @@ import com.eu.habbo.habbohotel.wired.WiredConditionType;
 import com.eu.habbo.habbohotel.wired.core.WiredContext;
 import com.eu.habbo.habbohotel.wired.core.WiredManager;
 import com.eu.habbo.habbohotel.wired.core.WiredSourceUtil;
+import com.eu.habbo.habbohotel.wired.protocol.WiredOfficialQuantifier;
 import com.eu.habbo.messages.ServerMessage;
-
 import java.math.BigDecimal;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 
 /**
- * Passes when ALL selected furni share the same stack height (Z). Reuses the HAS_ALTITUDE furni-picker
- * dialog (the numeric field is unused here, kept only for dialog/serialization compatibility), and
- * resolves the selected furni exactly like {@link WiredConditionFurniInRange} (via {@code this.items}),
- * so it has no new client requirement. Z equality uses {@link BigDecimal#compareTo} for exactness.
+ * Passes when the selected furni share a stack height (Z). Reuses the HAS_ALTITUDE furni-picker dialog
+ * (the numeric field is unused here, kept only for dialog/serialization compatibility), and resolves the
+ * selected furni exactly like {@link WiredConditionFurniInRange} (via {@code this.items}), so it has no
+ * new client requirement. Z equality uses {@link BigDecimal#compareTo} for exactness.
+ *
+ * <p>The quantifier the dialog offers decides how many have to agree: {@code all} - the historical and
+ * default behaviour - wants one height across every target, {@code any} wants two of them to meet.
  */
-public class WiredConditionSameHeight extends InteractionWiredCondition {
+public class WiredConditionSameHeight extends InteractionWiredCondition implements WiredOfficialQuantifier {
     private static final int QUANTIFIER_ALL = 0;
     private static final int QUANTIFIER_ANY = 1;
 
-    public static final WiredConditionType type = WiredConditionType.HAS_ALTITUDE;
+    public static final WiredConditionType type = WiredConditionType.FURNI_PROPERTY;
 
     private final HashSet<HabboItem> items;
     private int furniSource = WiredSourceUtil.SOURCE_TRIGGER;
@@ -40,7 +44,8 @@ public class WiredConditionSameHeight extends InteractionWiredCondition {
         this.items = new HashSet<>();
     }
 
-    public WiredConditionSameHeight(int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
+    public WiredConditionSameHeight(
+            int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
         super(id, userId, item, extradata, limitedStack, limitedSells);
         this.items = new HashSet<>();
     }
@@ -59,10 +64,18 @@ public class WiredConditionSameHeight extends InteractionWiredCondition {
             return false;
         }
 
+        return this.quantifier == QUANTIFIER_ANY ? anyPairShareHeight(targets) : allShareHeight(targets);
+    }
+
+    /**
+     * True when every target sits at one and the same height. Both helpers skip a null target rather
+     * than failing on it, so {@link WiredConditionNotSameHeight} stays the exact complement of this box.
+     */
+    static boolean allShareHeight(List<HabboItem> targets) {
         BigDecimal reference = null;
         for (HabboItem item : targets) {
             if (item == null) {
-                return false;
+                continue;
             }
 
             BigDecimal z = BigDecimal.valueOf(item.getZ());
@@ -76,6 +89,27 @@ public class WiredConditionSameHeight extends InteractionWiredCondition {
         return true;
     }
 
+    /** True when at least two targets meet at the same height. */
+    static boolean anyPairShareHeight(List<HabboItem> targets) {
+        List<BigDecimal> seen = new ArrayList<>();
+        for (HabboItem item : targets) {
+            if (item == null) {
+                continue;
+            }
+
+            BigDecimal z = BigDecimal.valueOf(item.getZ());
+            for (BigDecimal other : seen) {
+                if (other.compareTo(z) == 0) {
+                    return true;
+                }
+            }
+
+            seen.add(z);
+        }
+
+        return false;
+    }
+
     @Deprecated
     @Override
     public boolean execute(RoomUnit roomUnit, Room room, Object[] stuff) {
@@ -84,11 +118,11 @@ public class WiredConditionSameHeight extends InteractionWiredCondition {
 
     @Override
     public String getWiredData() {
-        return WiredManager.getGson().toJson(new JsonData(
-                this.furniSource,
-                this.quantifier,
-                this.items.stream().map(HabboItem::getId).toList()
-        ));
+        return WiredManager.getGson()
+                .toJson(new JsonData(
+                        this.furniSource,
+                        this.quantifier,
+                        this.items.stream().map(HabboItem::getId).toList()));
     }
 
     @Override
@@ -160,9 +194,8 @@ public class WiredConditionSameHeight extends InteractionWiredCondition {
         message.appendInt(this.getBaseItem().getSpriteId());
         message.appendInt(this.getId());
         message.appendString("");
-        message.appendInt(2);
+        message.appendInt(1);
         message.appendInt(this.furniSource);
-        message.appendInt(this.quantifier);
         message.appendInt(0);
         message.appendInt(this.getType().code);
         message.appendInt(0);
@@ -173,7 +206,7 @@ public class WiredConditionSameHeight extends InteractionWiredCondition {
     public boolean saveData(WiredSettings settings) {
         int[] params = settings.getIntParams();
         this.furniSource = (params.length > 0) ? this.normalizeFurniSource(params[0]) : WiredSourceUtil.SOURCE_TRIGGER;
-        this.quantifier = (params.length > 1) ? this.normalizeQuantifier(params[1]) : QUANTIFIER_ALL;
+        this.quantifier = this.normalizeQuantifier(settings.getQuantifierCode());
 
         int count = settings.getFurniIds().length;
         if (count > Emulator.getConfig().getInt("hotel.wired.furni.selection.count")) {
@@ -223,7 +256,10 @@ public class WiredConditionSameHeight extends InteractionWiredCondition {
 
     int normalizeFurniSource(int value) {
         return switch (value) {
-            case WiredSourceUtil.SOURCE_SELECTED, WiredSourceUtil.SOURCE_SELECTOR, WiredSourceUtil.SOURCE_SIGNAL, WiredSourceUtil.SOURCE_TRIGGER -> value;
+            case WiredSourceUtil.SOURCE_SELECTED,
+                    WiredSourceUtil.SOURCE_SELECTOR,
+                    WiredSourceUtil.SOURCE_SIGNAL,
+                    WiredSourceUtil.SOURCE_TRIGGER -> value;
             default -> WiredSourceUtil.SOURCE_TRIGGER;
         };
     }
@@ -238,5 +274,10 @@ public class WiredConditionSameHeight extends InteractionWiredCondition {
             this.quantifier = quantifier;
             this.itemIds = itemIds;
         }
+    }
+
+    @Override
+    public int officialQuantifierCode() {
+        return this.quantifier;
     }
 }

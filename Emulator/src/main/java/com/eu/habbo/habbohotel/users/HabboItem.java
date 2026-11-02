@@ -6,6 +6,7 @@ import com.eu.habbo.habbohotel.achievements.AchievementManager;
 import com.eu.habbo.habbohotel.bots.Bot;
 import com.eu.habbo.habbohotel.gameclients.GameClient;
 import com.eu.habbo.habbohotel.items.FurnitureType;
+import com.eu.habbo.habbohotel.items.FurnitureUsagePolicy;
 import com.eu.habbo.habbohotel.items.IEventTriggers;
 import com.eu.habbo.habbohotel.items.Item;
 import com.eu.habbo.habbohotel.items.interactions.InteractionCrackable;
@@ -19,11 +20,16 @@ import com.eu.habbo.habbohotel.items.interactions.InteractionTrophy;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWired;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredHighscore;
 import com.eu.habbo.habbohotel.items.interactions.games.InteractionGameTimer;
+import com.eu.habbo.habbohotel.items.interactions.wired.chest.ChestRelease;
+import com.eu.habbo.habbohotel.items.rentable.RentableFurniture;
+import com.eu.habbo.habbohotel.items.rentable.RentableFurnitureManager;
+import com.eu.habbo.habbohotel.rooms.BuildersClubItemIds;
 import com.eu.habbo.habbohotel.rooms.Room;
 import com.eu.habbo.habbohotel.rooms.RoomLayout;
 import com.eu.habbo.habbohotel.rooms.RoomTile;
 import com.eu.habbo.habbohotel.rooms.RoomTileState;
 import com.eu.habbo.habbohotel.rooms.RoomUnit;
+import com.eu.habbo.habbohotel.rooms.RoomUnitType;
 import com.eu.habbo.habbohotel.wired.WiredEffectType;
 import com.eu.habbo.habbohotel.wired.core.WiredManager;
 import com.eu.habbo.messages.ServerMessage;
@@ -34,11 +40,13 @@ import java.awt.Rectangle;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicLong;
 import org.apache.commons.lang3.ArrayUtils;
 import org.apache.commons.math3.util.Pair;
 import org.slf4j.Logger;
@@ -68,9 +76,28 @@ public abstract class HabboItem implements Runnable, IEventTriggers {
     private String extradata;
     private int limitedStack;
     private int limitedSells;
-    private boolean needsUpdate = false;
+    private volatile boolean needsUpdate = false;
+    // Bumped by every needsUpdate(true). A save clears the flag only when nothing asked for another save while it
+    // wrote: the flag used to be cleared after the query, which dropped a change made during it.
+    private final AtomicLong saveGeneration = new AtomicLong();
+    // Saves of one item run one at a time, so an older UPDATE can no longer land after a newer one.
+    private final Object saveLock = new Object();
     private boolean needsDelete = false;
+    /**
+     * A temporary furni (the official "place furni" wired): it has no database row and no owner, is
+     * never saved or given to an inventory, and is gone when the room unloads.
+     */
+    private volatile boolean temporary = false;
+
+    private int temporaryOwnerId;
+
     private boolean isFromGift = false;
+    /** Avatars may walk underneath this item when it is raised high enough, even when the room-wide underpass setting is off. */
+    private boolean allowUnderpass = false;
+    /** Unix timestamp the rent period ends at, {@link RentableFurniture#NEVER} for furni owned outright. */
+    private int expiresTimestamp = RentableFurniture.NEVER;
+    /** The room's tile index while this furni is in a room; told about every move. */
+    private volatile ItemFootprintListener footprintListener;
 
     public HabboItem(ResultSet set, Item baseItem) throws SQLException {
         this.id = set.getInt("id");
@@ -90,6 +117,21 @@ public abstract class HabboItem implements Runnable, IEventTriggers {
             this.limitedStack = Integer.parseInt(set.getString("limited_data").split(":")[0]);
             this.limitedSells = Integer.parseInt(set.getString("limited_data").split(":")[1]);
         }
+
+        this.expiresTimestamp = RentableFurniture.readExpires(set);
+        this.allowUnderpass = readAllowUnderpass(set);
+        RentableFurnitureManager.track(this);
+    }
+
+    /** {@code items.allow_underpass}, tolerant of result sets that predate the column. */
+    private static boolean readAllowUnderpass(ResultSet set) throws SQLException {
+        ResultSetMetaData metaData = set.getMetaData();
+        for (int i = 1; i <= metaData.getColumnCount(); i++) {
+            if ("allow_underpass".equalsIgnoreCase(metaData.getColumnLabel(i))) {
+                return set.getInt("allow_underpass") == 1;
+            }
+        }
+        return false;
     }
 
     public HabboItem(int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
@@ -114,7 +156,7 @@ public abstract class HabboItem implements Runnable, IEventTriggers {
 
     public void serializeFloorData(ServerMessage serverMessage) {
         try {
-            serverMessage.appendInt(this.getId());
+            serverMessage.appendInt(BuildersClubItemIds.toWire(this.getId()));
             serverMessage.appendInt(this.baseItem.getSpriteId());
             serverMessage.appendInt(this.x);
             serverMessage.appendInt(this.y);
@@ -146,15 +188,15 @@ public abstract class HabboItem implements Runnable, IEventTriggers {
     }
 
     public void serializeWallData(ServerMessage serverMessage) {
-        serverMessage.appendString(this.getId() + "");
+        serverMessage.appendString(BuildersClubItemIds.toWire(this.getId()) + "");
         serverMessage.appendInt(this.baseItem.getSpriteId());
         serverMessage.appendString(this.wallPosition);
 
         if (this instanceof InteractionPostIt)
             serverMessage.appendString(this.extradata.split(" ")[0]);
         else serverMessage.appendString(this.extradata);
-        serverMessage.appendInt(-1);
-        serverMessage.appendInt(this.isUsable());
+        serverMessage.appendInt(this.getSecondsToExpiration());
+        serverMessage.appendInt(FurnitureUsagePolicy.of(this));
         serverMessage.appendInt(this.getUserId());
         serverMessage.appendInt(this.getBaseItem().allowStack() ? 1 : 0);
         serverMessage.appendInt(this.getBaseItem().allowSit() ? 1 : 0);
@@ -162,7 +204,7 @@ public abstract class HabboItem implements Runnable, IEventTriggers {
         serverMessage.appendInt(this.getBaseItem().allowWalk() ? 1 : 0);
         serverMessage.appendInt(this.getBaseItem().getWidth());
         serverMessage.appendInt(this.getBaseItem().getLength());
-        serverMessage.appendInt(this.getTeleportTargetId());
+        serverMessage.appendInt(BuildersClubItemIds.toWire(this.getTeleportTargetId()));
     }
 
     public int getTeleportTargetId() {
@@ -217,6 +259,12 @@ public abstract class HabboItem implements Runnable, IEventTriggers {
         return this.baseItem;
     }
 
+    public void setBaseItem(Item baseItem) {
+        if (baseItem != null) {
+            this.baseItem = baseItem;
+        }
+    }
+
     public String getWallPosition() {
         return this.wallPosition;
     }
@@ -231,6 +279,7 @@ public abstract class HabboItem implements Runnable, IEventTriggers {
 
     public void setX(short x) {
         this.x = x;
+        this.notifyFootprintChanged();
     }
 
     public short getY() {
@@ -239,6 +288,7 @@ public abstract class HabboItem implements Runnable, IEventTriggers {
 
     public void setY(short y) {
         this.y = y;
+        this.notifyFootprintChanged();
     }
 
     public double getZ() {
@@ -256,6 +306,25 @@ public abstract class HabboItem implements Runnable, IEventTriggers {
 
     public void setRotation(int rotation) {
         this.rotation = (byte) (rotation % 8);
+        this.notifyFootprintChanged();
+    }
+
+    public void setFootprintListener(ItemFootprintListener listener) {
+        this.footprintListener = listener;
+    }
+
+    /** Detaches the listener only if it is still this one, so a newer room keeps its own. */
+    public void clearFootprintListener(ItemFootprintListener listener) {
+        if (this.footprintListener == listener) {
+            this.footprintListener = null;
+        }
+    }
+
+    private void notifyFootprintChanged() {
+        ItemFootprintListener listener = this.footprintListener;
+        if (listener != null) {
+            listener.onFootprintChanged(this);
+        }
     }
 
     public String getExtradata() {
@@ -275,6 +344,7 @@ public abstract class HabboItem implements Runnable, IEventTriggers {
     }
 
     public void needsUpdate(boolean value) {
+        if (value) this.saveGeneration.incrementAndGet();
         this.needsUpdate = value;
     }
 
@@ -298,8 +368,45 @@ public abstract class HabboItem implements Runnable, IEventTriggers {
         return this.baseItem.getRotations();
     }
 
+    public boolean isTemporary() {
+        return this.temporary;
+    }
+
+    public void markTemporary() {
+        this.temporary = true;
+    }
+
+    /** A temporary copy placed by a box: its owner may pick the copy up, like the room owner. */
+    public void markTemporary(int ownerId) {
+        this.markTemporary();
+        this.temporaryOwnerId = ownerId;
+    }
+
+    /** The owner of the box that placed this temporary copy, or 0. */
+    public int getTemporaryOwnerId() {
+        return this.temporaryOwnerId;
+    }
+
     @Override
     public void run() {
+        synchronized (this.saveLock) {
+            this.save();
+        }
+    }
+
+    private void save() {
+        if (this.temporary) {
+            // No row to write or delete.
+            this.needsUpdate = false;
+            this.needsDelete = false;
+            return;
+        }
+
+        if (this.needsDelete) {
+            // A wired chest gives what it holds back to its owner before its row goes.
+            ChestRelease.releaseToOwner(this);
+        }
+
         try (Connection connection = Emulator.getDatabase().getDataSource().getConnection()) {
             if (this.needsDelete) {
                 this.needsUpdate = false;
@@ -310,8 +417,10 @@ public abstract class HabboItem implements Runnable, IEventTriggers {
                     statement.execute();
                 }
             } else if (this.needsUpdate) {
+                long generation = this.saveGeneration.get();
+
                 try (PreparedStatement statement = connection.prepareStatement(
-                        "UPDATE items SET user_id = ?, room_id = ?, wall_pos = ?, x = ?, y = ?, z = ?, rot = ?, extra_data = ?, limited_data = ? WHERE id = ?")) {
+                        "UPDATE items SET user_id = ?, room_id = ?, wall_pos = ?, x = ?, y = ?, z = ?, rot = ?, extra_data = ?, limited_data = ?, expires = ?, allow_underpass = ? WHERE id = ?")) {
                     statement.setInt(1, this.databaseUserId);
                     statement.setInt(2, this.roomId);
                     statement.setString(3, this.wallPosition);
@@ -322,14 +431,16 @@ public abstract class HabboItem implements Runnable, IEventTriggers {
                     statement.setInt(7, this.rotation);
                     statement.setString(8, this instanceof InteractionGuildGate ? "" : this.getDatabaseExtraData());
                     statement.setString(9, this.limitedStack + ":" + this.limitedSells);
-                    statement.setInt(10, this.id);
+                    statement.setInt(10, this.expiresTimestamp);
+                    statement.setInt(11, this.allowUnderpass ? 1 : 0);
+                    statement.setInt(12, this.id);
                     statement.execute();
                 } catch (SQLException e) {
                     LOGGER.error("Caught SQL exception", e);
                     LOGGER.error("SQLException trying to save HabboItem: {}", this.toString());
                 }
 
-                this.needsUpdate = false;
+                if (this.saveGeneration.get() == generation) this.needsUpdate = false;
             }
 
         } catch (SQLException e) {
@@ -337,7 +448,45 @@ public abstract class HabboItem implements Runnable, IEventTriggers {
         }
     }
 
+    /** Unix timestamp the rent period ends at, {@link RentableFurniture#NEVER} when the furni is owned outright. */
+    public int getExpiresTimestamp() {
+        return this.expiresTimestamp;
+    }
+
+    public void setExpiresTimestamp(int expiresTimestamp) {
+        this.expiresTimestamp = expiresTimestamp;
+    }
+
+    /** True when avatars may walk underneath this item regardless of the room-wide underpass setting. */
+    public boolean isAllowUnderpass() {
+        return this.allowUnderpass;
+    }
+
+    public void setAllowUnderpass(boolean allowUnderpass) {
+        this.allowUnderpass = allowUnderpass;
+    }
+
+    /** True for furni bought through a rent offer that has not been bought out. */
+    public boolean hasRentPeriod() {
+        return RentableFurniture.hasRentPeriod(this.expiresTimestamp);
+    }
+
+    /** Seconds left on the rent period as the client expects them, -1 for furni owned outright. */
+    public int getSecondsToExpiration() {
+        return RentableFurniture.secondsToExpiration(this.expiresTimestamp, Emulator.getIntUnixTimestamp());
+    }
+
     public abstract boolean canWalkOn(RoomUnit roomUnit, Room room, Object[] objects);
+
+    /**
+     * "State changed" for a furni whose state a user changed outside the plain toggle (a dice roll, a vending
+     * machine, a random-state furni), as in Habbo. Behaviour observed in plus-emulator/PlusEMU 54c5c942 and 72f46ba0,
+     * reimplemented.
+     */
+    protected static void notifyStateChanged(Room room, RoomUnit unit, HabboItem item) {
+        WiredManager.triggerFurniStateChanged(room, unit, item);
+        WiredManager.triggerFurniStateUpdated(room, unit, item, false);
+    }
 
     public abstract boolean isWalkable();
 
@@ -357,6 +506,7 @@ public abstract class HabboItem implements Runnable, IEventTriggers {
                     || isTogglingInteraction
                     || (objects != null && objects.length == 1 && objects[0].equals("TOGGLE_OVERRIDE"))) {
                 WiredManager.triggerFurniStateChanged(room, client.getHabbo().getRoomUnit(), this);
+                WiredManager.triggerFurniStateUpdated(room, client.getHabbo().getRoomUnit(), this, false);
             }
         }
     }
@@ -367,6 +517,9 @@ public abstract class HabboItem implements Runnable, IEventTriggers {
         return;*/
 
         WiredManager.triggerUserWalksOn(room, roomUnit, this);
+        if (roomUnit != null && roomUnit.getRoomUnitType() == RoomUnitType.BOT) {
+            WiredManager.triggerBotReachedFurni(room, roomUnit, this);
+        }
 
         if ((this.getBaseItem().allowSit() || this.getBaseItem().allowLay())
                 && !roomUnit.getDanceType().equals(DanceType.NONE)) {

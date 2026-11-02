@@ -14,31 +14,36 @@ import com.eu.habbo.habbohotel.wired.core.WiredEvent;
 import com.eu.habbo.habbohotel.wired.core.WiredManager;
 import com.eu.habbo.habbohotel.wired.tick.WiredTickable;
 import com.eu.habbo.messages.ServerMessage;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Long-interval one-shot timer wired trigger.
+ * Long-interval one-shot timer wired trigger: {@link WiredTriggerRepeaterLong} is to
+ * {@link WiredTriggerRepeater} what this is to the plain given-time timer.
  * <p>
- * Uses the new 50ms tick system via {@link WiredTickable} for accurate
- * timing with 5-second increments.
+ * Uses the new 50ms tick system via {@link WiredTickable} for accurate timing with 5-second
+ * increments. Stored values are milliseconds, so rows written while this was a half-second clone
+ * keep loading; only the client units changed. It reports
+ * {@link WiredTriggerType#AT_GIVEN_TIME_LONG}, so the event fired from {@link #onWiredTick} has to
+ * be one whose legacy type maps there, or the room index never finds this stack.
  * </p>
  */
 public class WiredTriggerAtTimeLong extends InteractionWiredTrigger implements WiredTickable, WiredTriggerReset {
-    private static final WiredTriggerType type = WiredTriggerType.AT_GIVEN_TIME;
-    private static final int STEP_MS = 500;
+    private static final WiredTriggerType type = WiredTriggerType.AT_GIVEN_TIME_LONG;
+    private static final int STEP_MS = 5000;
     private static final int MIN_DELAY = STEP_MS;
     private static final int LEGACY_FALLBACK_DELAY = 20 * STEP_MS;
-    
+
     /** The time in milliseconds until the trigger fires */
+    private final WiredRoomGridTimer gridTimer = new WiredRoomGridTimer();
+
     private int executeTime;
-    
+
     /** Accumulated time since last reset (in milliseconds) */
     private long accumulatedTime = 0;
-    
+
     /** Whether the timer has fired and is waiting for reset */
     private boolean hasFired = false;
 
@@ -83,8 +88,9 @@ public class WiredTriggerAtTimeLong extends InteractionWiredTrigger implements W
             storedExecuteTime = null;
         }
 
-        this.executeTime = WiredTimerInputGuard.normalizeStoredMillis(storedExecuteTime, MIN_DELAY, LEGACY_FALLBACK_DELAY);
-        
+        this.executeTime =
+                WiredTimerInputGuard.normalizeStoredMillis(storedExecuteTime, MIN_DELAY, LEGACY_FALLBACK_DELAY);
+
         // Initialize for tick system
         this.accumulatedTime = 0;
         this.hasFired = false;
@@ -111,7 +117,7 @@ public class WiredTriggerAtTimeLong extends InteractionWiredTrigger implements W
         message.appendInt(this.getId());
         message.appendString("");
         message.appendInt(1);
-        message.appendInt(this.executeTime / 500);
+        message.appendInt(this.executeTime / STEP_MS);
         message.appendInt(1);
         message.appendInt(this.getType().code);
 
@@ -135,7 +141,7 @@ public class WiredTriggerAtTimeLong extends InteractionWiredTrigger implements W
     public boolean saveData(WiredSettings settings) {
         if (settings.getIntParams().length < 1) return false;
         this.executeTime = WiredTimerInputGuard.fromClientUnits(settings.getIntParams()[0], STEP_MS, MIN_DELAY);
-        
+
         this.resetTimer();
 
         return true;
@@ -149,12 +155,9 @@ public class WiredTriggerAtTimeLong extends InteractionWiredTrigger implements W
         if (this.hasFired) {
             return;
         }
-        
-        // Add fixed tick interval
-        this.accumulatedTime += tickIntervalMs;
-        
-        // Check if enough time has passed
-        if (this.accumulatedTime >= this.executeTime) {
+
+        // Counted on the room's 500 ms grid from the first room tick after the reset, as in Habbo.
+        if (this.gridTimer.isDue(room.getCycleTimestamp(), System.currentTimeMillis(), this.executeTime)) {
             if (this.getRoomId() != 0 && room.isLoaded()) {
                 long currentTime = System.currentTimeMillis();
                 if (!WiredManager.isTriggerExecutionAllowed(room, this, currentTime)) {
@@ -163,7 +166,7 @@ public class WiredTriggerAtTimeLong extends InteractionWiredTrigger implements W
 
                 this.hasFired = true;
                 this.accumulatedTime = 0;
-                WiredManager.triggerTimerTick(room, this);
+                WiredManager.triggerTimerTickLong(room, this);
                 return;
             }
 
@@ -176,12 +179,14 @@ public class WiredTriggerAtTimeLong extends InteractionWiredTrigger implements W
     public void resetTimer() {
         this.accumulatedTime = 0;
         this.hasFired = false;
+        this.gridTimer.reset(System.currentTimeMillis());
     }
 
     @Override
     public void onRegistered(Room room, long currentTimeMillis) {
         this.accumulatedTime = 0;
         this.hasFired = false;
+        this.gridTimer.reset(currentTimeMillis);
     }
 
     @Override

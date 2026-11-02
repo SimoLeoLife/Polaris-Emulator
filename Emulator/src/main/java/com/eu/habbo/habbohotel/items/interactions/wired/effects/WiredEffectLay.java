@@ -5,6 +5,7 @@ import com.eu.habbo.habbohotel.gameclients.GameClient;
 import com.eu.habbo.habbohotel.items.Item;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredEffect;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredTrigger;
+import com.eu.habbo.habbohotel.items.interactions.wired.WiredInputGuard;
 import com.eu.habbo.habbohotel.items.interactions.wired.WiredSettings;
 import com.eu.habbo.habbohotel.rooms.Room;
 import com.eu.habbo.habbohotel.rooms.RoomTile;
@@ -13,25 +14,23 @@ import com.eu.habbo.habbohotel.rooms.RoomUnitStatus;
 import com.eu.habbo.habbohotel.rooms.RoomUserRotation;
 import com.eu.habbo.habbohotel.users.Habbo;
 import com.eu.habbo.habbohotel.wired.WiredEffectType;
-import com.eu.habbo.habbohotel.wired.core.WiredManager;
 import com.eu.habbo.habbohotel.wired.core.WiredContext;
+import com.eu.habbo.habbohotel.wired.core.WiredManager;
 import com.eu.habbo.habbohotel.wired.core.WiredSourceUtil;
 import com.eu.habbo.habbohotel.wired.core.WiredTextPlaceholderUtil;
 import com.eu.habbo.messages.ServerMessage;
 import com.eu.habbo.messages.incoming.wired.WiredSaveException;
 import com.eu.habbo.messages.outgoing.rooms.users.RoomUserStatusComposer;
-
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class WiredEffectLay extends InteractionWiredEffect {
     private static final Logger LOGGER = LoggerFactory.getLogger(WiredEffectLay.class);
-    public static final WiredEffectType type = WiredEffectType.KICK_USER;
+    public static final WiredEffectType type = WiredEffectType.USER_TARGET;
 
     private String message = "";
     private int userSource = WiredSourceUtil.SOURCE_TRIGGER;
@@ -59,7 +58,10 @@ public class WiredEffectLay extends InteractionWiredEffect {
             unit.cmdLay = true;
             room.updateHabbo(habbo);
             unit.cmdSit = true;
-            unit.setBodyRotation(RoomUserRotation.values()[unit.getBodyRotation().getValue() - unit.getBodyRotation().getValue() % 2]);
+            unit.setBodyRotation(
+                    RoomUserRotation.values()[
+                            unit.getBodyRotation().getValue()
+                                    - unit.getBodyRotation().getValue() % 2]);
 
             RoomTile tile = unit.getCurrentLocation();
             if (tile == null) {
@@ -68,7 +70,8 @@ public class WiredEffectLay extends InteractionWiredEffect {
 
             boolean blocked = false;
             for (int i = 0; i < 3; i++) {
-                RoomTile front = room.getLayout().getTileInFront(tile, unit.getBodyRotation().getValue(), i);
+                RoomTile front = room.getLayout()
+                        .getTileInFront(tile, unit.getBodyRotation().getValue(), i);
                 if (front == null || !front.isWalkable()) {
                     blocked = true;
                     break;
@@ -80,6 +83,7 @@ public class WiredEffectLay extends InteractionWiredEffect {
 
             unit.setStatus(RoomUnitStatus.LAY, 0.5 + "");
             room.sendComposer(new RoomUserStatusComposer(unit).compose());
+            WiredEffectUserMessage.whisper(ctx, habbo, this.message);
         }
     }
 
@@ -98,13 +102,12 @@ public class WiredEffectLay extends InteractionWiredEffect {
     public void loadWiredData(ResultSet set, Room room) throws SQLException {
         String wiredData = set.getString("wired_data");
 
-        if(wiredData.startsWith("{")) {
+        if (wiredData.startsWith("{")) {
             JsonData data = WiredManager.getGson().fromJson(wiredData, JsonData.class);
             this.setDelay(data.delay);
             this.message = data.message;
             this.userSource = data.userSource;
-        }
-        else {
+        } else {
             try {
                 String[] data = set.getString("wired_data").split("\t");
 
@@ -145,8 +148,7 @@ public class WiredEffectLay extends InteractionWiredEffect {
         message.appendInt(this.getBaseItem().getSpriteId());
         message.appendInt(this.getId());
         message.appendString(this.message);
-        message.appendInt(1);
-        message.appendInt(this.userSource);
+        message.appendInt(0);
         message.appendInt(0);
         message.appendInt(this.getType().code);
         message.appendInt(this.getDelay());
@@ -171,13 +173,15 @@ public class WiredEffectLay extends InteractionWiredEffect {
     public boolean saveData(WiredSettings settings, GameClient gameClient) throws WiredSaveException {
         String message = settings.getStringParam();
         int[] params = settings.getIntParams();
-        this.userSource = (params.length > 0) ? params[0] : WiredSourceUtil.SOURCE_TRIGGER;
+        // Official: no int params; the user source is the official source slot.
+        this.userSource = settings.userSource(0, WiredSourceUtil.SOURCE_TRIGGER);
         int delay = settings.getDelay();
 
-        if(delay > Emulator.getConfig().getInt("hotel.wired.max_delay", 20))
+        if (delay > Emulator.getConfig().getInt("hotel.wired.max_delay", WiredInputGuard.DEFAULT_MAX_DELAY))
             throw new WiredSaveException("Delay too long");
 
-        this.message = message.substring(0, Math.min(message.length(), Emulator.getConfig().getInt("hotel.wired.message.max_length", 100)));
+        this.message = message.substring(
+                0, Math.min(message.length(), Emulator.getConfig().getInt("hotel.wired.message.max_length", 100)));
         this.setDelay(delay);
 
         return true;
@@ -185,7 +189,8 @@ public class WiredEffectLay extends InteractionWiredEffect {
 
     @Override
     public boolean requiresTriggeringUser() {
-        return this.userSource == WiredSourceUtil.SOURCE_TRIGGER || WiredTextPlaceholderUtil.requiresActor(this.getRoom(), this);
+        return this.userSource == WiredSourceUtil.SOURCE_TRIGGER
+                || WiredTextPlaceholderUtil.requiresActor(this.getRoom(), this);
     }
 
     static class JsonData {

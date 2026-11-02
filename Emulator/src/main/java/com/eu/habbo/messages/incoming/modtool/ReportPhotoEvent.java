@@ -4,7 +4,9 @@ import com.eu.habbo.Emulator;
 import com.eu.habbo.habbohotel.items.interactions.InteractionExternalImage;
 import com.eu.habbo.habbohotel.modtool.CfhTopic;
 import com.eu.habbo.habbohotel.modtool.ModToolIssue;
+import com.eu.habbo.habbohotel.modtool.ModToolManager;
 import com.eu.habbo.habbohotel.modtool.ModToolTicketType;
+import com.eu.habbo.habbohotel.rooms.BuildersClubItemIds;
 import com.eu.habbo.habbohotel.rooms.Room;
 import com.eu.habbo.habbohotel.users.HabboInfo;
 import com.eu.habbo.habbohotel.users.HabboItem;
@@ -14,7 +16,15 @@ import com.eu.habbo.threading.runnables.InsertModToolIssue;
 
 public class ReportPhotoEvent extends MessageHandler {
     @Override
+    public int getRatelimit() {
+        return ModToolReportGate.RATE_LIMIT_MS;
+    }
+
+    @Override
     public void handle() throws Exception {
+        ModToolManager modTools = Emulator.getGameEnvironment().getModToolManager();
+        if (ModToolReportGate.refuse(this.client, modTools)) return;
+
         boolean hasExtradataId = this.packet.readShort() != 0;
 
         this.packet.getBuffer().resetReaderIndex();
@@ -26,15 +36,27 @@ public class ReportPhotoEvent extends MessageHandler {
         int roomId = this.packet.readInt();
         this.packet.readInt();
         int topicId = this.packet.readInt();
-        int itemId = this.packet.readInt();
+        int itemId = BuildersClubItemIds.fromWire(this.currentRoom(), this.packet.readInt());
+        // Official class_2390 and friends end with the unlawful-activity reporter name and
+        // e-mail; older clients stop before them, so they are read only while bytes remain.
+        String reporterName = "";
+        String reporterEmail = "";
 
-        if (!ModToolReportInputGuard.isPositiveId(roomId) ||
-                !ModToolReportInputGuard.isPositiveId(topicId) ||
-                !ModToolReportInputGuard.isPositiveId(itemId)) {
+        if (this.packet.bytesAvailable() > 0) {
+            reporterName = this.packet.readString();
+        }
+
+        if (this.packet.bytesAvailable() > 0) {
+            reporterEmail = this.packet.readString();
+        }
+
+        if (!ModToolReportInputGuard.isPositiveId(roomId)
+                || !ModToolReportInputGuard.isPositiveId(topicId)
+                || !ModToolReportInputGuard.isPositiveId(itemId)) {
             return;
         }
 
-        CfhTopic topic = Emulator.getGameEnvironment().getModToolManager().getCfhTopic(topicId);
+        CfhTopic topic = modTools.getCfhTopic(topicId);
 
         if (topic == null) return;
 
@@ -50,13 +72,22 @@ public class ReportPhotoEvent extends MessageHandler {
 
         if (photoOwner == null) return;
 
-        ModToolIssue issue = new ModToolIssue(this.client.getHabbo().getHabboInfo().getId(), this.client.getHabbo().getHabboInfo().getUsername(), photoOwner.getId(), photoOwner.getUsername(), roomId, "", ModToolTicketType.PHOTO);
+        ModToolIssue issue = new ModToolIssue(
+                this.client.getHabbo().getHabboInfo().getId(),
+                this.client.getHabbo().getHabboInfo().getUsername(),
+                photoOwner.getId(),
+                photoOwner.getUsername(),
+                roomId,
+                ModToolReportInputGuard.withReporterContact("", reporterName, reporterEmail),
+                ModToolTicketType.PHOTO);
         issue.photoItem = item;
+        issue.category = topicId;
 
         new InsertModToolIssue(issue).run();
 
-        this.client.sendResponse(new ModToolReportReceivedAlertComposer(ModToolReportReceivedAlertComposer.REPORT_RECEIVED, ""));
-        Emulator.getGameEnvironment().getModToolManager().addTicket(issue);
-        Emulator.getGameEnvironment().getModToolManager().updateTicketToMods(issue);
+        this.client.sendResponse(
+                new ModToolReportReceivedAlertComposer(ModToolReportReceivedAlertComposer.REPORT_RECEIVED, ""));
+        modTools.addTicket(issue);
+        modTools.updateTicketToMods(issue);
     }
 }

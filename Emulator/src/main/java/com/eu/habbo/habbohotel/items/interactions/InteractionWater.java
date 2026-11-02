@@ -3,34 +3,73 @@ package com.eu.habbo.habbohotel.items.interactions;
 import com.eu.habbo.habbohotel.bots.Bot;
 import com.eu.habbo.habbohotel.items.Item;
 import com.eu.habbo.habbohotel.pets.Pet;
-import com.eu.habbo.habbohotel.rooms.*;
+import com.eu.habbo.habbohotel.rooms.Room;
+import com.eu.habbo.habbohotel.rooms.RoomLayout;
+import com.eu.habbo.habbohotel.rooms.RoomTile;
+import com.eu.habbo.habbohotel.rooms.RoomUnit;
+import com.eu.habbo.habbohotel.rooms.RoomUnitStatus;
 import com.eu.habbo.habbohotel.users.Habbo;
 import com.eu.habbo.habbohotel.users.HabboItem;
-import org.apache.commons.math3.util.Pair;
-
-import java.awt.*;
+import java.awt.Rectangle;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.List;
 import java.util.Set;
+import org.apache.commons.math3.util.Pair;
 
+/**
+ * Water furni (bw_water_1/2, val13_water, stackable_water). Each piece stores a mask of which
+ * neighbouring tiles hold the same kind of water, so the client draws touching pieces as one pool.
+ * Different kinds keep their shore edge between them; shallow and deep bw water still join at the
+ * corners. Stackable water may also be placed on other furni.
+ */
 public class InteractionWater extends InteractionDefault {
 
+    private static final String SHALLOW_WATER_NAME = "bw_water_1";
     private static final String DEEP_WATER_NAME = "bw_water_2";
+    private static final String STACKABLE_WATER_NAME = "stackable_water";
 
     private final boolean isDeepWater;
     private boolean isInRoom;
 
     public InteractionWater(ResultSet set, Item baseItem) throws SQLException {
         super(set, baseItem);
-        this.isDeepWater = baseItem.getName().equalsIgnoreCase(DEEP_WATER_NAME);
+        this.isDeepWater = isNamed(baseItem, DEEP_WATER_NAME);
         this.isInRoom = this.getRoomId() != 0;
     }
 
     public InteractionWater(int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
         super(id, userId, item, extradata, limitedStack, limitedSells);
-        this.isDeepWater = false;
+        this.isDeepWater = isNamed(item, DEEP_WATER_NAME);
         this.isInRoom = this.getRoomId() != 0;
+    }
+
+    private static boolean isNamed(Item item, String name) {
+        return item != null && item.getName() != null && item.getName().equalsIgnoreCase(name);
+    }
+
+    private static boolean isBwWater(Item item) {
+        return isNamed(item, SHALLOW_WATER_NAME) || isNamed(item, DEEP_WATER_NAME);
+    }
+
+    /** Recomputes this piece's mask, for water that was placed before its kind joined (room load). */
+    public void refreshMask(Room room) {
+        if (room != null && this.isInRoom) {
+            this.updateWater(room);
+        }
+    }
+
+    /**
+     * Whether this piece joins the other water piece at a neighbouring tile: the same kind always
+     * does; shallow bw water also takes deep bw water at its corners to avoid clipping.
+     */
+    boolean joins(InteractionWater other, boolean corner) {
+        Item mine = this.getBaseItem();
+        Item theirs = other.getBaseItem();
+        if (mine != null && theirs != null && mine.getId() == theirs.getId()) {
+            return true;
+        }
+        return isBwWater(mine) && isBwWater(theirs) && corner && !this.isDeepWater;
     }
 
     @Override
@@ -44,7 +83,7 @@ public class InteractionWater extends InteractionDefault {
         this.isInRoom = false;
         this.updateWaters(room, null);
 
-        Object[] empty = new Object[]{};
+        Object[] empty = new Object[] {};
         for (Habbo habbo : room.getHabbosOnItem(this)) {
             try {
                 this.onWalkOff(habbo.getRoomUnit(), room, empty);
@@ -74,8 +113,7 @@ public class InteractionWater extends InteractionDefault {
 
         Pet pet = room.getPet(roomUnit);
 
-        if(pet == null)
-            return;
+        if (pet == null) return;
 
         if (!pet.getRoomUnit().hasStatus(RoomUnitStatus.SWIM) && pet.getPetData().canSwim) {
             pet.getRoomUnit().setStatus(RoomUnitStatus.SWIM, "");
@@ -88,8 +126,7 @@ public class InteractionWater extends InteractionDefault {
 
         Pet pet = room.getPet(roomUnit);
 
-        if(pet == null)
-            return;
+        if (pet == null) return;
 
         pet.getRoomUnit().removeStatus(RoomUnitStatus.SWIM);
     }
@@ -106,6 +143,10 @@ public class InteractionWater extends InteractionDefault {
 
     @Override
     public boolean canStackAt(Room room, List<Pair<RoomTile, Set<HabboItem>>> itemsAtLocation) {
+        if (isNamed(this.getBaseItem(), STACKABLE_WATER_NAME)) {
+            return super.canStackAt(room, itemsAtLocation);
+        }
+
         for (Pair<RoomTile, Set<HabboItem>> set : itemsAtLocation) {
             for (HabboItem item : set.getValue()) {
                 if (!(item instanceof InteractionWater)) {
@@ -282,11 +323,7 @@ public class InteractionWater extends InteractionDefault {
                     continue;
                 }
 
-                // Allow:
-                // - masking if both are deepwater or both not.
-                // - corners too because otherwise causes ugly clipping issues.
-                // This allows deepwater and normal water to look nice.
-                if (corner && !this.isDeepWater || water.isDeepWater == this.isDeepWater) {
+                if (this.joins(water, corner)) {
                     return true;
                 }
             }
@@ -294,5 +331,4 @@ public class InteractionWater extends InteractionDefault {
 
         return false;
     }
-
 }

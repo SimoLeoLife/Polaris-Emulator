@@ -7,24 +7,38 @@ import com.eu.habbo.habbohotel.achievements.TalentTrackType;
 import com.eu.habbo.habbohotel.campaign.calendar.CalendarRewardClaimed;
 import com.eu.habbo.habbohotel.catalog.CatalogItem;
 import com.eu.habbo.habbohotel.gameclients.GameClient;
+import com.eu.habbo.habbohotel.messenger.ConsoleMessageThrottle;
 import com.eu.habbo.habbohotel.permissions.Permission;
+import com.eu.habbo.habbohotel.permissions.RankLimits;
 import com.eu.habbo.habbohotel.rooms.RoomChatMessageBubbles;
 import com.eu.habbo.habbohotel.rooms.RoomTrade;
 import com.eu.habbo.habbohotel.users.cache.HabboOfferPurchase;
 import com.eu.habbo.habbohotel.users.subscriptions.Subscription;
+import com.eu.habbo.messages.incoming.users.UserPreferencePackets;
 import com.eu.habbo.plugin.events.users.subscriptions.UserSubscriptionCreatedEvent;
 import com.eu.habbo.plugin.events.users.subscriptions.UserSubscriptionExtendedEvent;
 import gnu.trove.map.hash.THashMap;
 import it.unimi.dsi.fastutil.ints.Int2ObjectMap;
 import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.ints.IntArrayList;
+import java.lang.reflect.Constructor;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import java.lang.reflect.Constructor;
-import java.sql.*;
-import java.util.*;
-import java.util.concurrent.atomic.AtomicInteger;
 
 public class HabboStats implements Runnable {
 
@@ -33,23 +47,38 @@ public class HabboStats implements Runnable {
     public final IntArrayList secretRecipes;
     public final HabboNavigatorWindowSettings navigatorWindowSettings;
     public final THashMap<String, Object> cache;
-    // public final Map<String, Object> cache;
     public final ArrayList<CalendarRewardClaimed> calendarRewardsClaimed;
     public final Int2ObjectMap<HabboOfferPurchase> offerCache = new Int2ObjectOpenHashMap<>();
     private final AtomicInteger lastOnlineTime = new AtomicInteger(Emulator.getIntUnixTimestamp());
+    private final int sessionStartedAt = this.lastOnlineTime.get();
+    private final int previousOnlineTime;
     private final Map<Achievement, Integer> achievementProgress;
     private final Map<Achievement, Integer> achievementCache;
+    private static final int RECENT_PURCHASES_LIMIT = 50; // Here you can set the limit of recent items bought
     private final Map<Integer, CatalogItem> recentPurchases;
+    private List<Integer> recentPurchaseIds = null;
+    private boolean recentPurchasesInitialized = false;
     private final IntArrayList favoriteRooms;
     private final IntArrayList ignoredUsers;
+    /** Official BlockedUsersManager list (packets 485 / 697 / 1886 / 2649), keyed by user id. */
+    private final IntArrayList blockedUsers;
+    /** A script could block hundreds of thousands of ids, one row each. */
+    static final int MAX_BLOCKED_USERS = 500;
+
+    private final UserWordFilter customWordFilter;
     private IntArrayList roomsVists;
     public int achievementScore;
     public int respectPointsReceived;
     public int respectPointsGiven;
     public int respectPointsToGive;
     public int petRespectPointsToGive;
+    /** Official respectReplenishesLeft: how many daily-respect buybacks are left today. */
+    public int respectReplenishesLeft;
+
     public boolean blockFollowing;
     public boolean blockFriendRequests;
+    public boolean hideOnline;
+    public boolean hideProfile;
     public boolean blockRoomInvites;
     public boolean blockStaffAlerts;
     public boolean preferOldChat;
@@ -58,6 +87,24 @@ public class HabboStats implements Runnable {
     public int volumeSystem;
     public int volumeFurni;
     public int volumeTrax;
+    public int volumeSoundboard;
+    public int chatMode;
+    public int chatBubbleWidth;
+    public int chatScrollSpeed;
+    public int onlineIndicatorPreference;
+    public boolean wiredWhisperDisabled;
+    /** The official wired menu preferences as {@code UserPreferencePackets.WiredMenuPreferences} encodes them; "" until saved. */
+    public String wiredMenuPreferences = "";
+    /** The playtest switch of {@link #wiredMenuPreferences}, kept apart so room checks read it cheaply. */
+    private volatile boolean playTestMode;
+    /** Official UserInfo.accountSafetyLocked / AccountSafetyLockStatusChange (1243). */
+    public boolean safetyLocked;
+    /** Official ModToolPreferences (31): the issue handler window geometry. */
+    public int modToolWindowX;
+
+    public int modToolWindowY;
+    public int modToolWindowWidth;
+    public int modToolWindowHeight;
     public int guild;
     public List<Integer> guilds;
     public String[] tags;
@@ -72,8 +119,13 @@ public class HabboStats implements Runnable {
     public int helpersLevel;
     public boolean perkTrade;
     public long roomEnterTimestamp;
+    // Room id and wall clock millis of the last room open; drive the room entry throttle.
+    public volatile int roomOpenedId;
+    public volatile long roomOpenedAtMillis;
     public AtomicInteger chatCounter = new AtomicInteger(0);
+    public final AtomicBoolean singingPirate = new AtomicBoolean(false);
     public long lastChat;
+    private final ConsoleMessageThrottle consoleThrottle = new ConsoleMessageThrottle();
     public long lastUsersSearched;
     public boolean nux;
     public boolean nuxReward;
@@ -93,6 +145,7 @@ public class HabboStats implements Runnable {
     public boolean hasGottenDefaultSavedSearches;
     private HabboInfo habboInfo;
     private boolean allowTrade;
+    private DiscordPreferences discordPreferences = DiscordPreferences.UNINITIALIZED;
     private boolean mentionsEnabled;
     private boolean massMentionsEnabled;
     private int clubExpireTimestamp;
@@ -102,6 +155,7 @@ public class HabboStats implements Runnable {
     public int lastHCPayday;
     public int hcGiftsClaimed;
     public int buildersClubBonusFurni;
+    private int buildersClubPackageFurniLimit;
     public int hcMessageLastModified = Emulator.getIntUnixTimestamp();
     public Set<Subscription> subscriptions;
 
@@ -109,22 +163,51 @@ public class HabboStats implements Runnable {
         this.cache = new THashMap<>(1000);
         this.achievementProgress = new HashMap<>(0);
         this.achievementCache = new HashMap<>(0);
-        this.recentPurchases = new HashMap<>(0);
+        this.recentPurchases = new LinkedHashMap<>(0);
         this.favoriteRooms = new IntArrayList(0);
         this.ignoredUsers = new IntArrayList(0);
+        this.blockedUsers = new IntArrayList(0);
+        this.customWordFilter = new UserWordFilter();
         this.roomsVists = new IntArrayList(0);
         this.secretRecipes = new IntArrayList(0);
         this.calendarRewardsClaimed = new ArrayList<>();
 
         this.habboInfo = habboInfo;
 
+        this.previousOnlineTime = set.getInt("online_time");
+        this.readStatsRow(set);
+
+        this.nuxReward = this.nux;
+
+        this.subscriptions =
+                Emulator.getGameEnvironment().getSubscriptionManager().getSubscriptionsForUser(this.habboInfo.getId());
+
+        Connection connection = set.getStatement().getConnection();
+        this.navigatorWindowSettings = this.loadNavigatorSettings(connection);
+        this.loadFavoriteRooms(connection);
+        this.loadSecretRecipes(connection);
+        this.loadCalendarRewards(connection);
+        this.loadLtdPurchaseLog(connection);
+        this.loadIgnoredUsers(connection);
+        this.loadBlockedUsers(connection);
+        this.loadDiscordPreferences(connection);
+        this.loadWordFilter(connection);
+        this.loadOfferPurchases(connection);
+        this.loadVisitedRooms(connection);
+    }
+
+    /** The columns of the user's stats row. */
+    private void readStatsRow(ResultSet set) throws SQLException {
         this.achievementScore = set.getInt("achievement_score");
         this.respectPointsReceived = set.getInt("respects_received");
         this.respectPointsGiven = set.getInt("respects_given");
         this.petRespectPointsToGive = set.getInt("daily_pet_respect_points");
         this.respectPointsToGive = set.getInt("daily_respect_points");
+        this.respectReplenishesLeft = safeColumnInt(set, "daily_respect_replenishes", 0);
         this.blockFollowing = set.getString("block_following").equals("1");
         this.blockFriendRequests = set.getString("block_friendrequests").equals("1");
+        this.hideOnline = "1".equals(safeColumnString(set, "hide_online", "0"));
+        this.hideProfile = "1".equals(safeColumnString(set, "hide_profile", "0"));
         this.blockRoomInvites = set.getString("block_roominvites").equals("1");
         this.preferOldChat = set.getString("old_chat").equals("1");
         this.blockCameraFollow = set.getString("block_camera_follow").equals("1");
@@ -142,6 +225,22 @@ public class HabboStats implements Runnable {
         this.volumeSystem = set.getInt("volume_system");
         this.volumeFurni = set.getInt("volume_furni");
         this.volumeTrax = set.getInt("volume_trax");
+        this.volumeSoundboard = set.getInt("volume_soundboard");
+        this.chatMode = UserPreferencePackets.sanitizeChatMode(safeColumnInt(set, "chat_mode", 0));
+        this.chatBubbleWidth =
+                UserPreferencePackets.sanitizeChatBubbleWidth(safeColumnInt(set, "chat_bubble_width", 1));
+        this.chatScrollSpeed =
+                UserPreferencePackets.sanitizeChatScrollSpeed(safeColumnInt(set, "chat_scroll_speed", 1));
+        this.onlineIndicatorPreference = UserPreferencePackets.sanitizeOnlineIndicatorPreference(
+                safeColumnInt(set, "online_indicator_preference", 0));
+        this.wiredWhisperDisabled = "1".equals(safeColumnString(set, "wired_whisper_disabled", "0"));
+        this.wiredMenuPreferences = safeColumnString(set, "wired_menu_preferences", "");
+        this.playTestMode = UserPreferencePackets.isPlayTestModeStored(this.wiredMenuPreferences);
+        this.safetyLocked = "1".equals(safeColumnString(set, "safety_locked", "0"));
+        this.modToolWindowX = safeColumnInt(set, "modtool_window_x", 0);
+        this.modToolWindowY = safeColumnInt(set, "modtool_window_y", 0);
+        this.modToolWindowWidth = safeColumnInt(set, "modtool_window_width", 0);
+        this.modToolWindowHeight = safeColumnInt(set, "modtool_window_height", 0);
         this.chatColor = RoomChatMessageBubbles.getBubble(set.getInt("chat_color"));
         this.hofPoints = set.getInt("hof_points");
         this.blockStaffAlerts = set.getString("block_alerts").equals("1");
@@ -161,106 +260,150 @@ public class HabboStats implements Runnable {
         this.lastHCPayday = set.getInt("last_hc_payday");
         this.hcGiftsClaimed = set.getInt("hc_gifts_claimed");
         this.buildersClubBonusFurni = set.getInt("builders_club_bonus_furni");
+        this.buildersClubPackageFurniLimit = set.getInt("builders_club_furni_limit");
+    }
 
-        this.nuxReward = this.nux;
+    /** One row of a result set, read into the stats. */
+    @FunctionalInterface
+    private interface RowReader {
+        void read(ResultSet row) throws SQLException;
+    }
 
-        this.subscriptions = Emulator.getGameEnvironment().getSubscriptionManager().getSubscriptionsForUser(this.habboInfo.getId());
-
-        try (PreparedStatement statement = set.getStatement().getConnection().prepareStatement("SELECT * FROM user_window_settings WHERE user_id = ? LIMIT 1")) {
+    /** Runs a query that takes the user id as its only parameter and reads every row it returns. */
+    private void forEachUserRow(Connection connection, String sql, RowReader reader) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
             statement.setInt(1, this.habboInfo.getId());
-            try (ResultSet nSet = statement.executeQuery()) {
-                if (nSet.next()) {
-                    this.navigatorWindowSettings = new HabboNavigatorWindowSettings(nSet);
-                } else {
-                    try (PreparedStatement stmt = statement.getConnection().prepareStatement("INSERT INTO user_window_settings (user_id) VALUES (?)")) {
-                        stmt.setInt(1, this.habboInfo.getId());
-                        stmt.executeUpdate();
-                    }
-
-                    this.navigatorWindowSettings = new HabboNavigatorWindowSettings(habboInfo.getId());
-                }
-            }
-        }
-
-        try (PreparedStatement statement = set.getStatement().getConnection().prepareStatement("SELECT * FROM users_navigator_settings WHERE user_id = ?")) {
-            statement.setInt(1, this.habboInfo.getId());
-            try (ResultSet nSet = statement.executeQuery()) {
-                while (nSet.next()) {
-                    this.navigatorWindowSettings.addDisplayMode(nSet.getString("caption"), new HabboNavigatorPersonalDisplayMode(nSet));
-                }
-            }
-        }
-
-        try (PreparedStatement favoriteRoomsStatement = set.getStatement().getConnection().prepareStatement("SELECT * FROM users_favorite_rooms WHERE user_id = ?")) {
-            favoriteRoomsStatement.setInt(1, this.habboInfo.getId());
-            try (ResultSet favoriteSet = favoriteRoomsStatement.executeQuery()) {
-                while (favoriteSet.next()) {
-                    this.favoriteRooms.add(favoriteSet.getInt("room_id"));
-                }
-            }
-
-        }
-
-        try (PreparedStatement recipesStatement = set.getStatement().getConnection().prepareStatement("SELECT * FROM users_recipes WHERE user_id = ?")) {
-            recipesStatement.setInt(1, this.habboInfo.getId());
-            try (ResultSet recipeSet = recipesStatement.executeQuery()) {
-                while (recipeSet.next()) {
-                    this.secretRecipes.add(recipeSet.getInt("recipe"));
-                }
-            }
-        }
-
-        try (PreparedStatement calendarRewardsStatement = set.getStatement().getConnection().prepareStatement("SELECT * FROM calendar_rewards_claimed WHERE user_id = ?")) {
-            calendarRewardsStatement.setInt(1, this.habboInfo.getId());
-            try (ResultSet rewardSet = calendarRewardsStatement.executeQuery()) {
-                while (rewardSet.next()) {
-                    this.calendarRewardsClaimed.add(new CalendarRewardClaimed(rewardSet));
-                }
-            }
-        }
-
-        try (PreparedStatement ltdPurchaseLogStatement = set.getStatement().getConnection().prepareStatement("SELECT catalog_item_id, timestamp FROM catalog_items_limited WHERE user_id = ? AND timestamp > ?")) {
-            ltdPurchaseLogStatement.setInt(1, this.habboInfo.getId());
-            ltdPurchaseLogStatement.setInt(2, Emulator.getIntUnixTimestamp() - 86400);
-            try (ResultSet ltdSet = ltdPurchaseLogStatement.executeQuery()) {
-                while (ltdSet.next()) {
-                    this.addLtdLog(ltdSet.getInt("catalog_item_id"), ltdSet.getInt("timestamp"));
-                }
-            }
-        }
-
-        try (PreparedStatement ignoredPlayersStatement = set.getStatement().getConnection().prepareStatement("SELECT target_id FROM users_ignored WHERE user_id = ?")) {
-            ignoredPlayersStatement.setInt(1, this.habboInfo.getId());
-            try (ResultSet ignoredSet = ignoredPlayersStatement.executeQuery()) {
-                while (ignoredSet.next()) {
-                    this.ignoredUsers.add(ignoredSet.getInt(1));
-                }
-            }
-        }
-
-        try (PreparedStatement loadOfferPurchaseStatement = set.getStatement().getConnection().prepareStatement("SELECT * FROM users_target_offer_purchases WHERE user_id = ?")) {
-            loadOfferPurchaseStatement.setInt(1, this.habboInfo.getId());
-            try (ResultSet offerSet = loadOfferPurchaseStatement.executeQuery()) {
-                while (offerSet.next()) {
-                    this.offerCache.put(offerSet.getInt("offer_id"), new HabboOfferPurchase(offerSet));
-                }
-            }
-        }
-
-        try (PreparedStatement loadRoomsVisit = set.getStatement().getConnection().prepareStatement("SELECT DISTINCT room_id FROM room_enter_log WHERE user_id = ?")) {
-            loadRoomsVisit.setInt(1, this.habboInfo.getId());
-            try (ResultSet roomSet = loadRoomsVisit.executeQuery()) {
-                while (roomSet.next()) {
-                    this.roomsVists.add(roomSet.getInt("room_id"));
+            try (ResultSet rows = statement.executeQuery()) {
+                while (rows.next()) {
+                    reader.read(rows);
                 }
             }
         }
     }
 
+    private HabboNavigatorWindowSettings loadNavigatorSettings(Connection connection) throws SQLException {
+        HabboNavigatorWindowSettings settings;
+
+        try (PreparedStatement statement =
+                connection.prepareStatement("SELECT * FROM user_window_settings WHERE user_id = ? LIMIT 1")) {
+            statement.setInt(1, this.habboInfo.getId());
+            try (ResultSet nSet = statement.executeQuery()) {
+                if (nSet.next()) {
+                    settings = new HabboNavigatorWindowSettings(nSet);
+                } else {
+                    try (PreparedStatement stmt =
+                            connection.prepareStatement("INSERT INTO user_window_settings (user_id) VALUES (?)")) {
+                        stmt.setInt(1, this.habboInfo.getId());
+                        stmt.executeUpdate();
+                    }
+
+                    settings = new HabboNavigatorWindowSettings(this.habboInfo.getId());
+                }
+            }
+        }
+
+        this.forEachUserRow(
+                connection,
+                "SELECT * FROM users_navigator_settings WHERE user_id = ?",
+                row -> settings.addDisplayMode(row.getString("caption"), new HabboNavigatorPersonalDisplayMode(row)));
+
+        return settings;
+    }
+
+    private void loadFavoriteRooms(Connection connection) throws SQLException {
+        this.forEachUserRow(
+                connection,
+                "SELECT * FROM users_favorite_rooms WHERE user_id = ?",
+                row -> this.favoriteRooms.add(row.getInt("room_id")));
+    }
+
+    private void loadSecretRecipes(Connection connection) throws SQLException {
+        this.forEachUserRow(
+                connection,
+                "SELECT * FROM users_recipes WHERE user_id = ?",
+                row -> this.secretRecipes.add(row.getInt("recipe")));
+    }
+
+    private void loadCalendarRewards(Connection connection) throws SQLException {
+        this.forEachUserRow(
+                connection,
+                "SELECT * FROM calendar_rewards_claimed WHERE user_id = ?",
+                row -> this.calendarRewardsClaimed.add(new CalendarRewardClaimed(row)));
+    }
+
+    /** The limited furni this user bought in the last day. */
+    private void loadLtdPurchaseLog(Connection connection) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement(
+                "SELECT catalog_item_id, timestamp FROM catalog_items_limited WHERE user_id = ? AND timestamp > ?")) {
+            statement.setInt(1, this.habboInfo.getId());
+            statement.setInt(2, Emulator.getIntUnixTimestamp() - 86400);
+            try (ResultSet ltdSet = statement.executeQuery()) {
+                while (ltdSet.next()) {
+                    this.addLtdLog(ltdSet.getInt("catalog_item_id"), ltdSet.getInt("timestamp"));
+                }
+            }
+        }
+    }
+
+    private void loadIgnoredUsers(Connection connection) throws SQLException {
+        this.forEachUserRow(
+                connection,
+                "SELECT target_id FROM users_ignored WHERE user_id = ?",
+                row -> this.ignoredUsers.add(row.getInt(1)));
+    }
+
+    private void loadBlockedUsers(Connection connection) throws SQLException {
+        this.forEachUserRow(
+                connection,
+                "SELECT target_id FROM users_blocked WHERE user_id = ?",
+                row -> this.blockedUsers.add(row.getInt(1)));
+    }
+
+    private void loadDiscordPreferences(Connection connection) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement(
+                "SELECT preference_version, show_habbo, share_activity, hide_in_hidden_rooms, allow_joining"
+                        + " FROM users_discord_settings WHERE user_id = ?")) {
+            statement.setInt(1, this.habboInfo.getId());
+            try (ResultSet discordSet = statement.executeQuery()) {
+                if (discordSet.next()) {
+                    this.discordPreferences = new DiscordPreferences(
+                            discordSet.getInt("preference_version"),
+                            discordSet.getString("show_habbo").equals("1"),
+                            discordSet.getString("share_activity").equals("1"),
+                            discordSet.getString("hide_in_hidden_rooms").equals("1"),
+                            discordSet.getString("allow_joining").equals("1"));
+                }
+            }
+        }
+    }
+
+    private void loadWordFilter(Connection connection) throws SQLException {
+        this.forEachUserRow(
+                connection,
+                "SELECT word FROM users_wordfilter WHERE user_id = ?",
+                row -> this.customWordFilter.add(row.getString(1)));
+    }
+
+    private void loadOfferPurchases(Connection connection) throws SQLException {
+        this.forEachUserRow(
+                connection,
+                "SELECT * FROM users_target_offer_purchases WHERE user_id = ?",
+                row -> this.offerCache.put(row.getInt("offer_id"), new HabboOfferPurchase(row)));
+    }
+
+    private void loadVisitedRooms(Connection connection) throws SQLException {
+        this.forEachUserRow(
+                connection,
+                "SELECT DISTINCT room_id FROM room_enter_log WHERE user_id = ?",
+                row -> this.roomsVists.add(row.getInt("room_id")));
+    }
+
     private static HabboStats createNewStats(HabboInfo habboInfo) {
         habboInfo.firstVisit = true;
 
-        try (Connection connection = Emulator.getDatabase().getDataSource().getConnection(); PreparedStatement statement = connection.prepareStatement("INSERT INTO users_settings (user_id) VALUES (?)")) {
+        try (Connection connection = Emulator.getDatabase().getDataSource().getConnection();
+                PreparedStatement statement =
+                        connection.prepareStatement("INSERT INTO users_settings (user_id) VALUES (?)")) {
             statement.setInt(1, habboInfo.getId());
             statement.executeUpdate();
         } catch (SQLException e) {
@@ -273,7 +416,8 @@ public class HabboStats implements Runnable {
     public static HabboStats load(HabboInfo habboInfo) {
         HabboStats stats = null;
         try (Connection connection = Emulator.getDatabase().getDataSource().getConnection()) {
-            try (PreparedStatement statement = connection.prepareStatement("SELECT * FROM users_settings WHERE user_id = ? LIMIT 1")) {
+            try (PreparedStatement statement =
+                    connection.prepareStatement("SELECT * FROM users_settings WHERE user_id = ? LIMIT 1")) {
                 statement.setInt(1, habboInfo.getId());
                 try (ResultSet set = statement.executeQuery()) {
                     set.next();
@@ -286,7 +430,8 @@ public class HabboStats implements Runnable {
             }
 
             if (stats != null) {
-                try (PreparedStatement statement = connection.prepareStatement("SELECT guild_id FROM guilds_members WHERE user_id = ? AND level_id < 3 LIMIT 100")) {
+                try (PreparedStatement statement = connection.prepareStatement(
+                        "SELECT guild_id FROM guilds_members WHERE user_id = ? AND level_id < 3 LIMIT 100")) {
                     statement.setInt(1, habboInfo.getId());
                     try (ResultSet set = statement.executeQuery()) {
                         while (set.next()) {
@@ -297,7 +442,8 @@ public class HabboStats implements Runnable {
 
                 Collections.sort(stats.guilds);
 
-                try (PreparedStatement statement = connection.prepareStatement("SELECT room_id FROM room_votes WHERE user_id = ?")) {
+                try (PreparedStatement statement =
+                        connection.prepareStatement("SELECT room_id FROM room_votes WHERE user_id = ?")) {
                     statement.setInt(1, habboInfo.getId());
                     try (ResultSet set = statement.executeQuery()) {
                         while (set.next()) {
@@ -306,16 +452,34 @@ public class HabboStats implements Runnable {
                     }
                 }
 
-                try (PreparedStatement statement = connection.prepareStatement("SELECT * FROM users_achievements WHERE user_id = ?")) {
+                try (PreparedStatement statement =
+                        connection.prepareStatement("SELECT * FROM users_achievements WHERE user_id = ?")) {
                     statement.setInt(1, habboInfo.getId());
                     try (ResultSet set = statement.executeQuery()) {
                         while (set.next()) {
-                            Achievement achievement = Emulator.getGameEnvironment().getAchievementManager().getAchievement(set.getString("achievement_name"));
+                            Achievement achievement = Emulator.getGameEnvironment()
+                                    .getAchievementManager()
+                                    .getAchievement(set.getString("achievement_name"));
 
                             if (achievement != null) {
                                 stats.achievementProgress.put(achievement, set.getInt("progress"));
                             }
                         }
+                    }
+                }
+
+                try (PreparedStatement statement = connection.prepareStatement(
+                        "SELECT catalog_item_id, MAX(timestamp) AS last_ts FROM logs_shop_purchases WHERE user_id = ? AND catalog_item_id IS NOT NULL AND catalog_item_id > 0 GROUP BY catalog_item_id ORDER BY last_ts DESC LIMIT "
+                                + RECENT_PURCHASES_LIMIT)) {
+                    statement.setInt(1, habboInfo.getId());
+                    try (ResultSet set = statement.executeQuery()) {
+                        List<Integer> ids = new ArrayList<>();
+                        while (set.next()) {
+                            ids.add(set.getInt("catalog_item_id"));
+                        }
+
+                        Collections.reverse(ids);
+                        stats.recentPurchaseIds = ids;
                     }
                 }
             }
@@ -327,13 +491,13 @@ public class HabboStats implements Runnable {
     }
 
     @Override
-    public void run() {
-        // Find difference between last sync and update with a new timestamp.
-        int onlineTimeLast = this.lastOnlineTime.getAndUpdate(operand -> Emulator.getIntUnixTimestamp());
-        int onlineTime = Emulator.getIntUnixTimestamp() - onlineTimeLast;
+    public synchronized void run() {
+        int timestamp = Emulator.getIntUnixTimestamp();
+        int onlineTime = Math.max(0, timestamp - this.lastOnlineTime.get());
 
         try (Connection connection = Emulator.getDatabase().getDataSource().getConnection()) {
-            try (PreparedStatement statement = connection.prepareStatement("UPDATE users_settings SET achievement_score = ?, respects_received = ?, respects_given = ?, daily_respect_points = ?, block_following = ?, block_friendrequests = ?, online_time = online_time + ?, guild_id = ?, daily_pet_respect_points = ?, club_expire_timestamp = ?, login_streak = ?, rent_space_id = ?, rent_space_endtime = ?, volume_system = ?, volume_furni = ?, volume_trax = ?, block_roominvites = ?, old_chat = ?, block_camera_follow = ?, chat_color = ?, hof_points = ?, block_alerts = ?, talent_track_citizenship_level = ?, talent_track_helpers_level = ?, ignore_bots = ?, ignore_pets = ?, nux = ?, mute_end_timestamp = ?, allow_name_change = ?, perk_trade = ?, can_trade = ?, `forums_post_count` = ?, ui_flags = ?, has_gotten_default_saved_searches = ?, max_friends = ?, max_rooms = ?, last_hc_payday = ?, hc_gifts_claimed = ?, builders_club_bonus_furni = ? WHERE user_id = ? LIMIT 1")) {
+            try (PreparedStatement statement = connection.prepareStatement(
+                    "UPDATE users_settings SET achievement_score = GREATEST(achievement_score, ?), respects_received = ?, respects_given = ?, daily_respect_points = ?, block_following = ?, block_friendrequests = ?, online_time = online_time + ?, guild_id = ?, daily_pet_respect_points = ?, club_expire_timestamp = ?, login_streak = ?, rent_space_id = ?, rent_space_endtime = ?, volume_system = ?, volume_furni = ?, volume_trax = ?, block_roominvites = ?, old_chat = ?, block_camera_follow = ?, chat_color = ?, hof_points = ?, block_alerts = ?, talent_track_citizenship_level = GREATEST(talent_track_citizenship_level, ?), talent_track_helpers_level = GREATEST(talent_track_helpers_level, ?), ignore_bots = ?, ignore_pets = ?, nux = ?, mute_end_timestamp = ?, allow_name_change = ?, perk_trade = ?, can_trade = ?, `forums_post_count` = ?, ui_flags = ?, has_gotten_default_saved_searches = ?, max_friends = ?, max_rooms = ?, last_hc_payday = ?, hc_gifts_claimed = ?, builders_club_bonus_furni = ?, hide_online = ?, volume_soundboard = ? WHERE user_id = ? LIMIT 1")) {
                 statement.setInt(1, this.achievementScore);
                 statement.setInt(2, this.respectPointsReceived);
                 statement.setInt(3, this.respectPointsGiven);
@@ -373,12 +537,16 @@ public class HabboStats implements Runnable {
                 statement.setInt(37, this.lastHCPayday);
                 statement.setInt(38, this.hcGiftsClaimed);
                 statement.setInt(39, this.buildersClubBonusFurni);
-                statement.setInt(40, this.habboInfo.getId());
-                
+                statement.setString(40, this.hideOnline ? "1" : "0");
+                statement.setInt(41, this.volumeSoundboard);
+                statement.setInt(42, this.habboInfo.getId());
+
                 statement.executeUpdate();
+                this.lastOnlineTime.set(timestamp);
             }
 
-            try (PreparedStatement statement = connection.prepareStatement("UPDATE user_window_settings SET x = ?, y = ?, width = ?, height = ?, open_searches = ? WHERE user_id = ? LIMIT 1")) {
+            try (PreparedStatement statement = connection.prepareStatement(
+                    "UPDATE user_window_settings SET x = ?, y = ?, width = ?, height = ?, open_searches = ? WHERE user_id = ? LIMIT 1")) {
                 statement.setInt(1, this.navigatorWindowSettings.x);
                 statement.setInt(2, this.navigatorWindowSettings.y);
                 statement.setInt(3, this.navigatorWindowSettings.width);
@@ -389,7 +557,8 @@ public class HabboStats implements Runnable {
             }
 
             if (!this.offerCache.isEmpty()) {
-                try (PreparedStatement statement = connection.prepareStatement("UPDATE users_target_offer_purchases SET state = ?, amount = ?, last_purchase = ? WHERE user_id = ? AND offer_id = ?")) {
+                try (PreparedStatement statement = connection.prepareStatement(
+                        "UPDATE users_target_offer_purchases SET state = ?, amount = ?, last_purchase = ? WHERE user_id = ? AND offer_id = ?")) {
                     for (HabboOfferPurchase purchase : this.offerCache.values()) {
                         if (!purchase.needsUpdate()) continue;
 
@@ -427,18 +596,23 @@ public class HabboStats implements Runnable {
 
     public boolean hasGuild(int guildId) {
         for (int i : this.guilds) {
-            if (i == guildId)
-                return true;
+            if (i == guildId) return true;
         }
 
         return false;
     }
 
-    public int getAchievementScore() {
+    public int getOnlineMinutes(int timestamp) {
+        return (int) Math.min(
+                Integer.MAX_VALUE,
+                ((long) this.previousOnlineTime + Math.max(0, timestamp - this.sessionStartedAt)) / 60);
+    }
+
+    public synchronized int getAchievementScore() {
         return this.achievementScore;
     }
 
-    public void addAchievementScore(int achievementScore) {
+    public synchronized void addAchievementScore(int achievementScore) {
         this.achievementScore += achievementScore;
     }
 
@@ -456,6 +630,15 @@ public class HabboStats implements Runnable {
     public void setProgress(Achievement achievement, int progress) {
         synchronized (this.achievementProgress) {
             this.achievementProgress.put(achievement, progress);
+        }
+    }
+
+    public boolean initAchievementProgressIfAbsent(Achievement achievement) {
+        synchronized (this.achievementProgress) {
+            if (this.achievementProgress.containsKey(achievement)) return false;
+
+            this.achievementProgress.put(achievement, 0);
+            return true;
         }
     }
 
@@ -490,8 +673,10 @@ public class HabboStats implements Runnable {
     }
 
     public Subscription getSubscription(String subscriptionType) {
-        for(Subscription subscription : subscriptions) {
-            if(subscription.getSubscriptionType().equalsIgnoreCase(subscriptionType) && subscription.isActive() && subscription.getRemaining() > 0) {
+        for (Subscription subscription : subscriptions) {
+            if (subscription.getSubscriptionType().equalsIgnoreCase(subscriptionType)
+                    && subscription.isActive()
+                    && subscription.getRemaining() > 0) {
                 return subscription;
             }
         }
@@ -506,26 +691,54 @@ public class HabboStats implements Runnable {
     public int getSubscriptionExpireTimestamp(String subscriptionType) {
         Subscription subscription = getSubscription(subscriptionType);
 
-        if(subscription == null)
-            return 0;
+        if (subscription == null) return 0;
 
         return subscription.getTimestampEnd();
     }
 
     public Subscription createSubscription(String subscriptionType, int duration) {
+        synchronized (this.habboInfo.ledgerMutationLock()) {
+            synchronized (this) {
+                return createSubscriptionWhileCoordinated(subscriptionType, duration);
+            }
+        }
+    }
+
+    public Subscription removeSubscription(String subscriptionType, int duration) {
+        if (duration != -1 && duration <= 0) throw new IllegalArgumentException("Duration must be positive or -1");
+        synchronized (this.habboInfo.ledgerMutationLock()) {
+            synchronized (this) {
+                Subscription subscription = getSubscription(subscriptionType);
+                if (subscription != null) {
+                    int remaining = Math.max(0, subscription.getRemaining());
+                    subscription.addDuration(-(duration == -1 ? remaining : Math.min(duration, remaining)));
+                }
+                return subscription;
+            }
+        }
+    }
+
+    private Subscription createSubscriptionWhileCoordinated(String subscriptionType, int duration) {
         Subscription subscription = getSubscription(subscriptionType);
 
-        if(subscription != null) {
-            if (!Emulator.getPluginManager().fireEvent(new UserSubscriptionExtendedEvent(this.habboInfo.getId(), subscription, duration)).isCancelled()) {
+        if (subscription != null) {
+            if (!Emulator.getPluginManager()
+                    .fireEvent(new UserSubscriptionExtendedEvent(this.habboInfo.getId(), subscription, duration))
+                    .isCancelled()) {
                 subscription.addDuration(duration);
                 subscription.onExtended(duration);
             }
             return subscription;
         }
 
-        if (!Emulator.getPluginManager().fireEvent(new UserSubscriptionCreatedEvent(this.habboInfo.getId(), subscriptionType, duration)).isCancelled()) {
+        if (!Emulator.getPluginManager()
+                .fireEvent(new UserSubscriptionCreatedEvent(this.habboInfo.getId(), subscriptionType, duration))
+                .isCancelled()) {
             int startTimestamp = Emulator.getIntUnixTimestamp();
-            try (Connection connection = Emulator.getDatabase().getDataSource().getConnection(); PreparedStatement statement = connection.prepareStatement("INSERT INTO `users_subscriptions` (`user_id`, `subscription_type`, `timestamp_start`, `duration`, `active`) VALUES (?, ?, ?, ?, ?)", Statement.RETURN_GENERATED_KEYS)) {
+            try (Connection connection = Emulator.getDatabase().getDataSource().getConnection();
+                    PreparedStatement statement = connection.prepareStatement(
+                            "INSERT INTO `users_subscriptions` (`user_id`, `subscription_type`, `timestamp_start`, `duration`, `active`) VALUES (?, ?, ?, ?, ?)",
+                            Statement.RETURN_GENERATED_KEYS)) {
                 statement.setInt(1, this.habboInfo.getId());
                 statement.setString(2, subscriptionType);
                 statement.setInt(3, startTimestamp);
@@ -534,16 +747,29 @@ public class HabboStats implements Runnable {
                 statement.execute();
                 try (ResultSet set = statement.getGeneratedKeys()) {
                     if (set.next()) {
-                        Class<? extends Subscription> subClazz = Emulator.getGameEnvironment().getSubscriptionManager().getSubscriptionClass(subscriptionType);
+                        Class<? extends Subscription> subClazz = Emulator.getGameEnvironment()
+                                .getSubscriptionManager()
+                                .getSubscriptionClass(subscriptionType);
                         try {
-                            Constructor<? extends Subscription> c = subClazz.getConstructor(Integer.class, Integer.class, String.class, Integer.class, Integer.class, Boolean.class);
+                            Constructor<? extends Subscription> c = subClazz.getConstructor(
+                                    Integer.class,
+                                    Integer.class,
+                                    String.class,
+                                    Integer.class,
+                                    Integer.class,
+                                    Boolean.class);
                             c.setAccessible(true);
-                            Subscription sub = c.newInstance(set.getInt(1), this.habboInfo.getId(), subscriptionType, startTimestamp, duration, true);
+                            Subscription sub = c.newInstance(
+                                    set.getInt(1),
+                                    this.habboInfo.getId(),
+                                    subscriptionType,
+                                    startTimestamp,
+                                    duration,
+                                    true);
                             this.subscriptions.add(sub);
                             sub.onCreated();
                             return sub;
-                        }
-                        catch (Exception e) {
+                        } catch (Exception e) {
                             LOGGER.error("Caught exception", e);
                         }
                     }
@@ -564,11 +790,11 @@ public class HabboStats implements Runnable {
         Subscription subscription = getSubscription(Subscription.HABBO_CLUB);
         int duration = clubExpireTimestamp - Emulator.getIntUnixTimestamp();
 
-        if(subscription != null) {
+        if (subscription != null) {
             duration = clubExpireTimestamp - subscription.getTimestampStart();
         }
 
-        if(duration > 0) {
+        if (duration > 0) {
             createSubscription(Subscription.HABBO_CLUB, duration);
         }
     }
@@ -579,8 +805,8 @@ public class HabboStats implements Runnable {
 
     public int getPastTimeAsClub() {
         int pastTimeAsHC = 0;
-        for(Subscription subs : this.subscriptions) {
-            if(subs.getSubscriptionType().equalsIgnoreCase(Subscription.HABBO_CLUB)) {
+        for (Subscription subs : this.subscriptions) {
+            if (subs.getSubscriptionType().equalsIgnoreCase(Subscription.HABBO_CLUB)) {
                 pastTimeAsHC += subs.getDuration() - (Math.max(subs.getRemaining(), 0));
             }
         }
@@ -589,17 +815,32 @@ public class HabboStats implements Runnable {
 
     public int getTimeTillNextClubGift() {
         int pastTimeAsClub = getPastTimeAsClub();
-        int totalGifts = (int)Math.ceil(pastTimeAsClub / 2678400.0);
+        int totalGifts = (int) Math.ceil(pastTimeAsClub / 2678400.0);
         return (totalGifts * 2678400) - pastTimeAsClub;
     }
 
     public int getRemainingClubGifts() {
-        int totalGifts = (int)Math.ceil(getPastTimeAsClub() / 2678400.0);
+        int totalGifts = (int) Math.ceil(getPastTimeAsClub() / 2678400.0);
         return totalGifts - this.hcGiftsClaimed;
     }
 
     public int getBuildersClubBonusFurni() {
         return this.buildersClubBonusFurni;
+    }
+
+    /** The highest furni limit a bought Builders Club membership package gave; 0 when none was bought. */
+    public int getBuildersClubPackageFurniLimit() {
+        return this.buildersClubPackageFurniLimit;
+    }
+
+    /** Raises the package furni limit; returns false when the current one is already as high. */
+    public boolean raiseBuildersClubPackageFurniLimit(int limit) {
+        if (limit <= this.buildersClubPackageFurniLimit) {
+            return false;
+        }
+
+        this.buildersClubPackageFurniLimit = limit;
+        return true;
     }
 
     public void addBuildersClubBonusFurni(int amount) {
@@ -619,8 +860,20 @@ public class HabboStats implements Runnable {
     }
 
     public void addPurchase(CatalogItem item) {
-        if (!this.recentPurchases.containsKey(item.getId())) {
+        if (item == null) return;
+
+        synchronized (this.recentPurchases) {
+            // Re-insert so the item moves to the tail (most recent), and cap the list by
+            // dropping the oldest entries from the head.
+            this.recentPurchases.remove(item.getId());
             this.recentPurchases.put(item.getId(), item);
+
+            while (this.recentPurchases.size() > RECENT_PURCHASES_LIMIT) {
+                Iterator<Integer> iterator = this.recentPurchases.keySet().iterator();
+                if (!iterator.hasNext()) break;
+                iterator.next();
+                iterator.remove();
+            }
         }
     }
 
@@ -628,18 +881,59 @@ public class HabboStats implements Runnable {
         return this.recentPurchases;
     }
 
+    public boolean isRecentPurchasesInitialized() {
+        return this.recentPurchasesInitialized;
+    }
+
+    // The persisted purchase ids loaded at login, oldest-first (null once initialised).
+    public List<Integer> getRecentPurchaseIds() {
+        return this.recentPurchaseIds;
+    }
+
+    // Seed the recent-purchases map from the login history (oldest-first CatalogItems the
+    // CatalogManager resolved). Any purchases already recorded this session are newer than the
+    // history, so they are re-applied on top. Idempotent — the first caller wins.
+    public void initRecentPurchases(List<CatalogItem> history) {
+        synchronized (this.recentPurchases) {
+            if (this.recentPurchasesInitialized) return;
+            this.recentPurchasesInitialized = true;
+            this.recentPurchaseIds = null;
+
+            if (history == null || history.isEmpty()) return;
+
+            List<CatalogItem> session = new ArrayList<>(this.recentPurchases.values());
+            this.recentPurchases.clear();
+
+            for (CatalogItem item : history) addPurchase(item);
+            for (CatalogItem item : session) addPurchase(item);
+        }
+    }
+
+    // Thread-safe single lookup for the "buy again" flow. The recent-purchases map is mutated
+    // under its own monitor by addPurchase (and snapshotted the same way by the page composer),
+    // so reads that can race those writes must take the same lock rather than touching the
+    // non-thread-safe LinkedHashMap directly.
+    public CatalogItem getRecentPurchase(int itemId) {
+        synchronized (this.recentPurchases) {
+            return this.recentPurchases.get(itemId);
+        }
+    }
+
     public void disposeRecentPurchases() {
-        this.recentPurchases.clear();
+        synchronized (this.recentPurchases) {
+            this.recentPurchases.clear();
+        }
     }
 
     public boolean addFavoriteRoom(int roomId) {
-        if (this.favoriteRooms.contains(roomId))
-            return false;
+        if (this.favoriteRooms.contains(roomId)) return false;
 
-        if (Emulator.getConfig().getInt("hotel.rooms.max.favorite") <= this.favoriteRooms.size())
-            return false;
+        if (RankLimits.favouriteRooms(this.habboInfo != null ? this.habboInfo.getRank() : null)
+                <= this.favoriteRooms.size()) return false;
 
-        try (Connection connection = Emulator.getDatabase().getDataSource().getConnection(); PreparedStatement statement = connection.prepareStatement("INSERT INTO users_favorite_rooms (user_id, room_id) VALUES (?, ?)")) {
+        try (Connection connection = Emulator.getDatabase().getDataSource().getConnection();
+                PreparedStatement statement = connection.prepareStatement(
+                        "INSERT INTO users_favorite_rooms (user_id, room_id) VALUES (?, ?)")) {
             statement.setInt(1, this.habboInfo.getId());
             statement.setInt(2, roomId);
             statement.execute();
@@ -655,7 +949,9 @@ public class HabboStats implements Runnable {
         int index = this.favoriteRooms.indexOf(roomId);
         if (index >= 0) {
             this.favoriteRooms.removeInt(index);
-            try (Connection connection = Emulator.getDatabase().getDataSource().getConnection(); PreparedStatement statement = connection.prepareStatement("DELETE FROM users_favorite_rooms WHERE user_id = ? AND room_id = ? LIMIT 1")) {
+            try (Connection connection = Emulator.getDatabase().getDataSource().getConnection();
+                    PreparedStatement statement = connection.prepareStatement(
+                            "DELETE FROM users_favorite_rooms WHERE user_id = ? AND room_id = ? LIMIT 1")) {
                 statement.setInt(1, this.habboInfo.getId());
                 statement.setInt(2, roomId);
                 statement.execute();
@@ -669,9 +965,13 @@ public class HabboStats implements Runnable {
         return this.favoriteRooms.contains(roomId);
     }
 
-    public boolean visitedRoom(int roomId) { return this.roomsVists.contains(roomId); }
+    public boolean visitedRoom(int roomId) {
+        return this.roomsVists.contains(roomId);
+    }
 
-    public void addVisitRoom(int roomId) { this.roomsVists.add(roomId); }
+    public void addVisitRoom(int roomId) {
+        this.roomsVists.add(roomId);
+    }
 
     public IntArrayList getFavoriteRooms() {
         return this.favoriteRooms;
@@ -682,10 +982,11 @@ public class HabboStats implements Runnable {
     }
 
     public boolean addRecipe(int id) {
-        if (this.secretRecipes.contains(id))
-            return false;
+        if (this.secretRecipes.contains(id)) return false;
 
-        try (Connection connection = Emulator.getDatabase().getDataSource().getConnection(); PreparedStatement statement = connection.prepareStatement("INSERT INTO users_recipes (user_id, recipe) VALUES (?, ?)")) {
+        try (Connection connection = Emulator.getDatabase().getDataSource().getConnection();
+                PreparedStatement statement =
+                        connection.prepareStatement("INSERT INTO users_recipes (user_id, recipe) VALUES (?, ?)")) {
             statement.setInt(1, this.habboInfo.getId());
             statement.setInt(2, id);
             statement.execute();
@@ -698,19 +999,15 @@ public class HabboStats implements Runnable {
     }
 
     public int talentTrackLevel(TalentTrackType type) {
-        if (type == TalentTrackType.CITIZENSHIP)
-            return this.citizenshipLevel;
-        else if (type == TalentTrackType.HELPER)
-            return this.helpersLevel;
+        if (type == TalentTrackType.CITIZENSHIP) return this.citizenshipLevel;
+        else if (type == TalentTrackType.HELPER) return this.helpersLevel;
 
         return -1;
     }
 
     public void setTalentLevel(TalentTrackType type, int level) {
-        if (type == TalentTrackType.CITIZENSHIP)
-            this.citizenshipLevel = level;
-        else if (type == TalentTrackType.HELPER)
-            this.helpersLevel = level;
+        if (type == TalentTrackType.CITIZENSHIP) this.citizenshipLevel = level;
+        else if (type == TalentTrackType.HELPER) this.helpersLevel = level;
     }
 
     public int getMuteEndTime() {
@@ -718,22 +1015,36 @@ public class HabboStats implements Runnable {
     }
 
     public int addMuteTime(int seconds) {
-        if (this.remainingMuteTime() == 0) {
-            this.muteEndTime = Emulator.getIntUnixTimestamp();
-        }
-
         this.mutedBubbleTracker = true;
-        this.muteEndTime += seconds;
+        this.muteEndTime = extendMuteEnd(this.muteEndTime, Emulator.getIntUnixTimestamp(), seconds);
 
         return this.remainingMuteTime();
     }
 
     public int remainingMuteTime() {
-        return Math.max(0, this.muteEndTime - Emulator.getIntUnixTimestamp());
+        return remainingMuteSeconds(this.muteEndTime, Emulator.getIntUnixTimestamp());
+    }
+
+    /**
+     * Extends a mute from now (or from the running mute's end) in long maths, clamped to the int column:
+     * a long mute such as Integer.MAX_VALUE seconds used to overflow into the past and mute nobody.
+     */
+    static int extendMuteEnd(int muteEndTime, int now, int seconds) {
+        long end = Math.max((long) muteEndTime, (long) now) + Math.max(0L, (long) seconds);
+        return (int) Math.min(end, Integer.MAX_VALUE);
+    }
+
+    static int remainingMuteSeconds(int muteEndTime, int now) {
+        return (int) Math.max(0L, (long) muteEndTime - (long) now);
     }
 
     public boolean allowTalk() {
         return this.remainingMuteTime() == 0;
+    }
+
+    /** Console messages have their own flood window, apart from room chat's lastChat. */
+    public boolean consoleMessageFlooded(long nowMillis) {
+        return this.consoleThrottle.flooded(nowMillis);
     }
 
     public void unMute() {
@@ -769,8 +1080,16 @@ public class HabboStats implements Runnable {
     public boolean ignoreUser(GameClient gameClient, int userId) {
         final Habbo target = Emulator.getGameEnvironment().getHabboManager().getHabbo(userId);
 
-        if (!Emulator.getConfig().getBoolean("hotel.allow.ignore.staffs") && target.hasPermission(Permission.ACC_UNIGNORABLE)) {
-            gameClient.getHabbo().whisper(Emulator.getTexts().getValue("generic.error.ignore_higher_rank"), RoomChatMessageBubbles.ALERT);
+        // The target may be offline: an ignore is stored by id, and only somebody who is connected
+        // can be checked against the unignorable permission.
+        if (target != null
+                && !Emulator.getConfig().getBoolean("hotel.allow.ignore.staffs")
+                && target.hasPermission(Permission.ACC_UNIGNORABLE)) {
+            gameClient
+                    .getHabbo()
+                    .whisper(
+                            Emulator.getTexts().getValue("generic.error.ignore_higher_rank"),
+                            RoomChatMessageBubbles.ALERT);
             return false;
         }
 
@@ -778,7 +1097,8 @@ public class HabboStats implements Runnable {
             this.ignoredUsers.add(userId);
 
             try (Connection connection = Emulator.getDatabase().getDataSource().getConnection();
-                 PreparedStatement statement = connection.prepareStatement("INSERT INTO users_ignored (user_id, target_id) VALUES (?, ?)")) {
+                    PreparedStatement statement = connection.prepareStatement(
+                            "INSERT INTO users_ignored (user_id, target_id) VALUES (?, ?)")) {
                 statement.setInt(1, this.habboInfo.getId());
                 statement.setInt(2, userId);
                 statement.execute();
@@ -790,12 +1110,18 @@ public class HabboStats implements Runnable {
         return true;
     }
 
+    /** The ids of the users this user ignores, in the order they were ignored. */
+    public List<Integer> getIgnoredUsers() {
+        return List.copyOf(this.ignoredUsers);
+    }
+
     public void unignoreUser(int userId) {
         if (this.userIgnored(userId)) {
-            this.ignoredUsers.remove(userId);
+            this.ignoredUsers.rem(userId);
 
             try (Connection connection = Emulator.getDatabase().getDataSource().getConnection();
-                 PreparedStatement statement = connection.prepareStatement("DELETE FROM users_ignored WHERE user_id = ? AND target_id = ?")) {
+                    PreparedStatement statement = connection.prepareStatement(
+                            "DELETE FROM users_ignored WHERE user_id = ? AND target_id = ?")) {
                 statement.setInt(1, this.habboInfo.getId());
                 statement.setInt(2, userId);
                 statement.execute();
@@ -805,8 +1131,164 @@ public class HabboStats implements Runnable {
         }
     }
 
+    public UserWordFilter getCustomWordFilter() {
+        return this.customWordFilter;
+    }
+
+    /** Adds a word to the personal word filter; false when it was already listed or unusable. */
+    public boolean addCustomFilterWord(String word) {
+        if (!this.customWordFilter.add(word)) {
+            return false;
+        }
+
+        try (Connection connection = Emulator.getDatabase().getDataSource().getConnection();
+                PreparedStatement statement = connection.prepareStatement(
+                        "INSERT IGNORE INTO users_wordfilter (user_id, word) VALUES (?, ?)")) {
+            statement.setInt(1, this.habboInfo.getId());
+            statement.setString(2, UserWordFilter.normalize(word));
+            statement.execute();
+        } catch (SQLException e) {
+            LOGGER.error("Caught SQL exception", e);
+        }
+
+        return true;
+    }
+
+    /** Removes a word from the personal word filter; false when it was not listed. */
+    public boolean removeCustomFilterWord(String word) {
+        if (!this.customWordFilter.remove(word)) {
+            return false;
+        }
+
+        try (Connection connection = Emulator.getDatabase().getDataSource().getConnection();
+                PreparedStatement statement =
+                        connection.prepareStatement("DELETE FROM users_wordfilter WHERE user_id = ? AND word = ?")) {
+            statement.setInt(1, this.habboInfo.getId());
+            statement.setString(2, UserWordFilter.normalize(word));
+            statement.execute();
+        } catch (SQLException e) {
+            LOGGER.error("Caught SQL exception", e);
+        }
+
+        return true;
+    }
+
     public boolean userIgnored(int userId) {
         return this.ignoredUsers.contains(userId);
+    }
+
+    /**
+     * Official BlockedUsersManager: a block hides the other player's chat and draws them as a
+     * blocked avatar. The list is separate from the ignore list and is keyed by user id.
+     */
+    public IntArrayList getBlockedUsers() {
+        return this.blockedUsers;
+    }
+
+    public boolean userBlocked(int userId) {
+        return this.blockedUsers.contains(userId);
+    }
+
+    public boolean blockUser(int userId) {
+        if (userId <= 0
+                || userId == this.habboInfo.getId()
+                || this.userBlocked(userId)
+                || this.blockedUsers.size() >= MAX_BLOCKED_USERS) {
+            return false;
+        }
+
+        this.blockedUsers.add(userId);
+
+        try (Connection connection = Emulator.getDatabase().getDataSource().getConnection();
+                PreparedStatement statement = connection.prepareStatement(
+                        "INSERT IGNORE INTO users_blocked (user_id, target_id) VALUES (?, ?)")) {
+            statement.setInt(1, this.habboInfo.getId());
+            statement.setInt(2, userId);
+            statement.execute();
+        } catch (SQLException e) {
+            LOGGER.error("Caught SQL exception", e);
+        }
+
+        return true;
+    }
+
+    public boolean unblockUser(int userId) {
+        if (!this.userBlocked(userId)) {
+            return false;
+        }
+
+        this.blockedUsers.rem(userId);
+
+        try (Connection connection = Emulator.getDatabase().getDataSource().getConnection();
+                PreparedStatement statement =
+                        connection.prepareStatement("DELETE FROM users_blocked WHERE user_id = ? AND target_id = ?")) {
+            statement.setInt(1, this.habboInfo.getId());
+            statement.setInt(2, userId);
+            statement.execute();
+        } catch (SQLException e) {
+            LOGGER.error("Caught SQL exception", e);
+        }
+
+        return true;
+    }
+
+    public DiscordPreferences getDiscordPreferences() {
+        return this.discordPreferences;
+    }
+
+    /** Official DiscordSettingsController.updatePreferences: the whole set is replaced. */
+    public void setDiscordPreferences(DiscordPreferences preferences) {
+        if (preferences == null) {
+            return;
+        }
+
+        this.discordPreferences = preferences;
+
+        try (Connection connection = Emulator.getDatabase().getDataSource().getConnection();
+                PreparedStatement statement = connection.prepareStatement(
+                        "INSERT INTO users_discord_settings (user_id, preference_version, show_habbo, share_activity,"
+                                + " hide_in_hidden_rooms, allow_joining) VALUES (?, ?, ?, ?, ?, ?)"
+                                + " ON DUPLICATE KEY UPDATE preference_version = VALUES(preference_version),"
+                                + " show_habbo = VALUES(show_habbo), share_activity = VALUES(share_activity),"
+                                + " hide_in_hidden_rooms = VALUES(hide_in_hidden_rooms),"
+                                + " allow_joining = VALUES(allow_joining)")) {
+            statement.setInt(1, this.habboInfo.getId());
+            statement.setInt(2, preferences.getVersion());
+            statement.setString(3, preferences.isShowHabbo() ? "1" : "0");
+            statement.setString(4, preferences.isShareActivity() ? "1" : "0");
+            statement.setString(5, preferences.isHideInHiddenRooms() ? "1" : "0");
+            statement.setString(6, preferences.isAllowJoining() ? "1" : "0");
+            statement.execute();
+        } catch (SQLException e) {
+            LOGGER.error("Caught SQL exception", e);
+        }
+    }
+
+    /**
+     * Official SessionDataManager.replenishRespect(): spends one replenish and puts the daily
+     * respects back to the configured maximum. False when there is nothing left to spend.
+     */
+    public boolean replenishRespect(int maxRespectPerDay) {
+        if (this.respectReplenishesLeft <= 0) {
+            return false;
+        }
+
+        this.respectReplenishesLeft--;
+        this.respectPointsToGive = maxRespectPerDay;
+
+        try (Connection connection = Emulator.getDatabase().getDataSource().getConnection();
+                PreparedStatement statement = connection.prepareStatement(
+                        "UPDATE users_settings SET daily_respect_replenishes = ?, daily_respect_points = ?"
+                                + " WHERE user_id = ? LIMIT 1")) {
+            statement.setInt(1, this.respectReplenishesLeft);
+            statement.setInt(2, this.respectPointsToGive);
+            statement.setInt(3, this.habboInfo.getId());
+            statement.execute();
+        } catch (SQLException e) {
+            LOGGER.error("Caught SQL exception", e);
+        }
+
+        return true;
     }
 
     public boolean allowTrade() {
@@ -823,6 +1305,12 @@ public class HabboStats implements Runnable {
         return this.massMentionsEnabled;
     }
 
+    /** Hides the extended profile from everybody but its owner (the official isHidden flag). */
+    public void setProfileHidden(boolean hidden) {
+        this.hideProfile = hidden;
+        persistFlag("hide_profile", hidden);
+    }
+
     public void setMentionsEnabled(boolean enabled) {
         this.mentionsEnabled = enabled;
         persistFlag("mentions_enabled", enabled);
@@ -833,18 +1321,145 @@ public class HabboStats implements Runnable {
         persistFlag("mass_mentions_enabled", enabled);
     }
 
-    private static final Set<String> PERSIST_FLAG_COLUMNS =
-            Set.of("mentions_enabled", "mass_mentions_enabled");
+    public void setGamePrivacy(boolean hideOnline, boolean blockFollowing, boolean blockFriendRequests) {
+        this.hideOnline = hideOnline;
+        this.blockFollowing = blockFollowing;
+        this.blockFriendRequests = blockFriendRequests;
+
+        try (Connection connection = Emulator.getDatabase().getDataSource().getConnection();
+                PreparedStatement statement = connection.prepareStatement(
+                        "UPDATE users_settings SET hide_online = ?, block_following = ?, block_friendrequests = ? WHERE user_id = ? LIMIT 1")) {
+            statement.setString(1, hideOnline ? "1" : "0");
+            statement.setString(2, blockFollowing ? "1" : "0");
+            statement.setString(3, blockFriendRequests ? "1" : "0");
+            statement.setInt(4, this.habboInfo.getId());
+            statement.executeUpdate();
+        } catch (SQLException e) {
+            LOGGER.error("Failed to persist game privacy for user {}", this.habboInfo.getId(), e);
+        }
+    }
+
+    private static final Set<String> PERSIST_FLAG_COLUMNS = Set.of(
+            "mentions_enabled",
+            "mass_mentions_enabled",
+            "wired_whisper_disabled",
+            "safety_locked",
+            "hide_profile",
+            "wired_menu_preferences");
 
     private void persistFlag(String column, boolean enabled) {
+        persistText(column, enabled ? "1" : "0");
+    }
+
+    /** One allow-listed users_settings text column (the flags are '0'/'1' texts). */
+    private void persistText(String column, String value) {
         if (!PERSIST_FLAG_COLUMNS.contains(column)) {
             LOGGER.error("Refusing to persist unknown users_settings column '{}'", column);
             return;
         }
 
         try (Connection connection = Emulator.getDatabase().getDataSource().getConnection();
-             PreparedStatement statement = connection.prepareStatement("UPDATE users_settings SET `" + column + "` = ? WHERE user_id = ? LIMIT 1")) {
-            statement.setString(1, enabled ? "1" : "0");
+                PreparedStatement statement = connection.prepareStatement(
+                        "UPDATE users_settings SET `" + column + "` = ? WHERE user_id = ? LIMIT 1")) {
+            statement.setString(1, value);
+            statement.setInt(2, this.habboInfo.getId());
+            statement.executeUpdate();
+        } catch (SQLException e) {
+            LOGGER.error("Failed to persist users_settings.{} for user {}", column, this.habboInfo.getId(), e);
+        }
+    }
+
+    private static int safeColumnInt(ResultSet set, String column, int defaultValue) {
+        try {
+            return set.getInt(column);
+        } catch (SQLException e) {
+            return defaultValue;
+        }
+    }
+
+    /** Official SetChatPreferences: values are already sanitized by UserPreferencePackets. */
+    public void setChatPreferences(int chatMode, int chatBubbleWidth, int chatScrollSpeed) {
+        this.chatMode = chatMode;
+        this.chatBubbleWidth = chatBubbleWidth;
+        this.chatScrollSpeed = chatScrollSpeed;
+
+        try (Connection connection = Emulator.getDatabase().getDataSource().getConnection();
+                PreparedStatement statement = connection.prepareStatement(
+                        "UPDATE users_settings SET chat_mode = ?, chat_bubble_width = ?, chat_scroll_speed = ? WHERE user_id = ? LIMIT 1")) {
+            statement.setInt(1, chatMode);
+            statement.setInt(2, chatBubbleWidth);
+            statement.setInt(3, chatScrollSpeed);
+            statement.setInt(4, this.habboInfo.getId());
+            statement.executeUpdate();
+        } catch (SQLException e) {
+            LOGGER.error("Failed to persist chat preferences for user {}", this.habboInfo.getId(), e);
+        }
+    }
+
+    public void setOnlineIndicatorPreference(int preference) {
+        this.onlineIndicatorPreference = preference;
+        persistInt("online_indicator_preference", preference);
+    }
+
+    public void setWiredWhisperDisabled(boolean disabled) {
+        this.wiredWhisperDisabled = disabled;
+        persistFlag("wired_whisper_disabled", disabled);
+    }
+
+    /** The official wired menu preferences, already encoded and sanitized. */
+    public void setWiredMenuPreferences(String encoded) {
+        this.wiredMenuPreferences = encoded == null ? "" : encoded;
+        this.playTestMode = UserPreferencePackets.isPlayTestModeStored(this.wiredMenuPreferences);
+        persistText("wired_menu_preferences", this.wiredMenuPreferences);
+    }
+
+    /**
+     * AIR playtest mode (wired menu preference): while it is on the room treats this user as a
+     * visitor without rights for moving, picking up and using furni ({@code RoomPlayTestSupport}).
+     */
+    public boolean isPlayTestMode() {
+        return this.playTestMode;
+    }
+
+    /** Official account safety lock: locking is what raises the toolbar badge. */
+    public void setSafetyLocked(boolean locked) {
+        this.safetyLocked = locked;
+        persistFlag("safety_locked", locked);
+    }
+
+    /** Official ModToolPreferences (31): remember where the moderator left the issue handler. */
+    public void setModToolWindow(int x, int y, int width, int height) {
+        this.modToolWindowX = x;
+        this.modToolWindowY = y;
+        this.modToolWindowWidth = width;
+        this.modToolWindowHeight = height;
+
+        try (Connection connection = Emulator.getDatabase().getDataSource().getConnection();
+                PreparedStatement statement = connection.prepareStatement(
+                        "UPDATE users_settings SET modtool_window_x = ?, modtool_window_y = ?, modtool_window_width = ?, modtool_window_height = ? WHERE user_id = ? LIMIT 1")) {
+            statement.setInt(1, x);
+            statement.setInt(2, y);
+            statement.setInt(3, width);
+            statement.setInt(4, height);
+            statement.setInt(5, this.habboInfo.getId());
+            statement.executeUpdate();
+        } catch (SQLException e) {
+            LOGGER.error("Failed to persist mod tool window for user {}", this.habboInfo.getId(), e);
+        }
+    }
+
+    private static final Set<String> PERSIST_INT_COLUMNS = Set.of("online_indicator_preference");
+
+    private void persistInt(String column, int value) {
+        if (!PERSIST_INT_COLUMNS.contains(column)) {
+            LOGGER.error("Refusing to persist unknown users_settings column '{}'", column);
+            return;
+        }
+
+        try (Connection connection = Emulator.getDatabase().getDataSource().getConnection();
+                PreparedStatement statement = connection.prepareStatement(
+                        "UPDATE users_settings SET `" + column + "` = ? WHERE user_id = ? LIMIT 1")) {
+            statement.setInt(1, value);
             statement.setInt(2, this.habboInfo.getId());
             statement.executeUpdate();
         } catch (SQLException e) {
@@ -944,7 +1559,8 @@ public class HabboStats implements Runnable {
 
     private void persistTags() {
         try (Connection connection = Emulator.getDatabase().getDataSource().getConnection();
-             PreparedStatement statement = connection.prepareStatement("UPDATE users_settings SET `tags` = ? WHERE user_id = ? LIMIT 1")) {
+                PreparedStatement statement =
+                        connection.prepareStatement("UPDATE users_settings SET `tags` = ? WHERE user_id = ? LIMIT 1")) {
             statement.setString(1, this.tags == null ? "" : String.join(";", this.tags));
             statement.setInt(2, this.habboInfo.getId());
             statement.executeUpdate();

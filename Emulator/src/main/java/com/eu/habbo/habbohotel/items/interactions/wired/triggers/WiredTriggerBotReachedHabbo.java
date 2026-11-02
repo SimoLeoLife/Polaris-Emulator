@@ -6,18 +6,18 @@ import com.eu.habbo.habbohotel.items.interactions.wired.WiredSettings;
 import com.eu.habbo.habbohotel.rooms.Room;
 import com.eu.habbo.habbohotel.rooms.RoomUnit;
 import com.eu.habbo.habbohotel.users.HabboItem;
-import com.eu.habbo.habbohotel.wired.core.WiredManager;
 import com.eu.habbo.habbohotel.wired.WiredTriggerType;
 import com.eu.habbo.habbohotel.wired.core.WiredEvent;
+import com.eu.habbo.habbohotel.wired.core.WiredManager;
 import com.eu.habbo.habbohotel.wired.core.WiredSourceUtil;
 import com.eu.habbo.habbohotel.wired.core.WiredTriggerSourceUtil;
+import com.eu.habbo.habbohotel.wired.protocol.WiredOfficialSources;
 import com.eu.habbo.messages.ServerMessage;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 
-public class WiredTriggerBotReachedHabbo extends InteractionWiredTrigger {
-    public final static WiredTriggerType type = WiredTriggerType.BOT_REACHED_AVTR;
+public class WiredTriggerBotReachedHabbo extends InteractionWiredTrigger implements WiredOfficialSources {
+    public static final WiredTriggerType type = WiredTriggerType.BOT_REACHED_AVTR;
     private static final int BOT_SOURCE_NAME = 100;
     private static final int BOT_SOURCE_SELECTOR = 200;
 
@@ -28,7 +28,8 @@ public class WiredTriggerBotReachedHabbo extends InteractionWiredTrigger {
         super(set, baseItem);
     }
 
-    public WiredTriggerBotReachedHabbo(int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
+    public WiredTriggerBotReachedHabbo(
+            int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
         super(id, userId, item, extradata, limitedStack, limitedSells);
     }
 
@@ -45,8 +46,7 @@ public class WiredTriggerBotReachedHabbo extends InteractionWiredTrigger {
         message.appendInt(this.getBaseItem().getSpriteId());
         message.appendInt(this.getId());
         message.appendString(this.botName);
-        message.appendInt(1);
-        message.appendInt(this.botSource);
+        message.appendInt(0);
         message.appendInt(0);
         message.appendInt(this.getType().code);
         message.appendInt(0);
@@ -54,9 +54,22 @@ public class WiredTriggerBotReachedHabbo extends InteractionWiredTrigger {
     }
 
     @Override
+    public int[] officialFurniSources() {
+        return new int[0];
+    }
+
+    @Override
+    public int[] officialUserSources() {
+        return new int[] {this.botSource};
+    }
+
+    @Override
     public boolean saveData(WiredSettings settings) {
         this.botName = settings.getStringParam();
-        this.botSource = (settings.getIntParams().length > 0) ? this.normalizeBotSource(settings.getIntParams()[0]) : BOT_SOURCE_NAME;
+        // Official: no int params; the bot source is the official user source slot.
+        this.botSource = (settings.getUserSourceTypes().length > 0)
+                ? this.normalizeBotSource(settings.getUserSourceTypes()[0])
+                : BOT_SOURCE_NAME;
 
         return true;
     }
@@ -72,8 +85,7 @@ public class WiredTriggerBotReachedHabbo extends InteractionWiredTrigger {
 
         if (this.botSource == BOT_SOURCE_SELECTOR) {
             return WiredTriggerSourceUtil.containsUser(
-                    WiredTriggerSourceUtil.resolveUsers(this, event, WiredSourceUtil.SOURCE_SELECTOR, null),
-                    roomUnit);
+                    WiredTriggerSourceUtil.resolveUsers(this, event, WiredSourceUtil.SOURCE_SELECTOR, null), roomUnit);
         }
 
         return room.getBots(this.botName).stream().anyMatch(bot -> bot.getRoomUnit() == roomUnit);
@@ -87,10 +99,7 @@ public class WiredTriggerBotReachedHabbo extends InteractionWiredTrigger {
 
     @Override
     public String getWiredData() {
-        return WiredManager.getGson().toJson(new JsonData(
-            this.botName,
-            this.botSource
-        ));
+        return WiredManager.getGson().toJson(new JsonData(this.botName, this.botSource));
     }
 
     @Override

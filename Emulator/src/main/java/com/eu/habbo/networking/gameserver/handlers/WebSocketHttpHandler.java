@@ -1,19 +1,28 @@
 package com.eu.habbo.networking.gameserver.handlers;
 
 import com.eu.habbo.Emulator;
+import com.eu.habbo.core.ConfigurationManager;
 import com.eu.habbo.networking.gameserver.GameServerAttributes;
 import com.eu.habbo.networking.gameserver.auth.AuthHttpUtil;
+import com.eu.habbo.networking.gameserver.auth.CorsOriginGate;
+import com.eu.habbo.networking.gameserver.auth.GameConnectionLimits;
 import com.eu.habbo.networking.gameserver.e2e.E2eSessionProbe;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.ChannelFutureListener;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
-import io.netty.handler.codec.http.*;
+import io.netty.handler.codec.http.DefaultFullHttpResponse;
+import io.netty.handler.codec.http.FullHttpRequest;
+import io.netty.handler.codec.http.FullHttpResponse;
+import io.netty.handler.codec.http.HttpHeaderNames;
+import io.netty.handler.codec.http.HttpMessage;
+import io.netty.handler.codec.http.HttpResponseStatus;
+import io.netty.handler.codec.http.HttpVersion;
 import io.netty.util.ReferenceCountUtil;
+import java.net.InetSocketAddress;
+import java.net.URI;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import java.net.URI;
 
 public class WebSocketHttpHandler extends ChannelInboundHandlerAdapter {
     private static final Logger LOGGER = LoggerFactory.getLogger(WebSocketHttpHandler.class);
@@ -21,27 +30,35 @@ public class WebSocketHttpHandler extends ChannelInboundHandlerAdapter {
 
     @Override
     public void channelRead(ChannelHandlerContext ctx, Object msg) throws Exception {
-        if (msg instanceof HttpMessage) {
-            if (!handleHttpRequest(ctx, (HttpMessage) msg)) {
+        boolean upgrade = false;
+        if (msg instanceof HttpMessage request) {
+            if (!handleHttpRequest(ctx, request)) {
                 ReferenceCountUtil.release(msg);
                 return;
             }
+            upgrade = isWebSocketUpgrade(request);
         }
         super.channelRead(ctx, msg);
-        ctx.pipeline().remove(this);
+
+        // Only an accepted upgrade ends the HTTP phase. Leaving after the first request of any kind let
+        // the next keep-alive request skip the Origin check and keep the forwarded IP of the first one.
+        if (upgrade) {
+            ctx.pipeline().remove(this);
+        }
     }
 
     private boolean handleHttpRequest(ChannelHandlerContext ctx, HttpMessage req) {
+        ConfigurationManager config = Emulator.getConfig();
         if (req instanceof FullHttpRequest fullRequest
                 && E2eSessionProbe.tryHandle(
-                fullRequest,
-                ctx,
-                Emulator.getGameServer().getGameClientManager(),
-                Emulator.getConfig().getBoolean("e2e.enabled", false))) {
+                        fullRequest,
+                        ctx,
+                        Emulator.getGameServer().getGameClientManager(),
+                        config.getBoolean("e2e.enabled", false))) {
             return false;
         }
 
-        captureForwardedIp(ctx, req);
+        captureForwardedIp(ctx, req, config);
 
         if (!isWebSocketUpgrade(req)) {
             return true;
@@ -56,35 +73,72 @@ public class WebSocketHttpHandler extends ChannelInboundHandlerAdapter {
         } catch (Exception ignored) {
         }
 
-        String whitelist = Emulator.getConfig().getValue("ws.whitelist", "localhost");
+        String whitelist = config.getValue("ws.whitelist", "localhost");
         if (!isWhitelisted(origin, whitelist.split(","))) {
-            LOGGER.warn("WebSocket upgrade rejected — origin '{}' not in ws.whitelist='{}'",
-                    req.headers().get(ORIGIN_HEADER), whitelist);
+            LOGGER.warn(
+                    "WebSocket upgrade rejected — origin '{}' not in ws.whitelist='{}'",
+                    req.headers().get(ORIGIN_HEADER),
+                    whitelist);
 
             FullHttpResponse response = new DefaultFullHttpResponse(
                     HttpVersion.HTTP_1_1,
                     HttpResponseStatus.FORBIDDEN,
-                    Unpooled.wrappedBuffer("Origin forbidden".getBytes(java.nio.charset.StandardCharsets.UTF_8))
-            );
+                    Unpooled.wrappedBuffer("Origin forbidden".getBytes(java.nio.charset.StandardCharsets.UTF_8)));
             response.headers().set("Vary", "Origin");
             ctx.writeAndFlush(response).addListener(ChannelFutureListener.CLOSE);
             return false;
         }
 
+        return admitVisitor(ctx, GameConnectionLimits.Settings.from(config));
+    }
+
+    /**
+     * Counts the game connection against its visitor, who may hold only so many open at once. The count is
+     * released when the channel closes.
+     */
+    private static boolean admitVisitor(ChannelHandlerContext ctx, GameConnectionLimits.Settings settings) {
+        String peerIp =
+                ctx.channel().remoteAddress() instanceof InetSocketAddress address && address.getAddress() != null
+                        ? address.getAddress().getHostAddress()
+                        : null;
+        String visitor = GameConnectionLimits.visitorOf(
+                ctx.channel().attr(GameServerAttributes.WS_IP).get(), peerIp, AuthHttpUtil.isTrustedProxy(ctx));
+        GameConnectionLimits limits = GameConnectionLimits.shared();
+        if (!limits.tryOpen(visitor, settings)) {
+            LOGGER.warn(
+                    "WebSocket upgrade rejected - {} already holds {} game connections",
+                    visitor,
+                    settings.maxConnections());
+            FullHttpResponse response = new DefaultFullHttpResponse(
+                    HttpVersion.HTTP_1_1,
+                    HttpResponseStatus.TOO_MANY_REQUESTS,
+                    Unpooled.wrappedBuffer("Too many connections".getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+            ctx.writeAndFlush(response).addListener(ChannelFutureListener.CLOSE);
+            return false;
+        }
+        if (visitor != null) {
+            ctx.channel().attr(GameServerAttributes.VISITOR).set(visitor);
+            // With the limit off nothing was counted, so closing must not release another connection's count.
+            if (GameConnectionLimits.isCounted(visitor, settings)) {
+                ctx.channel().closeFuture().addListener(future -> limits.close(visitor));
+            }
+        }
         return true;
     }
 
-    private static void captureForwardedIp(ChannelHandlerContext ctx, HttpMessage req) {
-        String ipHeader = Emulator.getConfig().getValue("ws.ip.header", "");
+    private static void captureForwardedIp(ChannelHandlerContext ctx, HttpMessage req, ConfigurationManager config) {
+        String ipHeader = config.getValue("ws.ip.header", "");
         // Only honour the forwarded-IP header from a trusted reverse proxy,
         // otherwise the game-session IP (used for bans/rate-limits) is spoofable.
-        if (!ipHeader.isEmpty() && req.headers().contains(ipHeader) && AuthHttpUtil.shouldHonorForwardedHeader(ctx, ipHeader)) {
-            String ip = req.headers().get(ipHeader);
-            if (ip != null && !ip.isEmpty()) {
-                int comma = ip.indexOf(',');
-                ctx.channel().attr(GameServerAttributes.WS_IP).set((comma > 0 ? ip.substring(0, comma) : ip).trim());
-            }
+        // Read again for every request: a proxy reuses one connection for several clients, so an IP kept
+        // from an earlier request belonged to someone else.
+        String ip = "";
+        if (!ipHeader.isEmpty()
+                && req.headers().contains(ipHeader)
+                && AuthHttpUtil.shouldHonorForwardedHeader(ctx, ipHeader)) {
+            ip = AuthHttpUtil.resolveForwardedClientIp(req.headers().get(ipHeader));
         }
+        ctx.channel().attr(GameServerAttributes.WS_IP).set(ip.isEmpty() ? null : ip);
     }
 
     private static boolean isWebSocketUpgrade(HttpMessage req) {
@@ -107,21 +161,12 @@ public class WebSocketHttpHandler extends ChannelInboundHandlerAdapter {
         return domain.startsWith("www.") ? domain.substring(4) : domain;
     }
 
+    // The same match as CORS: "*.hotel.com" takes hotel.com and its subdomains, never evilhotel.com, and case
+    // does not matter. This suffix match let any domain ending with the allowed one open the game socket.
     private static boolean isWhitelisted(String toCheck, String[] whitelist) {
         for (String entry : whitelist) {
-            String trimmed = entry.trim();
-            if (trimmed.equals("*")) {
+            if (CorsOriginGate.matches(toCheck, entry)) {
                 return true;
-            }
-            if (trimmed.startsWith("*")) {
-                String suffix = trimmed.substring(1);
-                if (toCheck.endsWith(suffix) || ("." + toCheck).equals(suffix)) {
-                    return true;
-                }
-            } else {
-                if (toCheck.equals(trimmed)) {
-                    return true;
-                }
             }
         }
         return false;

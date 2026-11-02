@@ -5,6 +5,7 @@ import com.eu.habbo.habbohotel.bots.Bot;
 import com.eu.habbo.habbohotel.gameclients.GameClient;
 import com.eu.habbo.habbohotel.items.Item;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredEffect;
+import com.eu.habbo.habbohotel.items.interactions.wired.WiredInputGuard;
 import com.eu.habbo.habbohotel.items.interactions.wired.WiredSettings;
 import com.eu.habbo.habbohotel.rooms.Room;
 import com.eu.habbo.habbohotel.rooms.RoomUnit;
@@ -16,7 +17,6 @@ import com.eu.habbo.habbohotel.wired.core.WiredManager;
 import com.eu.habbo.messages.ServerMessage;
 import com.eu.habbo.messages.incoming.wired.WiredSaveException;
 import com.eu.habbo.messages.outgoing.rooms.users.RoomUserDanceComposer;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.List;
@@ -100,10 +100,11 @@ public class WiredEffectBotDance extends InteractionWiredEffect {
 
         String name = settings.getStringParam();
         name = (name == null) ? "" : name.replace("\t", "");
-        this.botName = name.substring(0, Math.min(name.length(), Emulator.getConfig().getInt("hotel.wired.message.max_length", 100)));
+        this.botName = name.substring(
+                0, Math.min(name.length(), Emulator.getConfig().getInt("hotel.wired.message.max_length", 100)));
 
         int delay = settings.getDelay();
-        if (delay > Emulator.getConfig().getInt("hotel.wired.max_delay", 20)) {
+        if (delay > Emulator.getConfig().getInt("hotel.wired.max_delay", WiredInputGuard.DEFAULT_MAX_DELAY)) {
             throw new WiredSaveException("Delay too long");
         }
 

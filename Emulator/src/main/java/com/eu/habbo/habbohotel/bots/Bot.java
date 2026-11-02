@@ -2,6 +2,7 @@ package com.eu.habbo.habbohotel.bots;
 
 import com.eu.habbo.Emulator;
 import com.eu.habbo.habbohotel.rooms.Room;
+import com.eu.habbo.habbohotel.rooms.RoomChatManager;
 import com.eu.habbo.habbohotel.rooms.RoomChatMessage;
 import com.eu.habbo.habbohotel.rooms.RoomChatMessageBubbles;
 import com.eu.habbo.habbohotel.rooms.RoomTile;
@@ -64,6 +65,7 @@ public class Bot implements Runnable {
     private boolean needsUpdate;
 
     private transient int followingHabboId;
+    private transient volatile int followGeneration;
 
     public Bot(int id, String name, String motto, String figure, HabboGender gender, int ownerId, String ownerName) {
         this.id = id;
@@ -246,14 +248,25 @@ public class Bot implements Runnable {
     }
 
     public void talk(String message) {
+        this.talk(message, RoomChatMessage.NO_BUBBLE_WIDTH_OVERRIDE);
+    }
+
+    public void talk(String message, int bubbleWidthOverride) {
+        this.talk(message, bubbleWidthOverride, false);
+    }
+
+    /** A wired "bot talk" may hide the bot's name; the bubble still points at the bot. */
+    public void talk(String message, int bubbleWidthOverride, boolean hideUsername) {
         if (this.room != null) {
             BotChatEvent event = new BotTalkEvent(this, message);
             if (Emulator.getPluginManager().fireEvent(event).isCancelled()) return;
 
             this.chatTimestamp = Emulator.getIntUnixTimestamp();
-            this.room.botChat(new RoomUserTalkComposer(new RoomChatMessage(
-                            event.message, this.roomUnit, RoomChatMessageBubbles.getBubble(this.getBubbleId())))
-                    .compose());
+            this.room.botChat(
+                    new RoomUserTalkComposer(this.chatMessage(event.message, bubbleWidthOverride, hideUsername))
+                            .compose());
+            // AIR: avatars in the room turn their heads toward a bot that speaks aloud.
+            RoomChatManager.turnHeadsTowardSpeaker(this.room, this.roomUnit);
 
             if (message.equals("o/") || message.equals("_o/")) {
                 this.room.sendComposer(new RoomUserActionComposer(this.roomUnit, RoomUserAction.WAVE).compose());
@@ -262,14 +275,24 @@ public class Bot implements Runnable {
     }
 
     public void shout(String message) {
+        this.shout(message, RoomChatMessage.NO_BUBBLE_WIDTH_OVERRIDE);
+    }
+
+    public void shout(String message, int bubbleWidthOverride) {
+        this.shout(message, bubbleWidthOverride, false);
+    }
+
+    public void shout(String message, int bubbleWidthOverride, boolean hideUsername) {
         if (this.room != null) {
             BotChatEvent event = new BotShoutEvent(this, message);
             if (Emulator.getPluginManager().fireEvent(event).isCancelled()) return;
 
             this.chatTimestamp = Emulator.getIntUnixTimestamp();
-            this.room.botChat(new RoomUserShoutComposer(new RoomChatMessage(
-                            event.message, this.roomUnit, RoomChatMessageBubbles.getBubble(this.getBubbleId())))
-                    .compose());
+            this.room.botChat(
+                    new RoomUserShoutComposer(this.chatMessage(event.message, bubbleWidthOverride, hideUsername))
+                            .compose());
+            // AIR: avatars in the room turn their heads toward a bot that speaks aloud.
+            RoomChatManager.turnHeadsTowardSpeaker(this.room, this.roomUnit);
 
             if (message.equals("o/") || message.equals("_o/")) {
                 this.room.sendComposer(new RoomUserActionComposer(this.roomUnit, RoomUserAction.WAVE).compose());
@@ -278,6 +301,14 @@ public class Bot implements Runnable {
     }
 
     public void whisper(String message, Habbo habbo) {
+        this.whisper(message, habbo, RoomChatMessage.NO_BUBBLE_WIDTH_OVERRIDE);
+    }
+
+    public void whisper(String message, Habbo habbo, int bubbleWidthOverride) {
+        this.whisper(message, habbo, bubbleWidthOverride, false);
+    }
+
+    public void whisper(String message, Habbo habbo, int bubbleWidthOverride, boolean hideUsername) {
         if (this.room != null && habbo != null) {
             BotWhisperEvent event = new BotWhisperEvent(this, message, habbo);
             if (Emulator.getPluginManager().fireEvent(event).isCancelled()) return;
@@ -285,9 +316,17 @@ public class Bot implements Runnable {
             this.chatTimestamp = Emulator.getIntUnixTimestamp();
             event.target
                     .getClient()
-                    .sendResponse(new RoomUserWhisperComposer(new RoomChatMessage(
-                            event.message, this.roomUnit, RoomChatMessageBubbles.getBubble(this.getBubbleId()))));
+                    .sendResponse(new RoomUserWhisperComposer(
+                            this.chatMessage(event.message, bubbleWidthOverride, hideUsername)));
         }
+    }
+
+    private RoomChatMessage chatMessage(String text, int bubbleWidthOverride, boolean hideUsername) {
+        RoomChatMessage chatMessage =
+                new RoomChatMessage(text, this.roomUnit, RoomChatMessageBubbles.getBubble(this.getBubbleId()));
+        chatMessage.setBubbleWidthOverride(bubbleWidthOverride);
+        chatMessage.setHideUsername(hideUsername);
+        return chatMessage;
     }
 
     public void onPlace(Habbo habbo, Room room) {
@@ -489,8 +528,14 @@ public class Bot implements Runnable {
         return this.followingHabboId;
     }
 
+    /** Bumped on every new follow, so only the newest follow loop keeps running. */
+    public int getFollowGeneration() {
+        return this.followGeneration;
+    }
+
     public void startFollowingHabbo(Habbo habbo) {
         this.followingHabboId = habbo.getHabboInfo().getId();
+        this.followGeneration++;
 
         Emulator.getThreading()
                 .run(new BotFollowHabbo(this, habbo, habbo.getHabboInfo().getCurrentRoom()));

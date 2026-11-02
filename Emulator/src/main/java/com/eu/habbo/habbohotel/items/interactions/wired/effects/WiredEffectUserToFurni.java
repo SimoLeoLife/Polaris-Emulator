@@ -4,6 +4,7 @@ import com.eu.habbo.Emulator;
 import com.eu.habbo.habbohotel.gameclients.GameClient;
 import com.eu.habbo.habbohotel.items.Item;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredTrigger;
+import com.eu.habbo.habbohotel.items.interactions.wired.WiredInputGuard;
 import com.eu.habbo.habbohotel.items.interactions.wired.WiredSettings;
 import com.eu.habbo.habbohotel.rooms.Room;
 import com.eu.habbo.habbohotel.rooms.RoomTile;
@@ -14,13 +15,12 @@ import com.eu.habbo.habbohotel.users.HabboItem;
 import com.eu.habbo.habbohotel.wired.WiredEffectType;
 import com.eu.habbo.habbohotel.wired.core.WiredContext;
 import com.eu.habbo.habbohotel.wired.core.WiredManager;
-import com.eu.habbo.habbohotel.wired.core.WiredMovementPhysics;
 import com.eu.habbo.habbohotel.wired.core.WiredMoveCarryHelper;
+import com.eu.habbo.habbohotel.wired.core.WiredMovementPhysics;
 import com.eu.habbo.habbohotel.wired.core.WiredSourceUtil;
 import com.eu.habbo.habbohotel.wired.core.WiredUserMovementHelper;
 import com.eu.habbo.messages.ServerMessage;
 import com.eu.habbo.messages.incoming.wired.WiredSaveException;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
@@ -33,7 +33,8 @@ public class WiredEffectUserToFurni extends WiredEffectUserFurniBase {
     private static final int WALKMODE_STOP = 2;
 
     public static final WiredEffectType type = WiredEffectType.USER_TO_FURNI;
-    private int walkMode = WALKMODE_CONTINUE;
+    // Official default for a new box; saved boxes keep theirs.
+    private int walkMode = WALKMODE_IF_CLOSER;
 
     public WiredEffectUserToFurni(ResultSet set, Item baseItem) throws SQLException {
         super(set, baseItem);
@@ -53,13 +54,15 @@ public class WiredEffectUserToFurni extends WiredEffectUserFurniBase {
             return;
         }
 
+        int jumpStrength = WiredMoveCarryHelper.getUserJumpStrength(room, this, ctx);
+
         RoomTile targetTile = room.getLayout().getTile(item.getX(), item.getY());
         if (targetTile == null) {
             return;
         }
 
         for (Habbo habbo : this.resolveHabbos(room, ctx)) {
-            this.moveHabboSmooth(room, habbo, item, targetTile, movementPhysics);
+            this.moveHabboSmooth(room, habbo, item, targetTile, movementPhysics, jumpStrength);
         }
     }
 
@@ -76,13 +79,13 @@ public class WiredEffectUserToFurni extends WiredEffectUserFurniBase {
 
     @Override
     public String getWiredData() {
-        return WiredManager.getGson().toJson(new JsonData(
-            this.getDelay(),
-            this.items.stream().map(HabboItem::getId).collect(Collectors.toList()),
-            this.furniSource,
-            this.userSource,
-            this.walkMode
-        ));
+        return WiredManager.getGson()
+                .toJson(new JsonData(
+                        this.getDelay(),
+                        this.items.stream().map(HabboItem::getId).collect(Collectors.toList()),
+                        this.furniSource,
+                        this.userSource,
+                        this.walkMode));
     }
 
     @Override
@@ -138,15 +141,14 @@ public class WiredEffectUserToFurni extends WiredEffectUserFurniBase {
     @Override
     public void onPickUp() {
         super.onPickUp();
-        this.walkMode = WALKMODE_CONTINUE;
+        this.walkMode = WALKMODE_IF_CLOSER;
     }
 
     @Override
     public void serializeWiredData(ServerMessage message, Room room) {
         List<HabboItem> itemsSnapshot = new ArrayList<>(this.items);
-        itemsSnapshot.removeIf(item -> item == null
-            || item.getRoomId() != this.getRoomId()
-            || room.getHabboItem(item.getId()) == null);
+        itemsSnapshot.removeIf(item ->
+                item == null || item.getRoomId() != this.getRoomId() || room.getHabboItem(item.getId()) == null);
         this.items.clear();
         this.items.addAll(itemsSnapshot);
 
@@ -160,9 +162,7 @@ public class WiredEffectUserToFurni extends WiredEffectUserFurniBase {
         message.appendInt(this.getBaseItem().getSpriteId());
         message.appendInt(this.getId());
         message.appendString("");
-        message.appendInt(3);
-        message.appendInt(this.furniSource);
-        message.appendInt(this.userSource);
+        message.appendInt(1);
         message.appendInt(this.walkMode);
         message.appendInt(0);
         message.appendInt(this.getType().code);
@@ -186,9 +186,11 @@ public class WiredEffectUserToFurni extends WiredEffectUserFurniBase {
 
     @Override
     public boolean saveData(WiredSettings settings, GameClient gameClient) throws WiredSaveException {
-        this.furniSource = (settings.getIntParams().length > 0) ? settings.getIntParams()[0] : WiredSourceUtil.SOURCE_TRIGGER;
-        this.userSource = (settings.getIntParams().length > 1) ? settings.getIntParams()[1] : WiredSourceUtil.SOURCE_TRIGGER;
-        this.walkMode = this.normalizeWalkMode((settings.getIntParams().length > 2) ? settings.getIntParams()[2] : WALKMODE_CONTINUE);
+        // Official layout: [walk mode]; the furni and user sources are the official source slots.
+        this.furniSource = settings.furniSource(0, WiredSourceUtil.SOURCE_TRIGGER);
+        this.userSource = settings.userSource(0, WiredSourceUtil.SOURCE_TRIGGER);
+        this.walkMode = this.normalizeWalkMode(
+                (settings.getIntParams().length > 0) ? settings.getIntParams()[0] : WALKMODE_IF_CLOSER);
 
         if (settings.getFurniIds().length > Emulator.getConfig().getInt("hotel.wired.furni.selection.count")) {
             throw new WiredSaveException("Too many furni selected");
@@ -217,7 +219,7 @@ public class WiredEffectUserToFurni extends WiredEffectUserFurniBase {
         }
 
         int delay = settings.getDelay();
-        if (delay > Emulator.getConfig().getInt("hotel.wired.max_delay", 20)) {
+        if (delay > Emulator.getConfig().getInt("hotel.wired.max_delay", WiredInputGuard.DEFAULT_MAX_DELAY)) {
             throw new WiredSaveException("Delay too long");
         }
 
@@ -228,7 +230,13 @@ public class WiredEffectUserToFurni extends WiredEffectUserFurniBase {
         return true;
     }
 
-    private void moveHabboSmooth(Room room, Habbo habbo, HabboItem item, RoomTile targetTile, WiredMovementPhysics movementPhysics) {
+    private void moveHabboSmooth(
+            Room room,
+            Habbo habbo,
+            HabboItem item,
+            RoomTile targetTile,
+            WiredMovementPhysics movementPhysics,
+            int jumpStrength) {
         if (room == null || habbo == null || item == null || targetTile == null || habbo.getRoomUnit() == null) {
             return;
         }
@@ -244,18 +252,35 @@ public class WiredEffectUserToFurni extends WiredEffectUserFurniBase {
         }
 
         double newZ = item.getZ() + Item.getCurrentHeight(item);
-        int animationDuration = noAnimation ? 0 : WiredMoveCarryHelper.getAnimationDuration(room, this, WiredUserMovementHelper.DEFAULT_ANIMATION_DURATION);
-        if (!WiredUserMovementHelper.moveUser(room, roomUnit, targetTile, newZ,
-                roomUnit.getBodyRotation(), roomUnit.getHeadRotation(), animationDuration, noAnimation, movementPhysics)) {
+        int animationDuration = noAnimation
+                ? 0
+                : WiredMoveCarryHelper.getAnimationDuration(
+                        room, this, WiredUserMovementHelper.DEFAULT_ANIMATION_DURATION);
+        if (!WiredUserMovementHelper.moveUser(
+                room,
+                roomUnit,
+                targetTile,
+                newZ,
+                roomUnit.getBodyRotation(),
+                roomUnit.getHeadRotation(),
+                animationDuration,
+                noAnimation,
+                movementPhysics,
+                jumpStrength)) {
             return;
         }
 
-        this.applyWalkMode(roomUnit, oldLocation, previousGoal, targetTile, wasWalking,
-                animationDuration);
+        this.applyWalkMode(roomUnit, oldLocation, previousGoal, targetTile, wasWalking, animationDuration);
         roomUnit.setPreviousLocationZ(roomUnit.getZ());
     }
 
-    private void applyWalkMode(RoomUnit roomUnit, RoomTile oldLocation, RoomTile previousGoal, RoomTile targetTile, boolean wasWalking, int delay) {
+    private void applyWalkMode(
+            RoomUnit roomUnit,
+            RoomTile oldLocation,
+            RoomTile previousGoal,
+            RoomTile targetTile,
+            boolean wasWalking,
+            int delay) {
         if (roomUnit == null || targetTile == null) {
             return;
         }

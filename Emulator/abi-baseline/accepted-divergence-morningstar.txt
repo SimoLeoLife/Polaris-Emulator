@@ -377,10 +377,8 @@ method com.eu.habbo.messages.outgoing.guilds.GuildBuyRoomsComposer#getRooms() ME
 method com.eu.habbo.messages.outgoing.guilds.GuildListComposer#getGuilds() METHOD_RETURN_TYPE_CHANGED
 method com.eu.habbo.messages.outgoing.inventory.AddHabboItemComposer#getItemsList() METHOD_RETURN_TYPE_CHANGED
 method com.eu.habbo.messages.outgoing.inventory.InventoryItemsComposer#execute(int,com.eu.habbo.habbohotel.users.HabboItem) METHOD_REMOVED
-method com.eu.habbo.messages.outgoing.inventory.InventoryItemsComposer#execute(int,java.lang.Object) METHOD_REMOVED
 method com.eu.habbo.messages.outgoing.inventory.InventoryItemsComposer#getItems() METHOD_RETURN_TYPE_CHANGED
 method com.eu.habbo.messages.outgoing.modtool.ModToolComposer#execute(com.eu.habbo.habbohotel.modtool.ModToolCategory) METHOD_REMOVED
-method com.eu.habbo.messages.outgoing.modtool.ModToolComposer#execute(java.lang.Object) METHOD_REMOVED
 method com.eu.habbo.messages.outgoing.modtool.ModToolUserRoomVisitsComposer#getRoomVisits() METHOD_RETURN_TYPE_CHANGED
 method com.eu.habbo.messages.outgoing.rooms.UpdateStackHeightComposer#getUpdateTiles() METHOD_RETURN_TYPE_CHANGED
 method com.eu.habbo.messages.outgoing.rooms.items.MoodLightDataComposer#getMoodLightData() METHOD_RETURN_TYPE_CHANGED
@@ -388,7 +386,6 @@ method com.eu.habbo.messages.outgoing.rooms.items.RoomFloorItemsComposer#getFurn
 method com.eu.habbo.messages.outgoing.rooms.items.RoomFloorItemsComposer#getItems() METHOD_RETURN_TYPE_CHANGED
 method com.eu.habbo.messages.outgoing.rooms.items.jukebox.JukeBoxPlayListUpdatedComposer#getTracks() METHOD_RETURN_TYPE_CHANGED
 method com.eu.habbo.messages.outgoing.rooms.pets.RoomPetComposer#execute(int,com.eu.habbo.habbohotel.pets.Pet) METHOD_REMOVED
-method com.eu.habbo.messages.outgoing.rooms.pets.RoomPetComposer#execute(int,java.lang.Object) METHOD_REMOVED
 method com.eu.habbo.messages.outgoing.rooms.pets.RoomPetComposer#getPets() METHOD_REMOVED
 method com.eu.habbo.messages.outgoing.rooms.pets.breeding.PetBreedingCompleted#getRace() METHOD_REMOVED
 method com.eu.habbo.messages.outgoing.rooms.pets.breeding.PetBreedingCompleted#getType() METHOD_REMOVED
@@ -465,3 +462,11 @@ superclass com.eu.habbo.networking.camera.messages.outgoing.CameraLoginComposer 
 superclass com.eu.habbo.networking.camera.messages.outgoing.CameraRenderImageComposer SUPERCLASS_REMOVED
 superclass com.eu.habbo.threading.runnables.CameraClientAutoReconnect SUPERCLASS_REMOVED
 superclass com.eu.habbo.threading.runnables.WiredExecuteTask SUPERCLASS_REMOVED
+# Reviewed 2026-07-23: benign synthetic-only divergences from the upstream
+# guild/wardrobe restructure. GuildMember's compareTo(Object) still exists at
+# runtime as the compiler-generated Comparable<GuildMember> bridge, and
+# WardrobeItem's Java-8 synthetic accessor constructors (the WardrobeComponent$1
+# marker) are dropped by JDK nestmate compilation and are uncallable by plugins.
+constructor com.eu.habbo.habbohotel.users.inventory.WardrobeComponent$WardrobeItem#<init>(com.eu.habbo.habbohotel.users.inventory.WardrobeComponent,com.eu.habbo.habbohotel.users.HabboGender,java.lang.String,int,com.eu.habbo.habbohotel.users.Habbo,com.eu.habbo.habbohotel.users.inventory.WardrobeComponent$1) CONSTRUCTOR_REMOVED
+constructor com.eu.habbo.habbohotel.users.inventory.WardrobeComponent$WardrobeItem#<init>(com.eu.habbo.habbohotel.users.inventory.WardrobeComponent,java.sql.ResultSet,com.eu.habbo.habbohotel.users.Habbo,com.eu.habbo.habbohotel.users.inventory.WardrobeComponent$1) CONSTRUCTOR_REMOVED
+method com.eu.habbo.habbohotel.guilds.GuildMember#compareTo(java.lang.Object) METHOD_REMOVED

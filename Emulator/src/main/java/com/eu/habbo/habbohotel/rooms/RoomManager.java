@@ -2,6 +2,7 @@ package com.eu.habbo.habbohotel.rooms;
 
 import com.eu.habbo.Emulator;
 import com.eu.habbo.core.RoomUserPetComposer;
+import com.eu.habbo.database.SqlQueries;
 import com.eu.habbo.habbohotel.achievements.AchievementManager;
 import com.eu.habbo.habbohotel.bots.Bot;
 import com.eu.habbo.habbohotel.gameclients.GameClient;
@@ -15,6 +16,7 @@ import com.eu.habbo.habbohotel.games.tag.RollerskateGame;
 import com.eu.habbo.habbohotel.games.wired.WiredGame;
 import com.eu.habbo.habbohotel.guilds.Guild;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWired;
+import com.eu.habbo.habbohotel.items.interactions.wired.chest.ChestAutoLock;
 import com.eu.habbo.habbohotel.messenger.MessengerBuddy;
 import com.eu.habbo.habbohotel.navigation.NavigatorFilterComparator;
 import com.eu.habbo.habbohotel.navigation.NavigatorFilterField;
@@ -25,18 +27,24 @@ import com.eu.habbo.habbohotel.pets.PetData;
 import com.eu.habbo.habbohotel.pets.PetTasks;
 import com.eu.habbo.habbohotel.polls.Poll;
 import com.eu.habbo.habbohotel.polls.PollManager;
+import com.eu.habbo.habbohotel.rooms.raidprotection.RaidProtectionManager;
 import com.eu.habbo.habbohotel.users.DanceType;
 import com.eu.habbo.habbohotel.users.Habbo;
 import com.eu.habbo.habbohotel.users.HabboItem;
 import com.eu.habbo.habbohotel.users.HabboManager;
+import com.eu.habbo.habbohotel.users.HabboStats;
 import com.eu.habbo.habbohotel.wired.core.WiredManager;
+import com.eu.habbo.habbohotel.wired.label.WiredLabelSupport;
+import com.eu.habbo.habbohotel.wired.protocol.WiredTextPlaceholderContext;
 import com.eu.habbo.messages.incoming.users.UserNuxEvent;
 import com.eu.habbo.messages.outgoing.hotelview.HotelViewComposer;
 import com.eu.habbo.messages.outgoing.polls.PollStartComposer;
 import com.eu.habbo.messages.outgoing.polls.infobus.SimplePollAnswersComposer;
 import com.eu.habbo.messages.outgoing.polls.infobus.SimplePollStartComposer;
+import com.eu.habbo.messages.outgoing.rooms.ConfigurationItemStatesComposer;
 import com.eu.habbo.messages.outgoing.rooms.DoorbellAddUserComposer;
 import com.eu.habbo.messages.outgoing.rooms.FloodCounterComposer;
+import com.eu.habbo.messages.outgoing.rooms.ForwardToRoomComposer;
 import com.eu.habbo.messages.outgoing.rooms.HideDoorbellComposer;
 import com.eu.habbo.messages.outgoing.rooms.RoomDataComposer;
 import com.eu.habbo.messages.outgoing.rooms.RoomEnterErrorComposer;
@@ -44,8 +52,10 @@ import com.eu.habbo.messages.outgoing.rooms.RoomModelComposer;
 import com.eu.habbo.messages.outgoing.rooms.RoomOpenComposer;
 import com.eu.habbo.messages.outgoing.rooms.RoomPaintComposer;
 import com.eu.habbo.messages.outgoing.rooms.RoomPaneComposer;
+import com.eu.habbo.messages.outgoing.rooms.RoomQueueStatusMessage;
 import com.eu.habbo.messages.outgoing.rooms.RoomScoreComposer;
 import com.eu.habbo.messages.outgoing.rooms.RoomThicknessComposer;
+import com.eu.habbo.messages.outgoing.rooms.YouAreNotSpectatorComposer;
 import com.eu.habbo.messages.outgoing.rooms.items.ConfInvisStateComposer;
 import com.eu.habbo.messages.outgoing.rooms.items.HanditemBlockStateComposer;
 import com.eu.habbo.messages.outgoing.rooms.items.RoomFloorItemsComposer;
@@ -64,6 +74,7 @@ import com.eu.habbo.messages.outgoing.rooms.users.RoomUsersComposer;
 import com.eu.habbo.messages.outgoing.rooms.users.RoomUsersGuildBadgesComposer;
 import com.eu.habbo.messages.outgoing.users.MutedWhisperComposer;
 import com.eu.habbo.messages.outgoing.users.UserBadgesComposer;
+import com.eu.habbo.messages.outgoing.wired.WiredEnvironmentComposer;
 import com.eu.habbo.plugin.events.navigator.NavigatorRoomCreatedEvent;
 import com.eu.habbo.plugin.events.rooms.RoomFloorItemsLoadEvent;
 import com.eu.habbo.plugin.events.rooms.RoomUncachedEvent;
@@ -107,7 +118,10 @@ public class RoomManager {
                    roller_speed, override_model, model, promoted, jukebox_active,
                    hidewired, builders_club_trial_locked,
                    builders_club_original_state, trade_mode, move_diagonally,
-                   allow_underpass, moodlight_data
+                   allow_underpass, mute_all_pets, leave_on_door_tile,
+                   idle_sleep_enabled, idle_sleep_timeout_seconds,
+                   idle_autokick_enabled, idle_autokick_timeout_seconds,
+                   moodlight_data, date_created
             FROM rooms
             WHERE is_public = ? OR is_staff_picked = ? ORDER BY id DESC
             """;
@@ -128,7 +142,10 @@ public class RoomManager {
                    roller_speed, override_model, model, promoted, jukebox_active,
                    hidewired, builders_club_trial_locked,
                    builders_club_original_state, trade_mode, move_diagonally,
-                   allow_underpass, moodlight_data
+                   allow_underpass, mute_all_pets, leave_on_door_tile,
+                   idle_sleep_enabled, idle_sleep_timeout_seconds,
+                   idle_autokick_enabled, idle_autokick_timeout_seconds,
+                   moodlight_data, date_created
             FROM rooms
             WHERE owner_id = ?
             """;
@@ -195,7 +212,9 @@ public class RoomManager {
                 () -> Emulator.getIntUnixTimestamp(),
                 RoomBan::insert);
         this.roomEntryService = new RoomEntryService(
-                roomId -> this.loadRoom(roomId, true),
+                roomId -> this.loadRoom(roomId),
+                Room::loadAccessData,
+                this::ensureRoomDataLoaded,
                 this::getRoom,
                 (habbo, room) -> !Emulator.getPluginManager()
                         .fireEvent(new UserEnterRoomEvent(habbo, room))
@@ -231,6 +250,15 @@ public class RoomManager {
     void registerActiveRoom(Room room) {
         this.roomDirectory.register(room);
         this.roomSearchService.invalidate();
+    }
+
+    /** @see RoomDirectory#registerIfAbsent(Room) */
+    Room registerActiveRoomIfAbsent(Room room) {
+        Room active = this.roomDirectory.registerIfAbsent(room);
+        if (active == room) {
+            this.roomSearchService.invalidate();
+        }
+        return active;
     }
 
     public void loadRoomModels() {
@@ -377,6 +405,27 @@ public class RoomManager {
         return rooms;
     }
 
+    public List<Room> getOwnedRoomsForHabbo(Habbo habbo) {
+        List<Room> rooms = new ArrayList<>();
+        try (Connection connection = Emulator.getDatabase().getDataSource().getConnection();
+                PreparedStatement statement = connection.prepareStatement(ROOMS_BY_OWNER_ID_SQL)) {
+            statement.setInt(1, habbo.getHabboInfo().getId());
+            try (ResultSet set = statement.executeQuery()) {
+                while (set.next()) {
+                    if (this.activeRooms.containsKey(set.getInt("id"))) {
+                        rooms.add(this.activeRooms.get(set.getInt("id")));
+                    } else {
+                        rooms.add(new Room(set, this.roomDependencies()));
+                    }
+                }
+            }
+        } catch (SQLException e) {
+            LOGGER.error("Caught SQL exception", e);
+        }
+        rooms.sort(Room.SORT_ID);
+        return rooms;
+    }
+
     public List<Room> getRoomsForHabbo(String username) {
         Habbo h = Emulator.getGameEnvironment().getHabboManager().getHabbo(username);
         if (h != null) {
@@ -423,12 +472,7 @@ public class RoomManager {
             room = this.activeRooms.get(id);
 
             if (loadData) {
-                if (room.isLoadingInProgress()) {
-                    // Wait for background loading to complete
-                    room.waitForLoad();
-                } else if (room.isPreLoaded() && !room.isLoaded()) {
-                    room.loadData();
-                }
+                this.ensureRoomDataLoaded(room);
             }
 
             return room;
@@ -441,20 +485,50 @@ public class RoomManager {
             try (ResultSet set = statement.executeQuery()) {
                 while (set.next()) {
                     room = new Room(set, this.roomDependencies());
-                    if (loadData) {
-                        room.loadData();
-                    }
                 }
             }
 
             if (room != null) {
-                this.registerActiveRoom(room);
+                // Register before the contents are loaded, and let the first registration
+                // win: two entries arriving together used to build two Room objects for
+                // one id, with the loser left ticking and saving state nobody could see.
+                Room active = this.registerActiveRoomIfAbsent(room);
+                if (active != room) {
+                    room = active;
+                }
+                if (loadData) {
+                    this.ensureRoomDataLoaded(room);
+                }
             }
         } catch (SQLException e) {
             LOGGER.error("Caught SQL exception", e);
         }
 
         return room;
+    }
+
+    /**
+     * Whether a room info request may start loading the room contents early: only when the user
+     * can walk in without password, doorbell or rights check, so a refused entry loads nothing.
+     */
+    public static boolean mayPrefetchRoomData(Habbo habbo, Room room) {
+        if (habbo == null || room == null || room.isBanned(habbo)) {
+            return false;
+        }
+        if (room.isOwner(habbo) || habbo.hasPermission(Permission.ACC_ENTERANYROOM)) {
+            return true;
+        }
+        return room.getState() == RoomState.OPEN && !room.isBuildersClubTrialLocked();
+    }
+
+    /** Loads the room contents unless they are loaded already; waits for a load in progress. */
+    void ensureRoomDataLoaded(Room room) {
+        if (room.isLoadingInProgress()) {
+            // Wait for background loading to complete
+            room.waitForLoad();
+        } else if (room.isPreLoaded() && !room.isLoaded()) {
+            room.loadData();
+        }
     }
 
     public Room createRoom(
@@ -470,7 +544,8 @@ public class RoomManager {
 
         try (Connection connection = Emulator.getDatabase().getDataSource().getConnection();
                 PreparedStatement statement = connection.prepareStatement(
-                        "INSERT INTO rooms (owner_id, owner_name, name, description, model, users_max, category, trade_mode) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                        "INSERT INTO rooms (owner_id, owner_name, name, description, model, users_max, category, trade_mode,"
+                                + " date_created) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         Statement.RETURN_GENERATED_KEYS)) {
             statement.setInt(1, ownerId);
             statement.setString(2, ownerName);
@@ -480,6 +555,9 @@ public class RoomManager {
             statement.setInt(6, usersMax);
             statement.setInt(7, categoryId);
             statement.setInt(8, tradeType);
+            // Recorded from now on; rooms made before this column existed keep the zero it
+            // defaults to, which the room competition reads as "age unknown".
+            statement.setInt(9, Emulator.getIntUnixTimestamp());
             statement.execute();
             try (ResultSet set = statement.getGeneratedKeys()) {
                 if (set.next()) room = this.loadRoom(set.getInt(1));
@@ -510,6 +588,10 @@ public class RoomManager {
                 tradeType);
 
         Emulator.getPluginManager().fireEvent(new NavigatorRoomCreatedEvent(habbo, room));
+        if (room != null) {
+            com.eu.habbo.habbohotel.quests.QuestProgressEvents.progress(
+                    habbo, com.eu.habbo.habbohotel.quests.QuestGoalType.CREATE_ROOM, 1);
+        }
 
         return room;
     }
@@ -545,6 +627,12 @@ public class RoomManager {
 
     public boolean layoutExists(String name) {
         return this.roomModelRepository.exists(name);
+    }
+
+    /** room_models.club_only: only Habbo Club members may create a room with it. */
+    public boolean layoutClubOnly(String name) {
+        RoomLayoutData layout = this.roomModelRepository.layouts().get(name);
+        return layout != null && layout.clubOnly;
     }
 
     public RoomLayout loadLayout(String name, Room room) {
@@ -628,6 +716,14 @@ public class RoomManager {
         this.roomEntryService.enter(habbo, roomId, password, overrideChecks, doorLocation, isReconnectSpawn);
     }
 
+    /**
+     * Enters a room at reconnect coordinates. They are checked against the layout once the
+     * contents are loaded (a walkable tile, or the door otherwise); negative means the door.
+     */
+    public void enterRoomAt(Habbo habbo, int roomId, String password, int spawnX, int spawnY) {
+        this.roomEntryService.enter(habbo, roomId, password, false, RoomEntryService.Spawn.reconnectAt(spawnX, spawnY));
+    }
+
     void openRoom(Habbo habbo, Room room, RoomTile doorLocation) {
         this.openRoom(habbo, room, doorLocation, false);
     }
@@ -635,6 +731,9 @@ public class RoomManager {
     void openRoom(Habbo habbo, Room room, RoomTile doorLocation, boolean isReconnectSpawn) {
         if (room == null || room.getLayout() == null) return;
 
+        this.markRoomOpened(habbo, room);
+        // Decided before the entry log records the room as visited.
+        boolean firstVisit = markRoomVisited(habbo.getHabboStats(), room.getId());
         if (Emulator.getConfig().getBoolean("hotel.room.enter.logs")) {
             this.logEnter(habbo, room);
         }
@@ -650,7 +749,7 @@ public class RoomManager {
         }
 
         habbo.getHabboInfo().setRoomQueueId(0);
-        habbo.getClient().sendResponse(new HideDoorbellComposer(""));
+        habbo.getClient().sendResponse(new HideDoorbellComposer(room.getId(), ""));
 
         if (habbo.getRoomUnit() != null) {
             RoomUnit existingRoom = habbo.getRoomUnit();
@@ -705,6 +804,7 @@ public class RoomManager {
                 }
             }
         }
+        PendingRoomEntrySupport.apply(habbo, room, doorLocation == null, System.currentTimeMillis());
 
         habbo.getRoomUnit().setRoomUnitType(RoomUnitType.USER);
         if (room.isBanned(habbo)) {
@@ -712,11 +812,19 @@ public class RoomManager {
             return;
         }
 
+        // AIR raid protection: a raider is kicked or banned at the door, the guard keeps suspicious visitors out.
+        if (!RaidProtectionManager.get().admit(room, habbo, firstVisit)) {
+            return;
+        }
+
         if (room.getUserCount() >= room.getUsersMax()
                 && !habbo.hasPermission(Permission.ACC_FULLROOMS)
                 && !room.hasRights(habbo)) {
-            habbo.getClient()
-                    .sendResponse(new RoomEnterErrorComposer(RoomEnterErrorComposer.ROOM_ERROR_GUESTROOM_FULL));
+            // AIR 13: a full room queues the visitor (RoomQueueStatus, our 2208)
+            // instead of bouncing it with CantConnect(REASON_FULL).
+            RoomVisitorQueueSupport.enqueue(room, habbo);
+            habbo.getHabboInfo().setLoadingRoom(0);
+            habbo.getClient().sendResponse(new HotelViewComposer());
             return;
         }
 
@@ -768,19 +876,56 @@ public class RoomManager {
             habbo.getClient().sendResponse(new RoomPromotionMessageComposer(null, null));
         }
 
-        if (room.getOwnerId() != habbo.getHabboInfo().getId()
-                && !habbo.getHabboStats().visitedRoom(room.getId())) {
+        if (room.getOwnerId() != habbo.getHabboInfo().getId() && firstVisit) {
             AchievementManager.progressAchievement(
                     habbo, Emulator.getGameEnvironment().getAchievementManager().getAchievement("RoomEntry"));
         }
     }
 
     public void enterRoom(final Habbo habbo, final Room room) {
+        if (!this.placeAtDoor(habbo, room)) {
+            return;
+        }
+
+        habbo.getRoomUnit().setPathFinderRoom(room);
+        habbo.getRoomUnit().resetIdleTimer();
+
+        habbo.getRoomUnit().setInvisible(false);
+        room.addHabbo(habbo);
+        BuildersClubRoomSupport.sendCurrentRoomPlacementStatus(room);
+        room.getUserVariableManager().restorePermanentAssignments(habbo);
+
+        habbo.getClient()
+                .sendResponse(new UserBadgesComposer(
+                        habbo.getInventory().getBadgesComponent().getWearingBadges(),
+                        habbo.getHabboInfo().getId()));
+
+        List<Habbo> habbos = this.announceEntry(habbo, room);
+
+        this.sendRoomState(habbo, room);
+        this.sendPetsAndMuteState(habbo, room);
+        this.sendOtherUsersState(habbo, habbos);
+        this.sendRoomExtras(habbo, room);
+
+        WiredManager.triggerUserEntersRoom(room, habbo.getRoomUnit());
+        room.habboEntered(habbo);
+        if (room.getOwnerId() != habbo.getHabboInfo().getId()) {
+            com.eu.habbo.habbohotel.quests.QuestProgressEvents.progress(
+                    habbo, com.eu.habbo.habbohotel.quests.QuestGoalType.VISIT_ROOMS, 1);
+        }
+
+        if (!habbo.getHabboStats().nux && (room.isOwner(habbo) || room.isPublicRoom())) {
+            UserNuxEvent.handle(habbo);
+        }
+    }
+
+    /** Puts the entering user on the door tile of the room; false when the room has no usable door and the user went back to the hotel view. */
+    private boolean placeAtDoor(final Habbo habbo, final Room room) {
         if (habbo.getHabboInfo().getLoadingRoom() != room.getId()) {
             if (habbo.getHabboInfo().getLoadingRoom() != 0) {
                 habbo.getClient().sendResponse(new HotelViewComposer());
             }
-            return;
+            return false;
         }
 
         habbo.getRoomUnit().removeStatus(RoomUnitStatus.FLAT_CONTROL);
@@ -820,22 +965,14 @@ public class RoomManager {
             habbo.getHabboInfo().setLoadingRoom(0);
             habbo.getHabboInfo().setCurrentRoom(null);
             habbo.getClient().sendResponse(new HotelViewComposer());
-            return;
+            return false;
         }
 
-        habbo.getRoomUnit().setPathFinderRoom(room);
-        habbo.getRoomUnit().resetIdleTimer();
+        return true;
+    }
 
-        habbo.getRoomUnit().setInvisible(false);
-        room.addHabbo(habbo);
-        BuildersClubRoomSupport.sendCurrentRoomPlacementStatus(room);
-        room.getUserVariableManager().restorePermanentAssignments(habbo);
-
-        habbo.getClient()
-                .sendResponse(new UserBadgesComposer(
-                        habbo.getInventory().getBadgesComponent().getWearingBadges(),
-                        habbo.getHabboInfo().getId()));
-
+    /** Tells the users already in the room about the newcomer, and gives back the visible ones for the newcomer's own view. */
+    private List<Habbo> announceEntry(final Habbo habbo, final Room room) {
         List<Habbo> habbos = new ArrayList<>();
         if (!room.getCurrentHabbos().isEmpty()) {
 
@@ -849,7 +986,9 @@ public class RoomManager {
                 visibleHabbos = event.visibleHabbos;
             }
 
+            // The newcomer is already in the room: its own entry and status come once, with the others below.
             for (Habbo habboToSendEnter : habbosToSendEnter) {
+                if (habboToSendEnter == habbo) continue;
                 GameClient client = habboToSendEnter.getClient();
                 if (client != null) {
                     client.sendResponse(new RoomUsersComposer(habbo).compose());
@@ -879,6 +1018,13 @@ public class RoomManager {
             int effect = habbo.getInventory().getEffectsComponent().activatedEffect;
             room.giveEffect(habbo.getRoomUnit(), effect, -1);
         }
+
+        return habbos;
+    }
+
+    /** What the newcomer is sent about the room itself: bots, panes, items, the visualization state. */
+    private void sendRoomState(final Habbo habbo, final Room room) {
+        RoomForwardGlow.onEnter(room, habbo);
 
         habbo.getClient()
                 .sendResponse(new RoomUsersComposer(room.getCurrentBots().values(), true));
@@ -936,7 +1082,23 @@ public class RoomManager {
         habbo.getClient().sendResponse(new ConfInvisStateComposer(room).compose());
         RoomAreaHideSupport.sendState(room, habbo.getClient());
         habbo.getClient().sendResponse(new HanditemBlockStateComposer(room).compose());
+        // AIR 13 ConfigurationItemStates (1508): two of the four flags are per
+        // viewer, so it is sent per client on entry rather than broadcast.
+        habbo.getClient().sendResponse(new ConfigurationItemStatesComposer(room, habbo).compose());
+        // AIR 13 WiredEnvironment (347): tells the client whether avatar clicks go through the
+        // server and which achievements this room's wired can hand out.
+        habbo.getClient().sendResponse(new WiredEnvironmentComposer(room).compose());
+        // AIR furniture labels (2237): the wf_label notes this player may see.
+        WiredLabelSupport.sendAll(room, habbo);
+        // AIR wired visualization state (1826 furni, 1454 avatars): the highlights and avatar
+        // transparency this player sees, applied without easing.
+        WiredVisualizationBroadcaster.sendState(room, habbo);
+        // AIR: a room whose message boxes use $(trigger_text) says so to everyone entering.
+        WiredTextPlaceholderContext.sendTriggerTextNotice(room, habbo);
+    }
 
+    /** The pets in the room and whether the newcomer is muted. */
+    private void sendPetsAndMuteState(final Habbo habbo, final Room room) {
         if (!room.getCurrentPets().isEmpty()) {
             habbo.getClient()
                     .sendResponse(new RoomPetComposer(room.getCurrentPets().values()));
@@ -950,11 +1112,13 @@ public class RoomManager {
             int remainingMuteTime = habbo.getHabboStats().remainingMuteTime();
             habbo.getClient().sendResponse(new FloodCounterComposer(remainingMuteTime));
             habbo.getClient().sendResponse(new MutedWhisperComposer(remainingMuteTime));
-            room.sendComposer(new RoomUserIgnoredComposer(habbo, RoomUserIgnoredComposer.MUTED).compose());
         } else if (habbo.getHabboStats().mutedBubbleTracker) {
             habbo.getHabboStats().mutedBubbleTracker = false;
         }
+    }
 
+    /** What the other users are doing: dancing, hand items, effects, ignores, guild badges and pets. */
+    private void sendOtherUsersState(final Habbo habbo, final List<Habbo> habbos) {
         Map<Integer, String> guildBadges = new HashMap<>();
         for (Habbo roomHabbo : habbos) {
             {
@@ -980,11 +1144,8 @@ public class RoomManager {
                             .sendResponse(new RoomUserIgnoredComposer(habbo, RoomUserIgnoredComposer.IGNORED));
                 }
 
-                if (!roomHabbo.getHabboStats().allowTalk()) {
-                    habbo.getClient()
-                            .sendResponse(new RoomUserIgnoredComposer(roomHabbo, RoomUserIgnoredComposer.MUTED));
-                } else if (habbo.getHabboStats()
-                        .userIgnored(roomHabbo.getHabboInfo().getId())) {
+                // Only the entering user's own ignores; another user's mute is not theirs to see.
+                if (habbo.getHabboStats().userIgnored(roomHabbo.getHabboInfo().getId())) {
                     habbo.getClient()
                             .sendResponse(new RoomUserIgnoredComposer(roomHabbo, RoomUserIgnoredComposer.IGNORED));
                 }
@@ -1020,7 +1181,10 @@ public class RoomManager {
         }
 
         habbo.getClient().sendResponse(new RoomUsersGuildBadgesComposer(guildBadges));
+    }
 
+    /** The doorbell queue, polls, the word quiz, YouTube, the soundboard and raid protection. */
+    private void sendRoomExtras(final Habbo habbo, final Room room) {
         if (room.hasRights(habbo)
                 || (room.hasGuild()
                         && room.getGuildRightLevel(habbo).isEqualOrGreaterThan(RoomRightLevels.GUILD_RIGHTS))) {
@@ -1073,24 +1237,35 @@ public class RoomManager {
                             .compose());
         }
 
+        var soundboardManager = Emulator.getGameEnvironment().getSoundboardManager();
         habbo.getClient()
                 .sendResponse(new com.eu.habbo.messages.outgoing.soundboard.SoundboardSettingsComposer(
-                                room.isSoundboardEnabled(),
-                                Emulator.getGameEnvironment()
-                                        .getSoundboardManager()
-                                        .getSounds())
+                                room.getSoundboardMode(),
+                                soundboardManager.getCooldownSecondsForRank(
+                                        habbo.getHabboInfo().getRank().getId()),
+                                soundboardManager.getSoundsForRank(
+                                        habbo.getHabboInfo().getRank().getId()))
                         .compose());
 
-        WiredManager.triggerUserEntersRoom(room, habbo.getRoomUnit());
-        room.habboEntered(habbo);
+        // AIR 2671: whether the room info shows the raid protection button to this visitor.
+        RaidProtectionManager.get().sendCapability(room, habbo);
+    }
 
-        if (!habbo.getHabboStats().nux && (room.isOwner(habbo) || room.isPublicRoom())) {
-            UserNuxEvent.handle(habbo);
-        }
+    /** Records the visit and returns true when it is the first one for this user. */
+    static boolean markRoomVisited(HabboStats stats, int roomId) {
+        if (stats.visitedRoom(roomId)) return false;
+        stats.addVisitRoom(roomId);
+        return true;
+    }
+
+    /** Stamps the entry: seconds for the visit log and hosting time, room and millis for the entry throttle. */
+    void markRoomOpened(Habbo habbo, Room room) {
+        habbo.getHabboStats().roomEnterTimestamp = Emulator.getIntUnixTimestamp();
+        habbo.getHabboStats().roomOpenedId = room.getId();
+        habbo.getHabboStats().roomOpenedAtMillis = System.currentTimeMillis();
     }
 
     void logEnter(Habbo habbo, Room room) {
-        habbo.getHabboStats().roomEnterTimestamp = Emulator.getIntUnixTimestamp();
         try {
             this.roomRepository.recordEntry(
                     room.getId(), habbo.getHabboInfo().getId(), (int) habbo.getHabboStats().roomEnterTimestamp);
@@ -1105,14 +1280,25 @@ public class RoomManager {
         this.leaveRoom(habbo, room, true);
     }
 
+    /** Whole minutes between the entry and now, both unix seconds; 0 when the entry is unknown. */
+    static int minutesInRoom(long enteredAtSeconds, long nowSeconds) {
+        if (enteredAtSeconds <= 0 || nowSeconds <= enteredAtSeconds) {
+            return 0;
+        }
+        return (int) ((nowSeconds - enteredAtSeconds) / 60);
+    }
+
     public void leaveRoom(Habbo habbo, Room room, boolean redirectToHotelView) {
         if (habbo.getHabboInfo().getCurrentRoom() != null
                 && habbo.getHabboInfo().getCurrentRoom() == room) {
             habbo.getRoomUnit().setPathFinderRoom(null);
 
             this.logExit(habbo);
+            // Before they are gone from the room: close the chests they asked to have closed.
+            ChestAutoLock.onOwnerLeftRoom(room, habbo);
             room.removeHabbo(habbo, true);
             BuildersClubRoomSupport.sendCurrentRoomPlacementStatus(room);
+            this.admitNextQueuedHabbo(room);
 
             if (redirectToHotelView) {
                 habbo.getClient().sendResponse(new HotelViewComposer());
@@ -1124,12 +1310,39 @@ public class RoomManager {
                 AchievementManager.progressAchievement(
                         room.getOwnerId(),
                         Emulator.getGameEnvironment().getAchievementManager().getAchievement("RoomDecoHosting"),
-                        (int) Math.floor(
-                                (Emulator.getIntUnixTimestamp() - habbo.getHabboStats().roomEnterTimestamp) / 60000));
+                        minutesInRoom(habbo.getHabboStats().roomEnterTimestamp, Emulator.getIntUnixTimestamp()));
             }
 
             habbo.getMessenger().connectionChanged(habbo, habbo.isOnline(), false);
         }
+    }
+
+    /**
+     * A slot freed up: forward the habbo at the front of the room queue into
+     * the room and refresh the position of everybody still waiting.
+     */
+    public void admitNextQueuedHabbo(Room room) {
+        if (room == null || room.getUserCount() >= room.getUsersMax()) {
+            return;
+        }
+
+        int[] nextQueued = RoomVisitorQueueSupport.pollNextQueued(room);
+        while (nextQueued != null) {
+            Habbo next = Emulator.getGameEnvironment().getHabboManager().getHabbo(nextQueued[0]);
+            if (next != null && next.getClient() != null) {
+                next.getHabboInfo().setRoomQueueId(0);
+                if (nextQueued[1] == RoomQueueStatusMessage.TARGET_SPECTATOR) {
+                    // Leaving the spectator queue for a real slot: the official
+                    // client drops spectator mode on YouAreNotSpectator (3242).
+                    next.getClient().sendResponse(new YouAreNotSpectatorComposer(room.getId()));
+                }
+                next.getClient().sendResponse(new ForwardToRoomComposer(room.getId()));
+                break;
+            }
+            nextQueued = RoomVisitorQueueSupport.pollNextQueued(room);
+        }
+
+        RoomVisitorQueueSupport.broadcastStatus(room);
     }
 
     public void logExit(Habbo habbo) {
@@ -1183,6 +1396,35 @@ public class RoomManager {
         return this.roomSearchService.popularRoomsByCategory(count);
     }
 
+    /**
+     * The id of the room named exactly {@code name}, unless it is invisible; 0 when there is none. Only
+     * the id is read: the name lookup used to run an unescaped LIKE and build and register up to 25 rooms
+     * per request, and it answered with invisible rooms too.
+     */
+    public int findVisibleRoomIdByName(String name) {
+        for (Room room : this.activeRooms.values()) {
+            if (room.getState() != RoomState.INVISIBLE && room.getName().equalsIgnoreCase(name)) {
+                return room.getId();
+            }
+        }
+
+        try {
+            return SqlQueries.queryOne(
+                            "SELECT id FROM rooms WHERE name = ? AND state <> 'invisible' ORDER BY id LIMIT 1",
+                            set -> set.getInt("id"),
+                            name)
+                    .orElse(0);
+        } catch (SqlQueries.DataAccessException e) {
+            LOGGER.error("Caught SQL exception", e);
+            return 0;
+        }
+    }
+
+    /** {@code text} for a LIKE pattern: % and _ match themselves instead of anything. */
+    static String escapeLike(String text) {
+        return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
+    }
+
     public ArrayList<Room> getRoomsWithName(String name) {
         ArrayList<Room> rooms = new ArrayList<>();
 
@@ -1207,7 +1449,7 @@ public class RoomManager {
         try (Connection connection = Emulator.getDatabase().getDataSource().getConnection();
                 PreparedStatement statement = connection.prepareStatement(
                         "SELECT users.username AS owner_name, rooms.* FROM rooms INNER JOIN users ON owner_id = users.id WHERE name LIKE ? ORDER BY id DESC LIMIT 25")) {
-            statement.setString(1, "%" + name + "%");
+            statement.setString(1, "%" + escapeLike(name) + "%");
             try (ResultSet set = statement.executeQuery()) {
                 while (set.next()) {
                     if (this.activeRooms.containsKey(set.getInt("id"))) continue;
@@ -1252,7 +1494,7 @@ public class RoomManager {
         try (Connection connection = Emulator.getDatabase().getDataSource().getConnection();
                 PreparedStatement statement = connection.prepareStatement(
                         "SELECT users.username AS owner_name, rooms.* FROM rooms INNER JOIN users ON rooms.owner_id = users.id WHERE name LIKE ? AND guild_id != 0 ORDER BY id DESC LIMIT 25")) {
-            statement.setString(1, "%" + name + "%");
+            statement.setString(1, "%" + escapeLike(name) + "%");
             try (ResultSet set = statement.executeQuery()) {
                 while (set.next()) {
                     if (this.activeRooms.containsKey(set.getInt("id"))) continue;
@@ -1274,7 +1516,7 @@ public class RoomManager {
         ArrayList<Room> rooms = new ArrayList<>();
 
         for (MessengerBuddy buddy : habbo.getMessenger().getFriends().values()) {
-            if (buddy.getOnline() == 0) continue;
+            if (!buddy.isVisibleOnline()) continue;
 
             Habbo friend = Emulator.getGameEnvironment().getHabboManager().getHabbo(buddy.getId());
             if (friend == null || friend.getHabboInfo().getCurrentRoom() == null) continue;
@@ -1291,7 +1533,7 @@ public class RoomManager {
         ArrayList<Room> rooms = new ArrayList<>();
 
         for (MessengerBuddy buddy : habbo.getMessenger().getFriends().values()) {
-            if (buddy.getOnline() == 0) continue;
+            if (!buddy.isVisibleOnline()) continue;
 
             Habbo friend = Emulator.getGameEnvironment().getHabboManager().getHabbo(buddy.getId());
 
@@ -1616,6 +1858,7 @@ public class RoomManager {
         final int doorY;
         final int doorDir;
         final String heightmap;
+        final boolean clubOnly;
 
         RoomLayoutData(ResultSet set) throws SQLException {
             this.name = set.getString("name");
@@ -1623,6 +1866,15 @@ public class RoomManager {
             this.doorY = set.getInt("door_y");
             this.doorDir = set.getInt("door_dir");
             this.heightmap = set.getString("heightmap");
+            this.clubOnly = clubOnly(set);
+        }
+
+        private static boolean clubOnly(ResultSet set) {
+            try {
+                return "1".equals(set.getString("club_only"));
+            } catch (SQLException missingColumn) {
+                return false;
+            }
         }
     }
 }

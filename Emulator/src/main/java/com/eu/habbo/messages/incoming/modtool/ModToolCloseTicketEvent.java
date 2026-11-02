@@ -12,35 +12,49 @@ public class ModToolCloseTicketEvent extends MessageHandler {
     public void handle() throws Exception {
         if (this.client.getHabbo().hasPermission(Permission.ACC_SUPPORTTOOL)) {
             int state = this.packet.readInt();
-            this.packet.readInt();
-            int ticketId = this.packet.readInt();
+            int count = this.packet.readInt();
 
-            if (!ModToolTicketGuard.isPositiveId(ticketId) || state < 1 || state > 3) {
+            if (state < 1 || state > 3 || !ModToolTicketGuard.isValidReleaseBatch(count)) {
                 return;
             }
 
-            ModToolIssue issue = Emulator.getGameEnvironment().getModToolManager().getTicket(ticketId);
+            // The window closes several issues with one resolution: every id is checked on its own.
+            while (count-- > 0) {
+                int ticketId = this.packet.readInt();
 
-            if (!ModToolTicketGuard.isOwnedBy(issue, this.client.getHabbo()))
-                return;
+                if (!ModToolTicketGuard.isPositiveId(ticketId)) {
+                    continue;
+                }
 
-            Habbo sender = Emulator.getGameEnvironment().getHabboManager().getHabbo(issue.senderId);
+                ModToolIssue issue =
+                        Emulator.getGameEnvironment().getModToolManager().getTicket(ticketId);
 
-            switch (state) {
-                case 1:
-                    Emulator.getGameEnvironment().getModToolManager().closeTicketAsUseless(issue, sender);
-                    break;
+                if (!ModToolTicketGuard.isOwnedBy(issue, this.client.getHabbo())) continue;
 
-                case 2:
-                    Emulator.getGameEnvironment().getModToolManager().closeTicketAsAbusive(issue, sender);
-                    break;
+                Habbo sender = Emulator.getGameEnvironment().getHabboManager().getHabbo(issue.senderId);
 
-                case 3:
-                    Emulator.getGameEnvironment().getModToolManager().closeTicketAsHandled(issue, sender);
-                    break;
+                switch (state) {
+                    case 1:
+                        Emulator.getGameEnvironment().getModToolManager().closeTicketAsUseless(issue, sender);
+                        break;
+
+                    case 2:
+                        Emulator.getGameEnvironment().getModToolManager().closeTicketAsAbusive(issue, sender);
+                        break;
+
+                    case 3:
+                        Emulator.getGameEnvironment().getModToolManager().closeTicketAsHandled(issue, sender);
+                        break;
+                }
             }
         } else {
-            ScripterManager.scripterDetected(this.client, Emulator.getTexts().getValue("scripter.warning.modtools.ticket.close").replace("%username%", this.client.getHabbo().getHabboInfo().getUsername()));
+            ScripterManager.scripterDetected(
+                    this.client,
+                    Emulator.getTexts()
+                            .getValue("scripter.warning.modtools.ticket.close")
+                            .replace(
+                                    "%username%",
+                                    this.client.getHabbo().getHabboInfo().getUsername()));
         }
     }
 }

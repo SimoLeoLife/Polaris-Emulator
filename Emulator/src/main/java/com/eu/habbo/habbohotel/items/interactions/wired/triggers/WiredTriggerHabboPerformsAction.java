@@ -11,12 +11,12 @@ import com.eu.habbo.habbohotel.wired.WiredUserActionType;
 import com.eu.habbo.habbohotel.wired.core.WiredEvent;
 import com.eu.habbo.habbohotel.wired.core.WiredManager;
 import com.eu.habbo.messages.ServerMessage;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 
 public class WiredTriggerHabboPerformsAction extends InteractionWiredTrigger {
     private static final WiredTriggerType type = WiredTriggerType.USER_PERFORMS_ACTION;
+    static final int OFFICIAL_ACTION_IDS = 2;
     private static final int DEFAULT_ACTION = WiredUserActionType.WAVE;
 
     private int selectedAction = DEFAULT_ACTION;
@@ -29,7 +29,8 @@ public class WiredTriggerHabboPerformsAction extends InteractionWiredTrigger {
         super(set, baseItem);
     }
 
-    public WiredTriggerHabboPerformsAction(int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
+    public WiredTriggerHabboPerformsAction(
+            int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
         super(id, userId, item, extradata, limitedStack, limitedSells);
     }
 
@@ -62,13 +63,13 @@ public class WiredTriggerHabboPerformsAction extends InteractionWiredTrigger {
 
     @Override
     public String getWiredData() {
-        return WiredManager.getGson().toJson(new JsonData(
-                this.selectedAction,
-                this.signFilterEnabled,
-                this.signId,
-                this.danceFilterEnabled,
-                this.danceId
-        ));
+        return WiredManager.getGson()
+                .toJson(new JsonData(
+                        this.selectedAction,
+                        this.signFilterEnabled,
+                        this.signId,
+                        this.danceFilterEnabled,
+                        this.danceId));
     }
 
     @Override
@@ -84,7 +85,10 @@ public class WiredTriggerHabboPerformsAction extends InteractionWiredTrigger {
                 return;
             }
 
-            this.selectedAction = normalizeAction(data.selectedAction);
+            this.selectedAction = normalizeAction(
+                    data.actionIds >= OFFICIAL_ACTION_IDS
+                            ? data.selectedAction
+                            : WiredUserActionType.fromLegacy(data.selectedAction));
             this.signFilterEnabled = data.signFilterEnabled;
             this.signId = normalizeSignId(data.signId);
             this.danceFilterEnabled = data.danceFilterEnabled;
@@ -109,13 +113,10 @@ public class WiredTriggerHabboPerformsAction extends InteractionWiredTrigger {
         message.appendInt(0);
         message.appendInt(this.getBaseItem().getSpriteId());
         message.appendInt(this.getId());
-        message.appendString("");
-        message.appendInt(5);
+        message.appendString(WiredUserActionType.extraString(
+                this.selectedAction, this.signFilterEnabled, this.signId, this.danceFilterEnabled, this.danceId));
+        message.appendInt(1);
         message.appendInt(this.selectedAction);
-        message.appendInt(this.signFilterEnabled ? 1 : 0);
-        message.appendInt(this.signId);
-        message.appendInt(this.danceFilterEnabled ? 1 : 0);
-        message.appendInt(this.danceId);
         message.appendInt(0);
         message.appendInt(this.getType().code);
         message.appendInt(0);
@@ -132,20 +133,15 @@ public class WiredTriggerHabboPerformsAction extends InteractionWiredTrigger {
             this.selectedAction = normalizeAction(intParams[0]);
         }
 
-        if (intParams.length > 1) {
-            this.signFilterEnabled = (intParams[1] == 1);
+        // Official: [action], the sign or dance extra in the string param.
+        int extra = WiredUserActionType.extraCode(this.selectedAction, settings.getStringParam());
+        if (this.selectedAction == WiredUserActionType.SIGN && extra >= 0) {
+            this.signFilterEnabled = true;
+            this.signId = extra;
         }
-
-        if (intParams.length > 2) {
-            this.signId = normalizeSignId(intParams[2]);
-        }
-
-        if (intParams.length > 3) {
-            this.danceFilterEnabled = (intParams[3] == 1);
-        }
-
-        if (intParams.length > 4) {
-            this.danceId = normalizeDanceId(intParams[4]);
+        if (this.selectedAction == WiredUserActionType.DANCE && extra >= 0) {
+            this.danceFilterEnabled = true;
+            this.danceId = extra;
         }
 
         return true;
@@ -165,22 +161,7 @@ public class WiredTriggerHabboPerformsAction extends InteractionWiredTrigger {
     }
 
     private int normalizeAction(int action) {
-        switch (action) {
-            case WiredUserActionType.WAVE:
-            case WiredUserActionType.BLOW_KISS:
-            case WiredUserActionType.LAUGH:
-            case WiredUserActionType.AWAKE:
-            case WiredUserActionType.RELAX:
-            case WiredUserActionType.SIT:
-            case WiredUserActionType.STAND:
-            case WiredUserActionType.LAY:
-            case WiredUserActionType.SIGN:
-            case WiredUserActionType.DANCE:
-            case WiredUserActionType.THUMB_UP:
-                return action;
-            default:
-                return DEFAULT_ACTION;
-        }
+        return WiredUserActionType.isAction(action) ? action : DEFAULT_ACTION;
     }
 
     private int normalizeSignId(int signId) {
@@ -200,13 +181,17 @@ public class WiredTriggerHabboPerformsAction extends InteractionWiredTrigger {
     }
 
     static class JsonData {
+        /** 2: the official action ids; rows saved before have none and use the old ids. */
+        int actionIds = OFFICIAL_ACTION_IDS;
+
         int selectedAction;
         boolean signFilterEnabled;
         int signId;
         boolean danceFilterEnabled;
         int danceId;
 
-        public JsonData(int selectedAction, boolean signFilterEnabled, int signId, boolean danceFilterEnabled, int danceId) {
+        public JsonData(
+                int selectedAction, boolean signFilterEnabled, int signId, boolean danceFilterEnabled, int danceId) {
             this.selectedAction = selectedAction;
             this.signFilterEnabled = signFilterEnabled;
             this.signId = signId;

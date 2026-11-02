@@ -6,6 +6,7 @@ import com.eu.habbo.habbohotel.items.Item;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredEffect;
 import com.eu.habbo.habbohotel.items.interactions.games.InteractionGameTimer;
 import com.eu.habbo.habbohotel.items.interactions.games.InteractionGameUpCounter;
+import com.eu.habbo.habbohotel.items.interactions.wired.WiredInputGuard;
 import com.eu.habbo.habbohotel.items.interactions.wired.WiredSettings;
 import com.eu.habbo.habbohotel.rooms.Room;
 import com.eu.habbo.habbohotel.rooms.RoomUnit;
@@ -16,7 +17,6 @@ import com.eu.habbo.habbohotel.wired.core.WiredManager;
 import com.eu.habbo.habbohotel.wired.core.WiredSourceUtil;
 import com.eu.habbo.messages.ServerMessage;
 import com.eu.habbo.messages.incoming.wired.WiredSaveException;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
@@ -40,7 +40,8 @@ public class WiredEffectControlClock extends InteractionWiredEffect {
         super(set, baseItem);
     }
 
-    public WiredEffectControlClock(int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
+    public WiredEffectControlClock(
+            int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
         super(id, userId, item, extradata, limitedStack, limitedSells);
     }
 
@@ -55,9 +56,8 @@ public class WiredEffectControlClock extends InteractionWiredEffect {
         List<HabboItem> effectiveItems = WiredSourceUtil.resolveItems(ctx, this.furniSource, this.items);
 
         if (this.furniSource == WiredSourceUtil.SOURCE_SELECTED) {
-            this.items.removeIf(item -> item == null
-                    || item.getRoomId() != this.getRoomId()
-                    || room.getHabboItem(item.getId()) == null);
+            this.items.removeIf(item ->
+                    item == null || item.getRoomId() != this.getRoomId() || room.getHabboItem(item.getId()) == null);
         }
 
         for (HabboItem item : effectiveItems) {
@@ -66,7 +66,7 @@ public class WiredEffectControlClock extends InteractionWiredEffect {
             }
 
             if (item instanceof InteractionGameUpCounter) {
-                this.controlUpCounter((InteractionGameUpCounter) item, room);
+                this.controlUpCounter((InteractionGameUpCounter) item, room, ctx);
                 continue;
             }
 
@@ -74,7 +74,7 @@ public class WiredEffectControlClock extends InteractionWiredEffect {
         }
     }
 
-    private void controlUpCounter(InteractionGameUpCounter counter, Room room) {
+    private void controlUpCounter(InteractionGameUpCounter counter, Room room, WiredContext ctx) {
         switch (this.action) {
             case ACTION_START:
                 counter.restartFromZero(room);
@@ -91,6 +91,12 @@ public class WiredEffectControlClock extends InteractionWiredEffect {
             case ACTION_RESUME:
                 counter.resumeCounter(room);
                 break;
+        }
+
+        // Start, Stop and Reset change the counter's state once each, even when the shown time stays the same; its
+        // ticks and adjustments do not.
+        if (this.action == ACTION_START || this.action == ACTION_STOP || this.action == ACTION_RESET) {
+            WiredManager.triggerFurniStateUpdated(room, ctx.actor().orElse(null), counter, true);
         }
     }
 
@@ -140,12 +146,12 @@ public class WiredEffectControlClock extends InteractionWiredEffect {
 
     @Override
     public String getWiredData() {
-        return WiredManager.getGson().toJson(new JsonData(
-                this.getDelay(),
-                this.items.stream().map(HabboItem::getId).collect(Collectors.toList()),
-                this.action,
-                this.furniSource
-        ));
+        return WiredManager.getGson()
+                .toJson(new JsonData(
+                        this.getDelay(),
+                        this.items.stream().map(HabboItem::getId).collect(Collectors.toList()),
+                        this.action,
+                        this.furniSource));
     }
 
     @Override
@@ -157,7 +163,7 @@ public class WiredEffectControlClock extends InteractionWiredEffect {
             JsonData data = WiredManager.getGson().fromJson(wiredData, JsonData.class);
             this.setDelay(data.delay);
             this.action = this.normalizeAction(data.action);
-            this.furniSource = data.furniSource;
+            this.furniSource = WiredEffectPayloadGuard.furniSource(data.furniSource);
 
             if (data.itemIds != null) {
                 for (Integer id : data.itemIds) {
@@ -193,9 +199,8 @@ public class WiredEffectControlClock extends InteractionWiredEffect {
     @Override
     public void serializeWiredData(ServerMessage message, Room room) {
         List<HabboItem> itemsSnapshot = new ArrayList<>(this.items);
-        itemsSnapshot.removeIf(item -> item == null
-                || item.getRoomId() != this.getRoomId()
-                || room.getHabboItem(item.getId()) == null);
+        itemsSnapshot.removeIf(item ->
+                item == null || item.getRoomId() != this.getRoomId() || room.getHabboItem(item.getId()) == null);
 
         this.items.clear();
         this.items.addAll(itemsSnapshot);
@@ -210,9 +215,8 @@ public class WiredEffectControlClock extends InteractionWiredEffect {
         message.appendInt(this.getBaseItem().getSpriteId());
         message.appendInt(this.getId());
         message.appendString("");
-        message.appendInt(2);
+        message.appendInt(1);
         message.appendInt(this.action);
-        message.appendInt(this.furniSource);
         message.appendInt(0);
         message.appendInt(this.getType().code);
         message.appendInt(this.getDelay());
@@ -223,15 +227,16 @@ public class WiredEffectControlClock extends InteractionWiredEffect {
     public boolean saveData(WiredSettings settings, GameClient gameClient) throws WiredSaveException {
         int[] params = settings.getIntParams();
 
-        if (params.length < 2) {
+        // Official layout: [action]; the furni source is the official source slot.
+        if (params.length < 1) {
             throw new WiredSaveException("Invalid data");
         }
 
         this.action = this.normalizeAction(params[0]);
-        this.furniSource = params[1];
+        this.furniSource = settings.furniSource(0, WiredSourceUtil.SOURCE_TRIGGER);
 
         int delay = settings.getDelay();
-        if (delay > Emulator.getConfig().getInt("hotel.wired.max_delay", 20)) {
+        if (delay > Emulator.getConfig().getInt("hotel.wired.max_delay", WiredInputGuard.DEFAULT_MAX_DELAY)) {
             throw new WiredSaveException("Delay too long");
         }
 
@@ -257,6 +262,12 @@ public class WiredEffectControlClock extends InteractionWiredEffect {
             }
 
             newItems.add(item);
+        }
+
+        // Picked clocks with the dropdown left on "triggering furni" resolved the trigger item at
+        // run time, so the validated clocks were stored and never controlled.
+        if (!newItems.isEmpty() && this.furniSource == WiredSourceUtil.SOURCE_TRIGGER) {
+            this.furniSource = WiredSourceUtil.SOURCE_SELECTED;
         }
 
         this.items.clear();

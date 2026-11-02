@@ -7,7 +7,7 @@ coordinated changes.
 
 ## Development setup
 
-Use JDK 25 or 26 and the Maven 3.9.11 wrapper in `Emulator/`. Builds continue
+Use JDK 25 or 26 and the Maven wrapper in `Emulator/` (any 3.x release from 3.9.11 on). Builds continue
 to emit Java 25 bytecode, and release artifacts are produced on JDK 25. Docker
 is needed for the Testcontainers integration suite.
 

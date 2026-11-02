@@ -2,6 +2,7 @@ package com.eu.habbo.habbohotel.rooms;
 
 import com.eu.habbo.Emulator;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredExtra;
+import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraPointerVariable;
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraRoomVariable;
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraVariableEcho;
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraVariableReference;
@@ -9,12 +10,11 @@ import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredVariableRefer
 import com.eu.habbo.habbohotel.users.Habbo;
 import com.eu.habbo.habbohotel.wired.core.WiredEvent;
 import com.eu.habbo.habbohotel.wired.core.WiredManager;
+import com.eu.habbo.habbohotel.wired.core.WiredPointerVariableSupport;
+import com.eu.habbo.habbohotel.wired.core.WiredSharedVariableChanges;
 import com.eu.habbo.habbohotel.wired.core.WiredVariableLevelSystemSupport;
 import com.eu.habbo.habbohotel.wired.core.WiredVariableTextConnectorSupport;
-import com.eu.habbo.messages.outgoing.wired.WiredUserVariablesDataComposer;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
+import com.eu.habbo.habbohotel.wired.protocol.WiredVariableTargets;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -24,9 +24,10 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class RoomVariableManager {
     private static final Logger LOGGER = LoggerFactory.getLogger(RoomVariableManager.class);
@@ -34,7 +35,8 @@ public class RoomVariableManager {
     private final Room room;
     private final ConcurrentHashMap<Integer, VariableAssignment> activeAssignmentsByDefinitionId;
     private volatile boolean persistentValuesLoaded;
-    private final java.util.concurrent.atomic.AtomicBoolean broadcastRequested = new java.util.concurrent.atomic.AtomicBoolean(false);
+    private final java.util.concurrent.atomic.AtomicBoolean broadcastRequested =
+            new java.util.concurrent.atomic.AtomicBoolean(false);
 
     public RoomVariableManager(Room room) {
         this.room = room;
@@ -55,7 +57,8 @@ public class RoomVariableManager {
             List<Integer> staleDefinitionIds = new ArrayList<>();
 
             try (Connection connection = Emulator.getDatabase().getDataSource().getConnection();
-                 PreparedStatement statement = connection.prepareStatement("SELECT variable_item_id, value, created_at, updated_at FROM room_wired_variables WHERE room_id = ?")) {
+                    PreparedStatement statement = connection.prepareStatement(
+                            "SELECT variable_item_id, value, created_at, updated_at FROM room_wired_variables WHERE room_id = ?")) {
                 statement.setInt(1, this.room.getId());
 
                 try (ResultSet set = statement.executeQuery()) {
@@ -70,7 +73,8 @@ public class RoomVariableManager {
 
                         int updatedAt = normalizeTimestamp(set.getInt("updated_at"), 0);
 
-                        this.activeAssignmentsByDefinitionId.put(definitionItemId, new VariableAssignment(set.getInt("value"), 0, updatedAt));
+                        this.activeAssignmentsByDefinitionId.put(
+                                definitionItemId, new VariableAssignment(set.getInt("value"), 0, updatedAt));
                     }
                 }
             } catch (SQLException e) {
@@ -88,10 +92,11 @@ public class RoomVariableManager {
     public int getCurrentValue(int definitionItemId) {
         this.ensurePersistentValuesLoaded();
 
-        WiredVariableLevelSystemSupport.DerivedDefinition derivedDefinition = WiredVariableLevelSystemSupport.resolveDerivedDefinition(this.room, WiredVariableLevelSystemSupport.TARGET_ROOM, definitionItemId);
+        WiredVariableLevelSystemSupport.DerivedDefinition derivedDefinition =
+                WiredVariableLevelSystemSupport.resolveDerivedDefinition(
+                        this.room, WiredVariableLevelSystemSupport.TARGET_ROOM, definitionItemId);
         if (derivedDefinition != null) {
-            Integer baseValue = this.getRawValue(derivedDefinition.getBaseDefinitionItemId());
-            Integer derivedValue = WiredVariableLevelSystemSupport.getDerivedValue(derivedDefinition.getLevelSystem(), derivedDefinition.getSubvariableType(), baseValue);
+            Integer derivedValue = this.getDerivedValue(derivedDefinition);
             return (derivedValue != null) ? derivedValue : 0;
         }
 
@@ -101,7 +106,8 @@ public class RoomVariableManager {
         }
 
         if (extra instanceof WiredExtraVariableReference) {
-            WiredVariableReferenceSupport.SharedRoomAssignment assignment = WiredVariableReferenceSupport.getSharedRoomAssignment((WiredExtraVariableReference) extra);
+            WiredVariableReferenceSupport.SharedRoomAssignment assignment =
+                    WiredVariableReferenceSupport.getSharedRoomAssignment((WiredExtraVariableReference) extra);
             return assignment != null ? assignment.getValue() : 0;
         }
 
@@ -113,7 +119,9 @@ public class RoomVariableManager {
     public int getCreatedAt(int definitionItemId) {
         this.ensurePersistentValuesLoaded();
 
-        WiredVariableLevelSystemSupport.DerivedDefinition derivedDefinition = WiredVariableLevelSystemSupport.resolveDerivedDefinition(this.room, WiredVariableLevelSystemSupport.TARGET_ROOM, definitionItemId);
+        WiredVariableLevelSystemSupport.DerivedDefinition derivedDefinition =
+                WiredVariableLevelSystemSupport.resolveDerivedDefinition(
+                        this.room, WiredVariableLevelSystemSupport.TARGET_ROOM, definitionItemId);
         if (derivedDefinition != null) {
             VariableAssignment assignment = this.getRawAssignment(derivedDefinition.getBaseDefinitionItemId());
             return (assignment != null) ? assignment.getCreatedAt() : 0;
@@ -135,7 +143,9 @@ public class RoomVariableManager {
     public int getUpdatedAt(int definitionItemId) {
         this.ensurePersistentValuesLoaded();
 
-        WiredVariableLevelSystemSupport.DerivedDefinition derivedDefinition = WiredVariableLevelSystemSupport.resolveDerivedDefinition(this.room, WiredVariableLevelSystemSupport.TARGET_ROOM, definitionItemId);
+        WiredVariableLevelSystemSupport.DerivedDefinition derivedDefinition =
+                WiredVariableLevelSystemSupport.resolveDerivedDefinition(
+                        this.room, WiredVariableLevelSystemSupport.TARGET_ROOM, definitionItemId);
         if (derivedDefinition != null) {
             VariableAssignment assignment = this.getRawAssignment(derivedDefinition.getBaseDefinitionItemId());
             return (assignment != null) ? assignment.getUpdatedAt() : 0;
@@ -147,7 +157,8 @@ public class RoomVariableManager {
         }
 
         if (extra instanceof WiredExtraVariableReference) {
-            WiredVariableReferenceSupport.SharedRoomAssignment assignment = WiredVariableReferenceSupport.getSharedRoomAssignment((WiredExtraVariableReference) extra);
+            WiredVariableReferenceSupport.SharedRoomAssignment assignment =
+                    WiredVariableReferenceSupport.getSharedRoomAssignment((WiredExtraVariableReference) extra);
             return assignment != null ? assignment.getUpdatedAt() : 0;
         }
 
@@ -160,9 +171,13 @@ public class RoomVariableManager {
             return false;
         }
 
-        WiredVariableLevelSystemSupport.DerivedDefinition derivedDefinition = WiredVariableLevelSystemSupport.resolveDerivedDefinition(this.room, WiredVariableLevelSystemSupport.TARGET_ROOM, definitionItemId);
+        WiredVariableLevelSystemSupport.DerivedDefinition derivedDefinition =
+                WiredVariableLevelSystemSupport.resolveDerivedDefinition(
+                        this.room, WiredVariableLevelSystemSupport.TARGET_ROOM, definitionItemId);
         if (derivedDefinition != null) {
-            return this.getRawAssignment(derivedDefinition.getBaseDefinitionItemId()) != null;
+            return this.getRawAssignment(derivedDefinition.getBaseDefinitionItemId()) != null
+                    && (!WiredVariableLevelSystemSupport.isPresencePart(derivedDefinition)
+                            || this.getDerivedValue(derivedDefinition) != null);
         }
 
         InteractionWiredExtra extra = this.getDefinitionExtra(definitionItemId);
@@ -176,6 +191,22 @@ public class RoomVariableManager {
     public boolean updateVariableValue(int definitionItemId, int value) {
         this.ensurePersistentValuesLoaded();
 
+        if (WiredPointerVariableSupport.isPointer(this.room, definitionItemId)) {
+            // A pointer holds nothing itself; boxes resolve it to the variable it stands for first.
+            return false;
+        }
+
+        WiredVariableLevelSystemSupport.DerivedDefinition derivedPart =
+                WiredVariableLevelSystemSupport.resolveDerivedDefinition(
+                        this.room, WiredVariableLevelSystemSupport.TARGET_ROOM, definitionItemId);
+        if (derivedPart != null) {
+            // A value-mode Time Utilities part: the parent moves by the part's difference.
+            int baseId = derivedPart.getBaseDefinitionItemId();
+            Integer baseValue = WiredVariableLevelSystemSupport.writeDerivedValue(
+                    this.room, derivedPart, this.getCurrentValue(baseId), value);
+            return baseValue != null && this.updateVariableValue(baseId, baseValue);
+        }
+
         InteractionWiredExtra extra = this.getDefinitionExtra(definitionItemId);
         WiredVariableDefinitionInfo definitionInfo = this.getDefinitionInfo(definitionItemId);
 
@@ -187,7 +218,8 @@ public class RoomVariableManager {
 
         if (extra instanceof WiredExtraVariableEcho) {
             boolean changed = ((WiredExtraVariableEcho) extra).updateValue(this.room, this.room.getId(), value);
-            boolean shouldEmit = changed || (definitionInfo.hasValue() && previousValue != null && previousValue == value);
+            boolean shouldEmit =
+                    changed || (definitionInfo.hasValue() && previousValue != null && previousValue == value);
 
             if (shouldEmit) {
                 Integer currentValue = definitionInfo.hasValue() ? this.getCurrentValue(definitionItemId) : null;
@@ -202,8 +234,10 @@ public class RoomVariableManager {
         }
 
         if (extra instanceof WiredExtraVariableReference) {
-            boolean changed = WiredVariableReferenceSupport.updateSharedRoomVariable((WiredExtraVariableReference) extra, value);
-            boolean shouldEmit = changed || (definitionInfo.hasValue() && previousValue != null && previousValue == value);
+            boolean changed =
+                    WiredVariableReferenceSupport.updateSharedRoomVariable((WiredExtraVariableReference) extra, value);
+            boolean shouldEmit =
+                    changed || (definitionInfo.hasValue() && previousValue != null && previousValue == value);
 
             if (shouldEmit) {
                 Integer currentValue = definitionInfo.hasValue() ? this.getCurrentValue(definitionItemId) : null;
@@ -236,7 +270,8 @@ public class RoomVariableManager {
         }
 
         if (definition.isSharedAvailability()) {
-            WiredVariableReferenceSupport.cacheSharedRoomAssignment(this.room.getId(), definitionItemId, assignment.getValue(), assignment.getUpdatedAt());
+            WiredVariableReferenceSupport.cacheSharedRoomAssignment(
+                    this.room.getId(), definitionItemId, assignment.getValue(), assignment.getUpdatedAt());
         } else {
             WiredVariableReferenceSupport.clearSharedRoomDefinition(this.room.getId(), definitionItemId);
         }
@@ -253,8 +288,17 @@ public class RoomVariableManager {
             return false;
         }
 
+        if (WiredPointerVariableSupport.isPointer(this.room, definitionItemId)) {
+            // A pointer holds nothing itself; boxes resolve it to the variable it stands for first.
+            return false;
+        }
+
         WiredVariableDefinitionInfo definitionInfo = this.getDefinitionInfo(definitionItemId);
-        if (definitionInfo == null || definitionInfo.isReadOnly()) {
+        if (definitionInfo == null
+                || definitionInfo.isReadOnly()
+                || WiredVariableLevelSystemSupport.resolveDerivedDefinition(
+                                this.room, WiredVariableLevelSystemSupport.TARGET_ROOM, definitionItemId)
+                        != null) {
             return false;
         }
 
@@ -277,7 +321,8 @@ public class RoomVariableManager {
         }
 
         if (extra instanceof WiredExtraVariableReference) {
-            boolean changed = WiredVariableReferenceSupport.removeSharedRoomVariable((WiredExtraVariableReference) extra);
+            boolean changed =
+                    WiredVariableReferenceSupport.removeSharedRoomVariable((WiredExtraVariableReference) extra);
 
             if (changed) {
                 Integer currentValue = definitionInfo.hasValue() ? this.getCurrentValue(definitionItemId) : null;
@@ -347,6 +392,11 @@ public class RoomVariableManager {
             return;
         }
 
+        if (definition.isArrayDeclared()) {
+            this.removeDefinition(definition.getId());
+            return;
+        }
+
         this.ensurePersistentValuesLoaded();
 
         if (!definition.isPermanentAvailability()) {
@@ -365,13 +415,20 @@ public class RoomVariableManager {
             VariableAssignment assignment = this.activeAssignmentsByDefinitionId.get(definition.getId());
 
             if (assignment != null) {
-                WiredVariableReferenceSupport.cacheSharedRoomAssignment(this.room.getId(), definition.getId(), assignment.getValue(), assignment.getUpdatedAt());
+                WiredVariableReferenceSupport.cacheSharedRoomAssignment(
+                        this.room.getId(), definition.getId(), assignment.getValue(), assignment.getUpdatedAt());
             }
         } else {
             WiredVariableReferenceSupport.clearSharedRoomDefinition(this.room.getId(), definition.getId());
         }
 
         this.broadcastSnapshot();
+    }
+
+    public boolean hasAssignmentsForDefinition(int definitionItemId) {
+        if (definitionItemId <= 0) return false;
+        this.ensurePersistentValuesLoaded();
+        return this.activeAssignmentsByDefinitionId.containsKey(definitionItemId);
     }
 
     public Snapshot createSnapshot() {
@@ -383,41 +440,57 @@ public class RoomVariableManager {
         List<WiredExtraVariableEcho> roomEchoes = this.getRoomEchoes();
 
         for (WiredVariableDefinitionInfo definition : this.getAllDefinitionInfos()) {
-            definitions.add(new DefinitionEntry(definition.getItemId(), definition.getName(), definition.hasValue(), definition.getAvailability(), definition.isTextConnected(), definition.isReadOnly()));
+            definitions.add(new DefinitionEntry(
+                    definition.getItemId(),
+                    definition.getName(),
+                    definition.hasValue(),
+                    definition.getAvailability(),
+                    definition.isTextConnected(),
+                    definition.isReadOnly()));
 
-            if (WiredVariableLevelSystemSupport.resolveDerivedDefinition(this.room, WiredVariableLevelSystemSupport.TARGET_ROOM, definition.getItemId()) != null) {
+            if (WiredVariableLevelSystemSupport.resolveDerivedDefinition(
+                            this.room, WiredVariableLevelSystemSupport.TARGET_ROOM, definition.getItemId())
+                    != null) {
                 derivedDefinitionIds.add(definition.getItemId());
             }
 
             if (this.isReferenceDefinition(definition.getItemId())) {
-                WiredExtraVariableReference reference = (WiredExtraVariableReference) this.getDefinitionExtra(definition.getItemId());
-                WiredVariableReferenceSupport.SharedRoomAssignment assignment = WiredVariableReferenceSupport.getSharedRoomAssignment(reference);
-                assignments.add(new AssignmentEntry(definition.getItemId(), (assignment != null) ? assignment.getValue() : 0, 0, (assignment != null) ? assignment.getUpdatedAt() : 0));
+                WiredExtraVariableReference reference =
+                        (WiredExtraVariableReference) this.getDefinitionExtra(definition.getItemId());
+                WiredVariableReferenceSupport.SharedRoomAssignment assignment =
+                        WiredVariableReferenceSupport.getSharedRoomAssignment(reference);
+                assignments.add(new AssignmentEntry(
+                        definition.getItemId(),
+                        (assignment != null) ? assignment.getValue() : 0,
+                        0,
+                        (assignment != null) ? assignment.getUpdatedAt() : 0));
                 continue;
             }
 
             if (derivedDefinitionIds.contains(definition.getItemId())) {
                 assignments.add(new AssignmentEntry(
-                    definition.getItemId(),
-                    this.getCurrentValue(definition.getItemId()),
-                    this.getCreatedAt(definition.getItemId()),
-                    this.getUpdatedAt(definition.getItemId())
-                ));
+                        definition.getItemId(),
+                        this.getCurrentValue(definition.getItemId()),
+                        this.getCreatedAt(definition.getItemId()),
+                        this.getUpdatedAt(definition.getItemId())));
                 continue;
             }
 
             if (roomEchoes.stream().anyMatch(echo -> echo.getId() == definition.getItemId())) {
                 assignments.add(new AssignmentEntry(
-                    definition.getItemId(),
-                    this.getCurrentValue(definition.getItemId()),
-                    this.getCreatedAt(definition.getItemId()),
-                    this.getUpdatedAt(definition.getItemId())
-                ));
+                        definition.getItemId(),
+                        this.getCurrentValue(definition.getItemId()),
+                        this.getCreatedAt(definition.getItemId()),
+                        this.getUpdatedAt(definition.getItemId())));
                 continue;
             }
 
             VariableAssignment assignment = this.activeAssignmentsByDefinitionId.get(definition.getItemId());
-            assignments.add(new AssignmentEntry(definition.getItemId(), (assignment != null) ? assignment.getValue() : 0, 0, (assignment != null) ? assignment.getUpdatedAt() : 0));
+            assignments.add(new AssignmentEntry(
+                    definition.getItemId(),
+                    (assignment != null) ? assignment.getValue() : 0,
+                    0,
+                    (assignment != null) ? assignment.getUpdatedAt() : 0));
         }
 
         assignments.sort(Comparator.comparingInt(AssignmentEntry::getVariableItemId));
@@ -430,18 +503,12 @@ public class RoomVariableManager {
             return;
         }
 
-        habbo.getClient().sendResponse(new WiredUserVariablesDataComposer(this.room.getUserVariableManager().createSnapshot(), this.room.getFurniVariableManager().createSnapshot(), this.createSnapshot()));
+        RoomVariableChanges.sendSnapshot(this.room, habbo);
     }
 
     public void requestBroadcast() {
-        if (this.broadcastRequested.compareAndSet(false, true)) {
-            Emulator.getThreading().run(() -> {
-                this.broadcastRequested.set(false);
-                if (this.room.isLoaded()) {
-                    this.broadcastSnapshotRaw();
-                }
-            }, 50);
-        }
+        RoomVariableChanges.scheduleBroadcast(
+                this.room, this.broadcastRequested, Emulator.getThreading(), this::broadcastSnapshotRaw);
     }
 
     public void broadcastSnapshot() {
@@ -449,17 +516,7 @@ public class RoomVariableManager {
     }
 
     public void broadcastSnapshotRaw() {
-        RoomUserVariableManager.Snapshot userSnapshot = this.room.getUserVariableManager().createSnapshot();
-        RoomFurniVariableManager.Snapshot furniSnapshot = this.room.getFurniVariableManager().createSnapshot();
-        Snapshot roomSnapshot = this.createSnapshot();
-
-        for (Habbo habbo : this.room.getCurrentHabbos().values()) {
-            if (habbo == null || habbo.getClient() == null || !this.room.canInspectWired(habbo)) {
-                continue;
-            }
-
-            habbo.getClient().sendResponse(new WiredUserVariablesDataComposer(userSnapshot, furniSnapshot, roomSnapshot));
-        }
+        RoomVariableChanges.broadcastSnapshot(this.room);
     }
 
     public Collection<WiredExtraRoomVariable> getDefinitions() {
@@ -467,7 +524,8 @@ public class RoomVariableManager {
             return Collections.emptyList();
         }
 
-        Collection<InteractionWiredExtra> extras = this.room.getRoomSpecialTypes().getExtras();
+        Collection<InteractionWiredExtra> extras =
+                this.room.getRoomSpecialTypes().getExtras();
         List<WiredExtraRoomVariable> result = new ArrayList<>();
 
         for (InteractionWiredExtra extra : extras) {
@@ -482,7 +540,8 @@ public class RoomVariableManager {
             }
         }
 
-        result.sort(Comparator.comparing(WiredExtraRoomVariable::getVariableName, String.CASE_INSENSITIVE_ORDER).thenComparingInt(WiredExtraRoomVariable::getId));
+        result.sort(Comparator.comparing(WiredExtraRoomVariable::getVariableName, String.CASE_INSENSITIVE_ORDER)
+                .thenComparingInt(WiredExtraRoomVariable::getId));
         return result;
     }
 
@@ -492,17 +551,23 @@ public class RoomVariableManager {
 
         for (WiredExtraRoomVariable definition : this.getDefinitions()) {
             baseDefinitions.add(new WiredVariableDefinitionInfo(
-                definition.getId(),
-                definition.getVariableName(),
-                definition.hasValue(),
-                definition.getAvailability(),
-                WiredVariableTextConnectorSupport.isTextConnected(this.room, definition),
-                false
-            ));
+                    definition.getId(),
+                    definition.getVariableName(),
+                    definition.hasValue() && !definition.isArray(),
+                    definition.getAvailability(),
+                    WiredVariableTextConnectorSupport.isTextConnected(this.room, definition),
+                    false,
+                    definition.isArray()));
         }
 
         for (WiredExtraVariableReference reference : this.getRoomReferences()) {
-            baseDefinitions.add(new WiredVariableDefinitionInfo(reference.getId(), reference.getVariableName(), reference.hasValue(), reference.getAvailability(), false, reference.isReadOnly()));
+            baseDefinitions.add(new WiredVariableDefinitionInfo(
+                    reference.getId(),
+                    reference.getVariableName(),
+                    reference.hasValue(),
+                    reference.getAvailability(),
+                    WiredVariableTextConnectorSupport.isTextConnected(this.room, reference),
+                    reference.isReadOnly()));
         }
 
         for (WiredExtraVariableEcho echo : this.getRoomEchoes()) {
@@ -510,12 +575,18 @@ public class RoomVariableManager {
         }
 
         result.addAll(baseDefinitions);
+        result.addAll(WiredPointerVariableSupport.definitionInfos(this.room, WiredVariableTargets.OFFICIAL_GLOBAL));
 
         for (WiredVariableDefinitionInfo definition : baseDefinitions) {
-            result.addAll(WiredVariableLevelSystemSupport.getDerivedDefinitions(this.room, WiredVariableLevelSystemSupport.TARGET_ROOM, this.getDefinitionExtra(definition.getItemId()), definition));
+            result.addAll(WiredVariableLevelSystemSupport.getDerivedDefinitions(
+                    this.room,
+                    WiredVariableLevelSystemSupport.TARGET_ROOM,
+                    this.getDefinitionExtra(definition.getItemId()),
+                    definition));
         }
 
-        result.sort(Comparator.comparing(WiredVariableDefinitionInfo::getName, String.CASE_INSENSITIVE_ORDER).thenComparingInt(WiredVariableDefinitionInfo::getItemId));
+        result.sort(Comparator.comparing(WiredVariableDefinitionInfo::getName, String.CASE_INSENSITIVE_ORDER)
+                .thenComparingInt(WiredVariableDefinitionInfo::getItemId));
         return result;
     }
 
@@ -530,13 +601,13 @@ public class RoomVariableManager {
             }
 
             return new WiredVariableDefinitionInfo(
-                definition.getId(),
-                definition.getVariableName(),
-                definition.hasValue(),
-                definition.getAvailability(),
-                WiredVariableTextConnectorSupport.isTextConnected(this.room, definition),
-                false
-            );
+                    definition.getId(),
+                    definition.getVariableName(),
+                    definition.hasValue() && !definition.isArray(),
+                    definition.getAvailability(),
+                    WiredVariableTextConnectorSupport.isTextConnected(this.room, definition),
+                    false,
+                    definition.isArray());
         }
 
         if (extra instanceof WiredExtraVariableReference && ((WiredExtraVariableReference) extra).isRoomReference()) {
@@ -546,7 +617,13 @@ public class RoomVariableManager {
                 return null;
             }
 
-            return new WiredVariableDefinitionInfo(reference.getId(), reference.getVariableName(), reference.hasValue(), reference.getAvailability(), false, reference.isReadOnly());
+            return new WiredVariableDefinitionInfo(
+                    reference.getId(),
+                    reference.getVariableName(),
+                    reference.hasValue(),
+                    reference.getAvailability(),
+                    WiredVariableTextConnectorSupport.isTextConnected(this.room, reference),
+                    reference.isReadOnly());
         }
 
         if (extra instanceof WiredExtraVariableEcho && ((WiredExtraVariableEcho) extra).isRoomEcho()) {
@@ -554,7 +631,13 @@ public class RoomVariableManager {
             return (info != null && hasVisibleDefinitionName(info.getName())) ? info : null;
         }
 
-        return WiredVariableLevelSystemSupport.getDerivedDefinitionInfo(this.room, WiredVariableLevelSystemSupport.TARGET_ROOM, definitionItemId);
+        if (extra instanceof WiredExtraPointerVariable) {
+            return WiredPointerVariableSupport.definitionInfo(
+                    this.room, definitionItemId, WiredVariableTargets.OFFICIAL_GLOBAL);
+        }
+
+        return WiredVariableLevelSystemSupport.getDerivedDefinitionInfo(
+                this.room, WiredVariableLevelSystemSupport.TARGET_ROOM, definitionItemId);
     }
 
     private WiredExtraRoomVariable getDefinition(int definitionItemId) {
@@ -588,7 +671,8 @@ public class RoomVariableManager {
         List<WiredExtraVariableReference> result = new ArrayList<>();
 
         for (InteractionWiredExtra extra : this.room.getRoomSpecialTypes().getExtras()) {
-            if (extra instanceof WiredExtraVariableReference && ((WiredExtraVariableReference) extra).isRoomReference()) {
+            if (extra instanceof WiredExtraVariableReference
+                    && ((WiredExtraVariableReference) extra).isRoomReference()) {
                 WiredExtraVariableReference reference = (WiredExtraVariableReference) extra;
 
                 if (!hasVisibleDefinitionName(reference.getVariableName())) {
@@ -599,7 +683,8 @@ public class RoomVariableManager {
             }
         }
 
-        result.sort(Comparator.comparing(WiredExtraVariableReference::getVariableName, String.CASE_INSENSITIVE_ORDER).thenComparingInt(WiredExtraVariableReference::getId));
+        result.sort(Comparator.comparing(WiredExtraVariableReference::getVariableName, String.CASE_INSENSITIVE_ORDER)
+                .thenComparingInt(WiredExtraVariableReference::getId));
         return result;
     }
 
@@ -622,7 +707,8 @@ public class RoomVariableManager {
             }
         }
 
-        result.sort(Comparator.comparing(WiredExtraVariableEcho::getVariableName, String.CASE_INSENSITIVE_ORDER).thenComparingInt(WiredExtraVariableEcho::getId));
+        result.sort(Comparator.comparing(WiredExtraVariableEcho::getVariableName, String.CASE_INSENSITIVE_ORDER)
+                .thenComparingInt(WiredExtraVariableEcho::getId));
         return result;
     }
 
@@ -633,8 +719,11 @@ public class RoomVariableManager {
 
         InteractionWiredExtra extra = this.getDefinitionExtra(definitionItemId);
         if (extra instanceof WiredExtraVariableReference) {
-            WiredVariableReferenceSupport.SharedRoomAssignment assignment = WiredVariableReferenceSupport.getSharedRoomAssignment((WiredExtraVariableReference) extra);
-            return (assignment != null) ? new VariableAssignment(assignment.getValue(), 0, assignment.getUpdatedAt()) : null;
+            WiredVariableReferenceSupport.SharedRoomAssignment assignment =
+                    WiredVariableReferenceSupport.getSharedRoomAssignment((WiredExtraVariableReference) extra);
+            return (assignment != null)
+                    ? new VariableAssignment(assignment.getValue(), 0, assignment.getUpdatedAt())
+                    : null;
         }
 
         if (extra instanceof WiredExtraVariableEcho) {
@@ -643,68 +732,118 @@ public class RoomVariableManager {
                 return null;
             }
 
-            return new VariableAssignment(echo.getCurrentValue(this.room, this.room.getId()), echo.getCreatedAt(this.room, this.room.getId()), echo.getUpdatedAt(this.room, this.room.getId()));
+            return new VariableAssignment(
+                    echo.getCurrentValue(this.room, this.room.getId()),
+                    echo.getCreatedAt(this.room, this.room.getId()),
+                    echo.getUpdatedAt(this.room, this.room.getId()));
         }
 
         return this.activeAssignmentsByDefinitionId.get(definitionItemId);
     }
 
-    private Integer getRawValue(int definitionItemId) {
-        VariableAssignment assignment = this.getRawAssignment(definitionItemId);
-        return (assignment != null) ? assignment.getValue() : null;
+    private Integer getDerivedValue(WiredVariableLevelSystemSupport.DerivedDefinition derivedDefinition) {
+        VariableAssignment base = this.getRawAssignment(derivedDefinition.getBaseDefinitionItemId());
+        if (base == null) {
+            return null;
+        }
+
+        return WiredVariableLevelSystemSupport.getDerivedValue(
+                this.room,
+                derivedDefinition.getLevelSystem(),
+                derivedDefinition.getSubvariableType(),
+                base.getValue(),
+                base.getCreatedAt(),
+                base.getUpdatedAt());
     }
 
-    private void emitVariableChangedEvents(InteractionWiredExtra definitionExtra, WiredVariableDefinitionInfo definitionInfo, Integer previousValue, Integer currentValue) {
+    private void emitVariableChangedEvents(
+            InteractionWiredExtra definitionExtra,
+            WiredVariableDefinitionInfo definitionInfo,
+            Integer previousValue,
+            Integer currentValue) {
         if (definitionInfo == null) {
             return;
         }
 
-        this.emitVariableChangedEvent(definitionInfo.getItemId(), definitionInfo.hasValue(), previousValue, currentValue);
+        this.emitVariableChangedEvent(
+                definitionInfo.getItemId(), definitionInfo.hasValue(), previousValue, currentValue);
+        // A shared variable (or a reference to one) is heard in the other rooms too, as "another room".
+        WiredSharedVariableChanges.roomVariableChanged(
+                this.room,
+                definitionExtra,
+                RoomVariableChanges.changeKind(definitionInfo.hasValue(), previousValue, currentValue),
+                previousValue == null ? 0L : previousValue,
+                currentValue == null ? 0L : currentValue);
 
-        for (WiredVariableDefinitionInfo derivedDefinition : WiredVariableLevelSystemSupport.getDerivedDefinitions(this.room, WiredVariableLevelSystemSupport.TARGET_ROOM, definitionExtra, definitionInfo)) {
-            WiredVariableLevelSystemSupport.DerivedDefinition resolvedDefinition = WiredVariableLevelSystemSupport.resolveDerivedDefinition(this.room, WiredVariableLevelSystemSupport.TARGET_ROOM, derivedDefinition.getItemId());
+        VariableAssignment stamps = null;
+        boolean stampsRead = false;
+
+        for (WiredVariableDefinitionInfo derivedDefinition : WiredVariableLevelSystemSupport.getDerivedDefinitions(
+                this.room, WiredVariableLevelSystemSupport.TARGET_ROOM, definitionExtra, definitionInfo)) {
+            WiredVariableLevelSystemSupport.DerivedDefinition resolvedDefinition =
+                    WiredVariableLevelSystemSupport.resolveDerivedDefinition(
+                            this.room, WiredVariableLevelSystemSupport.TARGET_ROOM, derivedDefinition.getItemId());
 
             if (resolvedDefinition == null) {
                 continue;
             }
 
-            Integer derivedPreviousValue = WiredVariableLevelSystemSupport.getDerivedValue(resolvedDefinition.getLevelSystem(), resolvedDefinition.getSubvariableType(), previousValue);
-            Integer derivedCurrentValue = WiredVariableLevelSystemSupport.getDerivedValue(resolvedDefinition.getLevelSystem(), resolvedDefinition.getSubvariableType(), currentValue);
+            if (!stampsRead) {
+                stamps = this.getRawAssignment(definitionInfo.getItemId());
+                stampsRead = true;
+            }
 
-            this.emitVariableChangedEvent(derivedDefinition.getItemId(), true, derivedPreviousValue, derivedCurrentValue);
+            int createdAt = (stamps != null) ? stamps.getCreatedAt() : 0;
+            int updatedAt = (stamps != null) ? stamps.getUpdatedAt() : 0;
+            // A value change also moved the update time; a last-update-time part compares against the old one.
+            int previousUpdatedAt = (stamps != null && !Objects.equals(previousValue, currentValue))
+                    ? stamps.getPreviousUpdatedAt()
+                    : updatedAt;
+            Integer derivedPreviousValue = (previousValue != null)
+                    ? WiredVariableLevelSystemSupport.getDerivedValue(
+                            this.room,
+                            resolvedDefinition.getLevelSystem(),
+                            resolvedDefinition.getSubvariableType(),
+                            previousValue,
+                            createdAt,
+                            previousUpdatedAt)
+                    : null;
+            Integer derivedCurrentValue = (currentValue != null)
+                    ? WiredVariableLevelSystemSupport.getDerivedValue(
+                            this.room,
+                            resolvedDefinition.getLevelSystem(),
+                            resolvedDefinition.getSubvariableType(),
+                            currentValue,
+                            createdAt,
+                            updatedAt)
+                    : null;
+
+            this.emitVariableChangedEvent(
+                    derivedDefinition.getItemId(), true, derivedPreviousValue, derivedCurrentValue);
         }
     }
 
-    private void emitVariableChangedEvent(int definitionItemId, boolean hasValue, Integer previousValue, Integer currentValue) {
-        WiredEvent.VariableChangeKind changeKind = resolveVariableChangeKind(hasValue, previousValue, currentValue);
+    private void emitVariableChangedEvent(
+            int definitionItemId, boolean hasValue, Integer previousValue, Integer currentValue) {
+        WiredEvent.VariableChangeKind changeKind =
+                RoomVariableChanges.changeKind(hasValue, previousValue, currentValue);
 
         if (changeKind == WiredEvent.VariableChangeKind.NONE) {
             return;
         }
 
-        WiredManager.triggerRoomVariableChanged(this.room, definitionItemId, changeKind);
-    }
-
-    private static WiredEvent.VariableChangeKind resolveVariableChangeKind(boolean hasValue, Integer previousValue, Integer currentValue) {
-        if (!hasValue) {
-            return WiredEvent.VariableChangeKind.NONE;
-        }
-
-        if (Objects.equals(previousValue, currentValue)) {
-            return WiredEvent.VariableChangeKind.UNCHANGED;
-        }
-
-        int previousNumericValue = (previousValue != null) ? previousValue : 0;
-        int currentNumericValue = (currentValue != null) ? currentValue : 0;
-
-        return (currentNumericValue > previousNumericValue)
-                ? WiredEvent.VariableChangeKind.INCREASED
-                : WiredEvent.VariableChangeKind.DECREASED;
+        WiredManager.triggerRoomVariableChanged(
+                this.room,
+                definitionItemId,
+                changeKind,
+                previousValue == null ? 0L : previousValue,
+                currentValue == null ? 0L : currentValue);
     }
 
     private void upsertPersistentAssignment(int definitionItemId, VariableAssignment assignment) {
         try (Connection connection = Emulator.getDatabase().getDataSource().getConnection();
-             PreparedStatement statement = connection.prepareStatement("INSERT INTO room_wired_variables (room_id, variable_item_id, value, created_at, updated_at) VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE value = VALUES(value), updated_at = VALUES(updated_at)")) {
+                PreparedStatement statement = connection.prepareStatement(
+                        "INSERT INTO room_wired_variables (room_id, variable_item_id, value, created_at, updated_at) VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE value = VALUES(value), updated_at = VALUES(updated_at)")) {
             statement.setInt(1, this.room.getId());
             statement.setInt(2, definitionItemId);
             statement.setInt(3, (assignment != null) ? assignment.getValue() : 0);
@@ -714,18 +853,27 @@ public class RoomVariableManager {
             statement.setInt(5, (assignment != null) ? assignment.getUpdatedAt() : now);
             statement.executeUpdate();
         } catch (SQLException e) {
-            LOGGER.error("Failed to store permanent wired room variable for room {} and item {}", this.room.getId(), definitionItemId, e);
+            LOGGER.error(
+                    "Failed to store permanent wired room variable for room {} and item {}",
+                    this.room.getId(),
+                    definitionItemId,
+                    e);
         }
     }
 
     private void deletePersistentAssignment(int definitionItemId) {
         try (Connection connection = Emulator.getDatabase().getDataSource().getConnection();
-             PreparedStatement statement = connection.prepareStatement("DELETE FROM room_wired_variables WHERE room_id = ? AND variable_item_id = ?")) {
+                PreparedStatement statement = connection.prepareStatement(
+                        "DELETE FROM room_wired_variables WHERE room_id = ? AND variable_item_id = ?")) {
             statement.setInt(1, this.room.getId());
             statement.setInt(2, definitionItemId);
             statement.executeUpdate();
         } catch (SQLException e) {
-            LOGGER.error("Failed to delete permanent wired room variable for room {} and item {}", this.room.getId(), definitionItemId, e);
+            LOGGER.error(
+                    "Failed to delete permanent wired room variable for room {} and item {}",
+                    this.room.getId(),
+                    definitionItemId,
+                    e);
         }
     }
 
@@ -776,7 +924,8 @@ public class RoomVariableManager {
         private final boolean textConnected;
         private final boolean readOnly;
 
-        public DefinitionEntry(int itemId, String name, boolean hasValue, int availability, boolean textConnected, boolean readOnly) {
+        public DefinitionEntry(
+                int itemId, String name, boolean hasValue, int availability, boolean textConnected, boolean readOnly) {
             this.itemId = itemId;
             this.name = name;
             this.hasValue = hasValue;
@@ -848,11 +997,13 @@ public class RoomVariableManager {
         private int value;
         private final int createdAt;
         private int updatedAt;
+        private int previousUpdatedAt;
 
         public VariableAssignment(int value, int createdAt, int updatedAt) {
             this.value = value;
             this.createdAt = createdAt;
             this.updatedAt = updatedAt;
+            this.previousUpdatedAt = updatedAt;
         }
 
         public int getValue() {
@@ -861,6 +1012,7 @@ public class RoomVariableManager {
 
         public void setValue(int value, int updatedAt) {
             this.value = value;
+            this.previousUpdatedAt = this.updatedAt;
             this.updatedAt = updatedAt;
         }
 
@@ -870,6 +1022,11 @@ public class RoomVariableManager {
 
         public int getUpdatedAt() {
             return this.updatedAt;
+        }
+
+        /** The update time before the last value change, so a last-update-time part can compare. */
+        public int getPreviousUpdatedAt() {
+            return this.previousUpdatedAt;
         }
     }
 }

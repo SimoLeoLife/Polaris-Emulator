@@ -1,11 +1,13 @@
 package com.eu.habbo.habbohotel.items.interactions.wired.effects;
 
-import com.eu.habbo.Emulator;
+import com.eu.habbo.WiredPlatform;
 import com.eu.habbo.habbohotel.gameclients.GameClient;
 import com.eu.habbo.habbohotel.items.Item;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredEffect;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredTrigger;
+import com.eu.habbo.habbohotel.items.interactions.wired.WiredInputGuard;
 import com.eu.habbo.habbohotel.items.interactions.wired.WiredNumericInputGuard;
+import com.eu.habbo.habbohotel.items.interactions.wired.WiredRewardPolicy;
 import com.eu.habbo.habbohotel.items.interactions.wired.WiredSettings;
 import com.eu.habbo.habbohotel.rooms.Room;
 import com.eu.habbo.habbohotel.rooms.RoomUnit;
@@ -16,7 +18,6 @@ import com.eu.habbo.habbohotel.wired.core.WiredManager;
 import com.eu.habbo.habbohotel.wired.core.WiredSourceUtil;
 import com.eu.habbo.messages.ServerMessage;
 import com.eu.habbo.messages.incoming.wired.WiredSaveException;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
@@ -49,7 +50,8 @@ public class WiredEffectGivePointsType extends InteractionWiredEffect {
         super(set, baseItem);
     }
 
-    public WiredEffectGivePointsType(int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
+    public WiredEffectGivePointsType(
+            int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
         super(id, userId, item, extradata, limitedStack, limitedSells);
     }
 
@@ -61,7 +63,6 @@ public class WiredEffectGivePointsType extends InteractionWiredEffect {
         for (RoomUnit unit : WiredSourceUtil.resolveUsers(ctx, this.userSource)) {
             Habbo habbo = room.getHabbo(unit);
             if (habbo == null) continue;
-
             habbo.givePoints(this.pointsType, this.amount);
         }
     }
@@ -80,10 +81,9 @@ public class WiredEffectGivePointsType extends InteractionWiredEffect {
         message.appendInt(this.getBaseItem().getSpriteId());
         message.appendInt(this.getId());
         message.appendString("");
-        message.appendInt(3);
+        message.appendInt(2);
         message.appendInt(this.pointsType);
         message.appendInt(this.amount);
-        message.appendInt(this.userSource);
         message.appendInt(0);
         message.appendInt(type.code);
         message.appendInt(this.getDelay());
@@ -106,8 +106,13 @@ public class WiredEffectGivePointsType extends InteractionWiredEffect {
 
     @Override
     public boolean saveData(WiredSettings settings, GameClient gameClient) throws WiredSaveException {
+        // Value out of nothing: the amount cap bounds one firing, not a room full of them.
+        if (!WiredRewardPolicy.canConfigure(gameClient)) {
+            return false;
+        }
+
         int[] params = settings.getIntParams();
-        if (params.length < 3) {
+        if (params.length < 2) {
             throw new WiredSaveException("Invalid data");
         }
 
@@ -118,13 +123,17 @@ public class WiredEffectGivePointsType extends InteractionWiredEffect {
         }
 
         int delay = settings.getDelay();
-        if (delay > Emulator.getConfig().getInt("hotel.wired.max_delay", 20)) {
+        int maxDelay = WiredPlatform.configuration() == null
+                ? 20
+                : WiredPlatform.configuration().getInt("hotel.wired.max_delay", WiredInputGuard.DEFAULT_MAX_DELAY);
+        if (delay > maxDelay) {
             throw new WiredSaveException("Delay too long");
         }
 
         this.pointsType = nextPointsType;
         this.amount = nextAmount;
-        this.userSource = params[2];
+        // Ours: [points type, amount]; the user source is the official source slot.
+        this.userSource = settings.userSource(0, WiredSourceUtil.SOURCE_TRIGGER);
         this.setDelay(delay);
 
         return true;
@@ -143,15 +152,18 @@ public class WiredEffectGivePointsType extends InteractionWiredEffect {
 
     @Override
     public String getWiredData() {
-        return WiredManager.getGson().toJson(new JsonData(this.pointsType, this.amount, this.getDelay(), this.userSource));
+        return WiredManager.getGson()
+                .toJson(new JsonData(this.pointsType, this.amount, this.getDelay(), this.userSource));
     }
 
     @Override
     public void loadWiredData(ResultSet set, Room room) throws SQLException {
         String wiredData = set.getString("wired_data");
 
-        if (wiredData != null && wiredData.startsWith("{")) {
-            JsonData data = WiredManager.getGson().fromJson(wiredData, JsonData.class);
+        // The guard answers null for anything it cannot parse, truncated documents included,
+        // so the defaults below cover a corrupt row instead of the load failing on it.
+        JsonData data = WiredEffectPayloadGuard.fromJson(wiredData, JsonData.class);
+        if (data != null) {
             this.pointsType = clampPointsType(data.pointsType);
             this.amount = clampAmount(data.amount);
             this.setDelay(data.delay);

@@ -15,6 +15,18 @@ public class Incoming {
     public static final int ChestDepositInventoryItemEvent = 9325; // Deposit one inventory row into active chest
     public static final int ChestWithdrawAllFurniEvent = 9326; // Withdraw all furni (official Vefehonuj shape)
     public static final int ChestOpenEvent = 9327; // Open wired chest (official Nod)
+    public static final int WiredChestRoomLogsEvent = 9328; // Room-wide chest transaction log page
+    public static final int WiredChestLockEvent = 9329; // Lock / unlock the room's chests
+    // 9330-9333 are the Trax editor; the chests tab continues at 9334.
+    public static final int WiredChestTransactionDetailsEvent = 9334; // One transaction with its furni
+    public static final int WiredTradeOfferItemsEvent = 9335; // Put items on / take them off the table
+    public static final int WiredTradeAcceptEvent = 9336; // Accept, then confirm
+    public static final int WiredTradeCancelEvent = 9337; // Walk away from the negotiation
+    public static final int ChestSaveOptionsEvent = 9338; // Lock / auto-lock / capacity, from the chest window
+    public static final int ChestCloseEvent = 9339; // The chest window was closed
+    public static final int ChestEnableWiredEvent = 9345; // One-way: make this chest answer wired
+    public static final int GetWiredContractContentsEvent = 9346; // Official contract editor: fetch a contract
+    public static final int UpdateWiredContractEvent = 9347; // Official contract editor: save a contract
     public static final int ChangeNameCheckUsernameEvent = 3950;
     public static final int ConfirmChangeNameEvent = 2977;
     public static final int ActivateEffectEvent = 2959;
@@ -35,6 +47,7 @@ public class Incoming {
     public static final int ModToolAlertEvent = 1840;
     public static final int TradeAcceptEvent = 3863;
     public static final int RequestCatalogModeEvent = 1195;
+    public static final int MarkCatalogNewAdditionsPageOpenedEvent = 2150;
     public static final int RequestUserCreditsEvent = 273;
     public static final int FriendPrivateMessageEvent = 3567;
     public static final int CloseDiceEvent = 1533;
@@ -70,7 +83,7 @@ public class Incoming {
     public static final int ModToolRequestRoomInfoEvent = 707;
     public static final int FriendRequestEvent = 3157;
     public static final int RecycleEvent = 2771;
-    public static final int RequestRoomCategoriesEvent = 3027; //1371;
+    public static final int RequestRoomCategoriesEvent = 3027; // 1371;
     public static final int ToggleWallItemEvent = 210;
     public static final int RoomUserTalkEvent = 1314;
     public static final int HotelViewDataEvent = 2912;
@@ -78,6 +91,10 @@ public class Incoming {
     public static final int RequestUserProfileEvent = 3265;
     public static final int SearchRoomsFriendsNowEvent = 1786;
     public static final int SetStackHelperHeightEvent = 3839;
+    public static final int SetStackHelperAdjacentHeightEvent = 2687;
+    public static final int GetBadgeInfoEvent = 2895;
+    public static final int PetSupplementEvent = 749;
+    public static final int PetSupplementOfficialEvent = 2868;
     public static final int RedeemVoucherEvent = 339;
     public static final int PetUseItemEvent = 1328;
     public static final int HorseRemoveSaddleEvent = 186;
@@ -86,7 +103,15 @@ public class Incoming {
     public static final int RequestPetTrainingPanelEvent = 2161;
     public static final int RoomBackgroundEvent = 2880;
     public static final int RequestNewsListEvent = 1827;
-    public static final int RequestPromotedRoomsEvent = 2908;
+    public static final int GetUnreadForumsCountEvent = 2908;
+
+    /**
+     * @deprecated 2908 is the header the client uses to ask for the unread forums count; the promoted
+     *     rooms already travel inside the official rooms packet. Kept for plugins that reference it.
+     */
+    @Deprecated
+    public static final int RequestPromotedRoomsEvent = GetUnreadForumsCountEvent;
+
     public static final int GuildSetAdminEvent = 2894;
     public static final int GetClubDataEvent = 3285;
     public static final int RequestClubCenterEvent = 869;
@@ -96,13 +121,22 @@ public class Incoming {
     public static final int GuildAcceptMembershipEvent = 3386;
     public static final int RequestRecylerLogicEvent = 398;
     public static final int RequestGuildJoinEvent = 998;
-    public static int RequestCatalogIndexEvent = 2529;
     public static final int BuildersClubQueryFurniCountEvent = 2529;
+    /** @deprecated Compatibility alias; use {@link #BuildersClubQueryFurniCountEvent}. */
+    @Deprecated
+    public static int RequestCatalogIndexEvent = BuildersClubQueryFurniCountEvent;
+
     public static final int BuildersClubPlaceRoomItemEvent = 1051;
     public static final int BuildersClubPlaceWallItemEvent = 462;
+    // Builders Club recolor window (custom id): itemId, colour index, scope.
+    // Official recolour of recolourable Builders Club furni (replaces the custom 9480 variant swap).
+    public static final int RecolorFurniEvent = 2852;
     public static final int RequestInventoryPetsEvent = 3095;
     public static final int ModToolRequestRoomVisitsEvent = 3526;
-    public static final int ModToolWarnEvent = -1;//3763
+    /** @deprecated Unsupported wire header retained for plugin ABI compatibility. */
+    @Deprecated
+    public static final int ModToolWarnEvent = UnsupportedIncoming.ModToolWarnEvent;
+
     public static final int RequestItemInfoEvent = 3288;
     public static final int ModToolRequestRoomChatlogEvent = 2587;
     public static final int UserSaveLookEvent = 2730;
@@ -114,8 +148,10 @@ public class Incoming {
     public static final int OpenRecycleBoxEvent = 3558;
     public static final int GuildChangeNameDescEvent = 3137;
     public static final int RequestSellItemEvent = 848;
+    // AIR 15 buy marketplace tokens (no fields), the buy button of the buy_marketplace_tokens window.
+    public static final int BuyMarketplaceTokensEvent = 1866;
     public static final int ModToolChangeRoomSettingsEvent = 3260;
-    public static final int ModToolRequestUserChatlogEvent = 1391;//203
+    public static final int ModToolRequestUserChatlogEvent = 1391; // 203
     public static final int GuildChangeSettingsEvent = 3435;
     public static final int RoomUserDropHandItemEvent = 2814;
     public static final int RequestProfileFriendsEvent = 2138;
@@ -126,9 +162,12 @@ public class Incoming {
     public static final int RequestDiscountEvent = 223;
     public static final int RequestFriendRequestEvent = 2448;
     public static final int RoomSettingsSaveEvent = 1969;
+    public static final int UpdateRoomCategoryAndTradeSettingsEvent = 1265;
+    public static final int GetQuizQuestionsEvent = 1296;
+    public static final int PostQuizAnswersEvent = 3720;
     public static final int AcceptFriendRequest = 137;
     public static final int DeclineFriendRequest = 2890;
-    public static final int ReleaseVersionEvent = 4000;//4000 
+    public static final int ReleaseVersionEvent = 4000; // 4000
     public static final int InitDiffieHandshake = 3110;
     public static final int CompleteDiffieHandshake = 773;
     public static final int SearchRoomsMyFavoriteEvent = 2578;
@@ -150,7 +189,7 @@ public class Incoming {
     public static final int BotSettingsEvent = 1986;
     public static final int StalkFriendEvent = 3997;
     public static final int RoomPickupItemEvent = 3456;
-	public static final int RoomPickupChooserEvent = 10017;
+    public static final int RoomPickupChooserEvent = 10017;
     public static final int RedeemItemEvent = 3115;
     public static final int RequestFriendsEvent = 1523;
     public static final int RequestAchievementsEvent = 219;
@@ -160,19 +199,31 @@ public class Incoming {
     public static final int HotelViewInventoryEvent = 3500;
     public static final int RequestPetBreedsEvent = 1756;
     public static final int GuildChangeBadgeEvent = 1991;
-    public static final int ModToolBanEvent = -1;
+    /** @deprecated Unsupported wire header retained for plugin ABI compatibility. */
+    @Deprecated
+    public static final int ModToolBanEvent = UnsupportedIncoming.ModToolBanEvent;
+
     public static final int SaveWardrobeEvent = 800;
     public static final int HotelViewEvent = 105;
     public static final int ModToolPickTicketEvent = 15;
     public static final int ModToolReleaseTicketEvent = 1572;
     public static final int ModToolCloseTicketEvent = 2067;
     public static final int TriggerColorWheelEvent = 2144;
-    public static final int SearchRoomsByTagEvent = -1;//1956
+    /** @deprecated Unsupported wire header retained for plugin ABI compatibility. */
+    @Deprecated
+    public static final int SearchRoomsByTagEvent = UnsupportedIncoming.SearchRoomsByTagEvent;
+
     public static final int RequestPublicRoomsEvent = 1229;
+    public static final int ConvertGlobalRoomIdEvent = 314;
     public static final int RequestResolutionEvent = 359;
+    public static final int ResetResolutionAchievementEvent = 3144;
     public static final int RequestInventoryItemsEvent = 3150;
     public static final int ModToolRoomAlertEvent = 3842;
     public static final int WiredEffectSaveDataEvent = 2281;
+    // Official AIR wired addon, selector and variable saves (build WIN63-202610131318).
+    public static final int WiredAddonSaveDataEvent = 1883;
+    public static final int WiredSelectorSaveDataEvent = 3883;
+    public static final int WiredVariableSaveDataEvent = 2310;
     public static final int WiredApplySetConditionsEvent = 3373;
     public static final int CheckPetNameEvent = 2109;
     public static final int SecureLoginEvent = 2419;
@@ -181,6 +232,7 @@ public class Incoming {
     public static final int SearchUserEvent = 1210;
     public static final int GuildConfirmRemoveMemberEvent = 3593;
     public static final int GuildRemoveMemberEvent = 593;
+    public static final int GuildUnblockMemberEvent = 2864;
     public static final int WiredConditionSaveDataEvent = 3203;
     public static final int RoomUserLookAtPoint = 3301;
     public static final int MoodLightTurnOnEvent = 2296;
@@ -218,12 +270,17 @@ public class Incoming {
     public static final int ReloadRecyclerEvent = 1342;
     public static final int RoomUserActionEvent = 2456;
     public static final int RequestGiftConfigurationEvent = 418;
+    // AIR 15 special items display free claim: has-claimed request and claim (official ids)
+    public static final int RequestHasClaimedProductEvent = 395;
+    public static final int ClaimFreeProductEvent = 3935;
     public static final int RequestRoomDataEvent = 2230;
     public static final int RequestRoomHeightmapEvent = 2300;
     public static final int RequestGuildFurniWidgetEvent = 2651;
     public static final int ClickFurniEvent = 6002;
     public static final int RequestOwnItemsEvent = 2105;
+    // The help window's pending calls: 3267 asks for them, 3605 discards them
     public static final int RequestReportRoomEvent = 3267;
+    public static final int DeletePendingCallsForHelpEvent = 3605;
     public static final int ReportEvent = 1691;
     public static final int TriggerOneWayGateEvent = 2765;
     public static final int FloorPlanEditorSaveEvent = 875;
@@ -246,11 +303,18 @@ public class Incoming {
 
     public static final int MoodLightSaveSettingsEvent = 1648;
     public static final int ModToolRequestIssueChatlogEvent = 211;
-    public static final int ModToolRequestRoomUserChatlogEvent = -1;
+    /** @deprecated Unsupported wire header retained for plugin ABI compatibility. */
+    @Deprecated
+    public static final int ModToolRequestRoomUserChatlogEvent = UnsupportedIncoming.ModToolRequestRoomUserChatlogEvent;
+
     public static final int GetIgnoredUsersEvent = 3878;
     public static final int RequestClubGiftsEvent = 487;
     public static final int RentSpaceEvent = 2946;
     public static final int RentSpaceCancelEvent = 1667;
+    public static final int GetRentableSpaceStatusEvent = 872;
+    public static final int GetRentOrBuyoutOfferEvent = 2518;
+    public static final int ExtendRentOrBuyoutFurniEvent = 1071;
+    public static final int ExtendRentOrBuyoutStripItemEvent = 2115;
     public static final int RequestInitFriendsEvent = 2781;
     public static final int RequestCameraConfigurationEvent = 796;
     public static final int PingEvent = 295;
@@ -260,7 +324,9 @@ public class Incoming {
     public static final int GuildDeleteEvent = 1134;
     public static final int SetHomeRoomEvent = 1740;
     public static final int RoomUserGiveHandItemEvent = 2941;
-    public static final int AmbassadorVisitCommandEvent = 2970;
+    public static final int RoomUserGiveHandItemPetEvent = 2768;
+    public static final int AmbassadorVisitCommandEvent =
+            9400; // CUSTOM: official 2970 is now the furniture label settings save
     public static final int AmbassadorAlertCommandEvent = 2996;
     public static final int SaveUserVolumesEvent = 1367;
     public static final int SavePreferOldChatEvent = 1262;
@@ -269,6 +335,10 @@ public class Incoming {
     public static final int RoomMuteEvent = 3637;
     public static final int RequestRoomWordFilterEvent = 1911;
     public static final int RoomWordFilterModifyEvent = 3001;
+    // Personal word filter (AIR 13 GetCustomFilter / AddCustomFilterWord / RemoveCustomFilterWord)
+    public static final int RequestCustomWordFilterEvent = 145;
+    public static final int AddCustomWordFilterWordEvent = 68;
+    public static final int RemoveCustomWordFilterWordEvent = 1996;
     public static final int RequestRoomUserTagsEvent = 17;
     public static final int CatalogSearchedItemEvent = 2594;
     public static final int JukeBoxRequestTrackCodeEvent = 3189;
@@ -279,11 +349,15 @@ public class Incoming {
     public static final int JukeBoxEventOne = 2304;
     public static final int JukeBoxEventTwo = 1435;
     public static final int RoomUserMuteEvent = 3485;
-    //public static final int JukeBoxEventThree = 3846;
+    // public static final int JukeBoxEventThree = 3846;
     public static final int RequestDeleteRoomEvent = 532;
     public static final int RequestPromotionRoomsEvent = 1075;
     public static final int BuyRoomPromotionEvent = 777;
     public static final int EditRoomPromotionMessageEvent = 3991;
+    public static final int CancelRoomPromotionEvent = 2725;
+    // AIR raid protection (navigator/raidprotection), official ids free in both repos.
+    public static final int GetRaidProtectionSettingsEvent = 2394;
+    public static final int SaveRaidProtectionSettingsEvent = 2170;
     public static final int RequestGuideToolEvent = 1922;
     public static final int RequestGuideAssistanceEvent = 3338;
     public static final int GuideUserTypingEvent = 519;
@@ -298,17 +372,26 @@ public class Incoming {
     public static final int GuardianNoUpdatesWantedEvent = 2501;
     public static final int GuardianVoteEvent = 3961;
     public static final int GuardianAcceptRequestEvent = 3365;
-    public static final int RequestAchievementConfigurationEvent = -1;
+    /** @deprecated Unsupported wire header retained for plugin ABI compatibility. */
+    @Deprecated
+    public static final int RequestAchievementConfigurationEvent =
+            UnsupportedIncoming.RequestAchievementConfigurationEvent;
+
     public static final int RequestReportUserBullyingEvent = 3786;
     public static final int ReportBullyEvent = 3060;
     public static final int CameraRoomPictureEvent = 3226;
     public static final int CameraRoomThumbnailEvent = 1982;
     public static final int SavePostItStickyPoleEvent = 3283;
     public static final int HotelViewClaimBadgeEvent = 3077;
+    public static final int GetIsBadgeRequestFulfilledEvent = 1364;
     public static final int HotelViewRequestCommunityGoalEvent = 1145;
     public static final int HotelViewRequestConcurrentUsersEvent = 1343;
     public static final int HotelViewConcurrentUsersButtonEvent = 3872;
+    public static final int GetCommunityGoalHallOfFameEvent = 2167;
+    public static final int GetCommunityGoalEarnedPrizesEvent = 2688;
+    public static final int RedeemCommunityGoalPrizeEvent = 90;
     public static final int IgnoreRoomUserEvent = 1117;
+    public static final int IgnoreUserIdEvent = 3314;
     public static final int UnIgnoreRoomUserEvent = 2061;
     public static final int UnbanRoomUserEvent = 992;
     public static final int RoomUserBanEvent = 1477;
@@ -339,7 +422,9 @@ public class Incoming {
     public static final int YoutubeRequestPlaylistChange = 2069;
 
     public static final int HotelViewRequestBadgeRewardEvent = 2318;
-    public static final int HotelViewClaimBadgeRewardEvent = -1;
+    /** @deprecated Unsupported wire header retained for plugin ABI compatibility. */
+    @Deprecated
+    public static final int HotelViewClaimBadgeRewardEvent = UnsupportedIncoming.HotelViewClaimBadgeRewardEvent;
 
     public static final int JukeBoxAddSoundTrackEvent = 753;
     public static final int JukeBoxRemoveSoundTrackEvent = 3050;
@@ -353,11 +438,13 @@ public class Incoming {
     public static final int GameCenterRequestAccountStatusEvent = 3171;
     public static final int GameCenterRequestGameStatusEvent = 11;
     public static final int CameraPublishToWebEvent = 2068;
+    public static final int PhotoCompetitionEvent = 3959;
 
     public static final int GameCenterJoinGameEvent = 1458;
     public static final int GameCenterLoadGameEvent = 1054;
     public static final int GameCenterEvent = 2914;
     public static final int GameCenterLeaveGameEvent = 3207;
+    public static final int GameCenterCheckDirectoryStatusEvent = 3259;
 
     public static final int ModToolSanctionAlertEvent = 229;
     public static final int ModToolSanctionMuteEvent = 1945;
@@ -382,7 +469,6 @@ public class Incoming {
     public static final int StopBreedingEvent = 2713;
     public static final int ConfirmPetBreedingEvent = 3382;
 
-
     public static final int GuildForumListEvent = 873;
     public static final int GuildForumThreadsEvent = 436;
     public static final int GuildForumDataEvent = 3149;
@@ -393,7 +479,6 @@ public class Incoming {
     public static final int GuildForumModerateThreadEvent = 1397;
     public static final int GuildForumThreadUpdateEvent = 3045;
     public static final int GuildForumMarkAsReadEvent = 1855;
-
 
     public static final int UNKNOWN_SNOWSTORM_6000 = 6000;
     public static final int UNKNOWN_SNOWSTORM_6001 = 6001;
@@ -422,8 +507,16 @@ public class Incoming {
     public static final int UNKNOWN_SNOWSTORM_6024 = 6024;
     public static final int UNKNOWN_SNOWSTORM_6025 = 6025;
     public static final int SnowStormUserPickSnowballEvent = 6026;
+    public static final int SnowStormGetAllTimeLeaderboardEvent = 6027;
+    public static final int SnowStormGetAllTimeFriendsLeaderboardEvent = 6028;
+    public static final int SnowStormGetWeeklyLeaderboardEvent = 6029;
+    public static final int SnowStormGetWeeklyFriendsLeaderboardEvent = 6030;
+    public static final int SnowStormGetTotalGroupLeaderboardEvent = 1776;
+    public static final int SnowStormGetWeeklyGroupLeaderboardEvent = 2691;
+    public static final int GetSnowWarGameTokensOfferEvent = 980;
+    public static final int PurchaseSnowWarGameTokensOfferEvent = 391;
 
-	// CUSTOM
+    // CUSTOM
     public static final int UpdateFurniturePositionEvent = 10019;
     public static final int ClickUserEvent = 10020;
     public static final int WiredMonitorRequestEvent = 10021;
@@ -433,10 +526,45 @@ public class Incoming {
     public static final int WiredUserVariableUpdateEvent = 10025;
     public static final int WiredUserVariableManageEvent = 10026;
     public static final int WiredUserInspectMoveEvent = 10027;
+    public static final int WiredFurniRuntimeStateRequestEvent = 10028;
+    public static final int WiredFeatureCapabilitiesEvent = 10029;
+    public static final int WiredArrayInspectionRequestEvent = 10034;
+    public static final int WiredArrayInspectionUpdateEvent = 10035;
+    public static final int WiredSetupExportEvent = 10096; // CUSTOM wired setup share
+    public static final int WiredSetupImportEvent = 10097; // CUSTOM wired setup import (preview / apply)
+
+    public static final int WiredOpenEvent = 768;
+    // AIR 13 wired leftovers, all on their official ids.
+    public static final int WiredUserSelectedEvent = 3122;
+    public static final int WiredMenuPermissionsSaveEvent = 1936;
+    public static final int WiredRoomStateActionEvent = 3761;
+    public static final int WiredRoomLogsPageEvent = 3882;
+    public static final int WiredRoomStatsRequestEvent = 1957; // AIR (wired menu monitor room stats)
+    public static final int WiredErrorLogsRequestEvent = 1132; // AIR (wired menu monitor error logs)
+    public static final int WiredErrorLogsClearEvent = 1632; // AIR (wired menu monitor clear all)
+    public static final int WiredVariableHoldersPageEvent = 975;
+    public static final int WiredLeaderboardSubscribeEvent = 2833; // AIR (variable leaderboard)
+    public static final int WiredLinkRequestConfigEvent = 3208; // AIR (WIRED Link)
+    public static final int WiredLinkSaveSelectionEvent = 385; // AIR (WIRED Link)
+    public static final int WiredLinkCreateNetworkEvent = 2192; // AIR (WIRED Link)
+    public static final int WiredLinkRenameNetworkEvent = 2794; // AIR (WIRED Link)
+    public static final int WiredLinkDeleteNetworkEvent = 2731; // AIR (WIRED Link)
+    public static final int WiredLinkGetConnectionsEvent =
+            9494; // CUSTOM (WIRED Link; AIR 2300 is RequestRoomHeightmapEvent)
+    public static final int WiredAddonShareSynchronizeEvent =
+            9495; // CUSTOM (variable add-on share; AIR 2144 is TriggerColorWheelEvent)
+    public static final int WiredLabelSaveTextEvent = 2638; // AIR (furniture label text)
+    public static final int WiredLabelSaveSettingsEvent = 2970; // AIR (furniture label settings)
+    public static final int WiredVariableHoldersRequestEvent = 2973;
+    public static final int WiredVariableHashesEvent = 1497;
+    public static final int WiredGenerateWebApiKeyEvent = 2819;
+    public static final int WiredAllVariablesRequestEvent = 1735;
+    // Official inspection tab read of one object (wiredmenu ?_-t1r?), header of our AIR build.
+    public static final int WiredGetVariablesForObjectEvent = 3661;
     public static final int TranslationLanguagesRequestEvent = 10032;
     public static final int TranslationTextRequestEvent = 10033;
     public static final int RequestInventoryPetDelete = 10030;
-    public static final int RequestInventoryBadgeDelete  = 10031;
+    public static final int RequestInventoryBadgeDelete = 10031;
 
     // Furni Editor
     public static final int FurniEditorSearchEvent = 10040;
@@ -463,6 +591,25 @@ public class Incoming {
     public static final int CatalogAdminSavePageIconEvent = 10061;
     public static final int CatalogAdminLoadOfferEvent = 10062;
     public static final int CatalogAdminLoadPageEvent = 10063;
+    public static final int CatalogAdminSetPageEnabledEvent = 10064;
+    public static final int CatalogAdminSetPageVisibleEvent = 10065;
+    public static final int CatalogAdminReorderOffersEvent = 10066;
+    public static final int CatalogStudioOpenSessionEvent = 10067;
+    public static final int CatalogStudioAcquireLockEvent = 10068;
+    public static final int CatalogStudioRenewLockEvent = 10069;
+    public static final int CatalogStudioReleaseLockEvent = 10070;
+    public static final int CatalogStudioLoadHistoryEvent = 10071;
+    public static final int CatalogStudioUndoEvent = 10072;
+    public static final int CatalogStudioValidateEvent = 10073;
+    public static final int CatalogStudioPublishEvent = 10074;
+    public static final int CatalogStudioDiscardEvent = 10075;
+    public static final int CatalogStudioRestoreEvent = 10076;
+    public static final int CatalogStudioPreviewEvent = 10077;
+    public static final int CatalogStudioExportEvent = 10078;
+    public static final int CatalogStudioDocumentDryRunEvent = 10079;
+    public static final int CatalogStudioDocumentApplyEvent = 10080;
+    public static final int CatalogProductMetadataEvent = 10081;
+    public static final int CatalogRuntimeConfigurationEvent = 10082;
 
     // Custom Prefixes
     public static final int RequestUserPrefixesEvent = 7011;
@@ -474,6 +621,21 @@ public class Incoming {
     public static final int SetActiveNickIconEvent = 7017;
     public static final int PurchaseCatalogPrefixEvent = 7018;
     public static final int SetDisplayOrderEvent = 7019;
+    public static final int RoomRemoveBackgroundEvent = 7020;
+    public static final int RoomRemovePaintEvent = 7021;
+    public static final int SetBuildUnderpassEvent = 7022;
+    public static final int SetBuildHeightEvent = 9351;
+    public static final int OpenMysteryTrophyEvent = 3074;
+    public static final int MysteryBoxWaitingCanceledEvent = 2012;
+    // Room competitions (AIR 13 RoomCompetitionController)
+    public static final int VoteForRoomEvent = 143;
+    public static final int CompetitionRoomsSearchEvent = 433;
+    public static final int ForwardToACompetitionRoomEvent = 172;
+    public static final int ForwardToRandomCompetitionRoomEvent = 865;
+    public static final int RoomCompetitionInitEvent = 1334;
+    public static final int ForwardToASubmittableRoomEvent = 1450;
+    public static final int GetIsUserPartOfCompetitionEvent = 2077;
+    public static final int SubmitRoomToCompetitionEvent = 2595;
 
     // YouTube Room Broadcast
     public static final int YouTubeRoomPlayEvent = 8001;
@@ -505,9 +667,19 @@ public class Incoming {
     public static final int HousekeepingSendHotelAlertEvent = 9121;
     public static final int HousekeepingGetDashboardEvent = 9122;
     public static final int HousekeepingListActionLogEvent = 9123;
+    public static final int HousekeepingSaveRoomSettingsEvent = 9124;
+    public static final int HousekeepingRequestListEvent = 9125;
+    public static final int HousekeepingReloadEvent = 9126;
+    public static final int HousekeepingRevokeBanEvent = 9127;
+    public static final int HousekeepingMaintenanceEvent = 9128;
+    public static final int HousekeepingWordFilterEvent = 9129;
+    public static final int HousekeepingSetPermissionEvent = 9130;
+    public static final int HousekeepingUserNoteEvent = 9131;
+    public static final int HousekeepingLockdownEvent = 9132;
 
     // Custom features — IDs 9300+ reserved
     public static final int RequestRareValuesEvent = 9300;
+    public static final int GetHotLooksEvent = 9360; // AIR 13 avatar editor hot looks tab
     public static final int WheelOpenEvent = 9301;
     public static final int WheelSpinEvent = 9302;
     public static final int WheelBuySpinEvent = 9303;
@@ -523,9 +695,29 @@ public class Incoming {
     public static final int TraxEditorBuySongEvent = 9331;
     public static final int TraxEditorSaveSongEvent = 9332;
     public static final int TraxEditorDeleteSongEvent = 9333;
+    public static final int SoundboardRequestSettingsEvent = 9340;
+    public static final int SoundboardSaveVolumeEvent = 9341;
+    public static final int SoundboardCatalogRequestEvent = 9342;
+    public static final int SoundboardCatalogUpsertEvent = 9343;
+    public static final int SoundboardCatalogReorderEvent = 9344;
+    public static final int HotelViewLandingRequestEvent = 9410;
+    public static final int HotelViewLandingSaveEvent = 9411;
+    public static final int HotelViewLandingSaveSceneEvent = 9412;
+    public static final int HotelViewLandingVoteEvent = 9413;
+    public static final int HotelViewLandingResetVotesEvent = 9414;
+    public static final int SaveGamePrivacySettingsEvent = 9415;
+    public static final int RequestOfflineMessagesEvent = 9416;
+    // Official AIR 13 ids: SetChatPreferences, SetOnlineIndicatorPreference, wired menu preferences
+    public static final int SaveChatPreferencesEvent = 2506;
+    public static final int SaveOnlineIndicatorPreferenceEvent = 818;
+    public static final int SaveWiredMenuSettingsEvent = 1226;
+    // 6010 (used by the original PR) is reserved by UNKNOWN_SNOWSTORM_6010, so habbicon uses 9417
+    public static final int TriggerHabbiconEvent = 9417;
+    public static final int DisconnectEvent = 2445;
     public static final int RequestMentionsEvent = 4803;
     public static final int MarkMentionsReadEvent = 4804;
     public static final int DeleteMentionEvent = 4805;
+    public static final int RequestMentionsPageEvent = 4806;
     public static final int RequestMessengerConversationsEvent = 4900;
     public static final int RequestMessengerHistoryEvent = 4901;
     public static final int SendMessengerMessageEvent = 4902;
@@ -534,4 +726,99 @@ public class Incoming {
     public static final int RenameFriendCategoryEvent = 4082;
     public static final int RemoveFriendCategoryEvent = 4083;
     public static final int MoveFriendToCategoryEvent = 4084;
+    // Console: mark read by peer id, typing indicator, and the periodic friend list refresh
+    public static final int MarkConsoleReadEvent = 4085;
+    public static final int ConsoleTypingEvent = 4087;
+    public static final int RefreshFriendListEvent = 1419;
+    // Quest engine (AIR 13 quests, daily tasks and reward track; the client-side ids of the renderer)
+    public static final int GetQuestsEvent = 3333;
+    public static final int GetSeasonalQuestsOnlyEvent = 1190;
+    public static final int GetSeasonalCalendarDailyOfferEvent = 3257;
+    public static final int AcceptQuestEvent = 3604;
+    public static final int ActivateQuestEvent = 793;
+    public static final int RejectQuestEvent = 2397;
+    public static final int CancelDailyQuestEvent = 3133;
+    public static final int GetDailyQuestEvent = 2486;
+    public static final int OpenQuestTrackerEvent = 2750;
+    public static final int StartCampaignEvent = 1697;
+    public static final int GetDailyTasksEvent = 4100;
+    public static final int ClaimDailyTaskEvent = 4101;
+    public static final int ClaimRewardTrackPrizeEvent = 1111;
+    public static final int PurchaseRewardTrackPremiumEvent = 3022;
+    public static final int GetRewardTracksEvent = 9450;
+    // Reward track staff editor (Octane, 10100-10199).
+    public static final int GetRewardTrackAdminDataEvent = 10100;
+    public static final int SaveRewardTrackEvent = 10101;
+    public static final int SaveRewardTrackTaskEvent = 10102;
+    public static final int SaveRewardTrackPrizeEvent = 10103;
+    public static final int DeleteRewardTrackEntityEvent = 10104;
+    public static final int SearchRewardTrackFurniEvent = 10106;
+    public static final int SaveRewardTrackTextsEvent = 10108;
+    public static final int GetHabbiconShopDataEvent = 9460;
+    public static final int GetHabbiconInfoEvent = 9461;
+    public static final int BuyHabbiconEvent = 9462;
+    public static final int BuyHabbiconCollectionEvent = 9463;
+    public static final int ClaimHabbiconEvent = 9464;
+    public static final int FavoriteHabbiconEvent = 9465;
+    public static final int UnfavoriteHabbiconEvent = 9466;
+    // AIR 13 room queue and room hopper network (ids of the renderer composers)
+    public static final int ChangeQueueEvent = 3093;
+    public static final int RoomNetworkOpenConnectionEvent = 3736;
+    // AIR 13 marketplace batch actions and the multi-item offer (official ids, free in both repos)
+    public static final int CancelAllOwnItemsEvent = 1228;
+    public static final int ClearOwnHistoryEvent = 2058;
+    public static final int SellMultipleItemsEvent = 1551;
+    // AIR 13 club extend confirmation (ClubDiscountPromoExtension)
+    public static final int RequestClubExtendConfirmEvent = 352;
+    // AIR 13 my-reports window: ask for the list, appeal one report
+    public static final int GetMyReportsStatusEvent = 2935;
+    public static final int AppealReportEvent = 3063;
+    // AIR 13 session block list, replenish respect, notification feed activation and ambassador
+    // unmute (official ids, free in both repos)
+    public static final int GetBlockedUsersEvent = 485;
+    public static final int BlockUserEvent = 697;
+    public static final int UnblockUserEvent = 1886;
+    public static final int ReplenishRespectEvent = 3728;
+    public static final int ActivateNotificationsEvent = 3235;
+    public static final int UnmuteUserEvent = 3302;
+    // AIR 13 Discord Rich Presence preferences (official ids, free in both repos)
+    public static final int GetDiscordPreferencesEvent = 1055;
+    public static final int UpdateDiscordPreferencesEvent = 2774;
+    // AIR 13 packets the renderer already composed but the emulator never handled
+    public static final int ModToolPreferencesEvent = 31;
+    public static final int GuildAcceptAllMembershipsEvent = 882;
+    public static final int ModToolDefaultSanctionEvent = 1681;
+    public static final int UnseenResetItemsEvent = 2343;
+    public static final int GetEmailStatusEvent = 2557;
+    public static final int UnseenResetCategoryEvent = 3493;
+    public static final int ChangeEmailEvent = 3965;
+    // AIR 13 self donation tool (official id 2499) and community goal vote (official id 3536)
+    public static final int SelfDonationEvent = 2499;
+    public static final int CommunityGoalVoteEvent = 3536;
+    // AIR 15 collectibles (docs/collectibles.md). Official ids where free; the completion reward claim (2209)
+    // and the transfer fee request (875) are taken here and use 9420-9421 of the custom range.
+    public static final int GetCollectibleWalletsEvent = 3702;
+    public static final int SelectCollectibleWalletEvent = 3361;
+    public static final int GetCollectibleCollectionsEvent = 1656;
+    public static final int ClaimCollectionBonusEvent = 149;
+    public static final int ClaimCollectionRewardEvent = 9420;
+    public static final int GetCollectibleShopEvent = 1762;
+    public static final int PurchaseCollectibleEvent = 1542;
+    public static final int GetCollectibleTransferFeeEvent = 9421;
+    public static final int TransferCollectiblesEvent = 1857;
+    public static final int GetCollectibleRewardClaimsEvent = 2902;
+    public static final int ClaimCollectibleRewardsEvent = 3836;
+    public static final int OpenCollectibleRewardBoxEvent = 1489;
+    public static final int GetCollectiblesInventoryEvent = 1119;
+    public static final int GetMintableItemsEvent = 1606;
+    public static final int GetMintingEnabledEvent = 2371;
+    public static final int GetMintTokenOffersEvent = 1133;
+    public static final int GetMintTokensEvent = 2610;
+    public static final int PurchaseMintTokensEvent = 189;
+    public static final int MintCollectibleEvent = 3779;
+    public static final int RedeemEmeraldFurniEvent = 121;
+    // AIR avatar collectibles (avatar editor NFT tab, docs/collectibles.md): official ids, free here.
+    public static final int GetUserNftWardrobeEvent = 3206;
+    public static final int SaveUserNftWardrobeEvent = 133;
+    public static final int GetSelectedNftWardrobeOutfitEvent = 3810;
 }

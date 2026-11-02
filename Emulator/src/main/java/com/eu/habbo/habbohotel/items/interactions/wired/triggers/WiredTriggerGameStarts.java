@@ -10,7 +10,6 @@ import com.eu.habbo.habbohotel.users.HabboItem;
 import com.eu.habbo.habbohotel.wired.WiredTriggerType;
 import com.eu.habbo.habbohotel.wired.core.WiredEvent;
 import com.eu.habbo.messages.ServerMessage;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
@@ -44,13 +43,10 @@ public class WiredTriggerGameStarts extends InteractionWiredTrigger {
     }
 
     @Override
-    public void loadWiredData(ResultSet set, Room room) throws SQLException {
-    }
+    public void loadWiredData(ResultSet set, Room room) throws SQLException {}
 
     @Override
-    public void onPickUp() {
-
-    }
+    public void onPickUp() {}
 
     @Override
     public WiredTriggerType getType() {
@@ -67,7 +63,8 @@ public class WiredTriggerGameStarts extends InteractionWiredTrigger {
         message.appendString("");
         message.appendInt(0);
         message.appendInt(0);
-        message.appendInt(WiredTriggerGameStarts.type.code);
+        // The team-result triggers inherit this body and report a type of their own.
+        message.appendInt(this.getType().code);
 
         if (!this.isTriggeredByRoomUnit()) {
             List<Integer> invalidTriggers = new ArrayList<>();

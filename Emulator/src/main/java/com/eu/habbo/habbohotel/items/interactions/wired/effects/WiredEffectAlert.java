@@ -5,9 +5,9 @@ import com.eu.habbo.habbohotel.items.Item;
 import com.eu.habbo.habbohotel.rooms.Room;
 import com.eu.habbo.habbohotel.rooms.RoomUnit;
 import com.eu.habbo.habbohotel.users.Habbo;
+import com.eu.habbo.habbohotel.wired.WiredEffectType;
 import com.eu.habbo.habbohotel.wired.core.WiredContext;
 import com.eu.habbo.habbohotel.wired.core.WiredTextPlaceholderUtil;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.List;
@@ -41,10 +41,19 @@ public class WiredEffectAlert extends WiredEffectWhisper {
                     : "";
 
             String message = this.message
-                    .replace("%online%", Emulator.getGameEnvironment().getHabboManager().getOnlineCount() + "")
+                    .replace(
+                            "%online%",
+                            Emulator.getGameEnvironment().getHabboManager().getOnlineCount() + "")
                     .replace("%username%", username)
-                    .replace("%roomsloaded%", Emulator.getGameEnvironment().getRoomManager().loadedRoomsCount() + "");
+                    .replace(
+                            "%roomsloaded%",
+                            Emulator.getGameEnvironment().getRoomManager().loadedRoomsCount() + "");
             habbo.alert(WiredTextPlaceholderUtil.applyUsernamePlaceholders(ctx, message));
         }
+    }
+
+    @Override
+    public WiredEffectType getType() {
+        return WiredEffectType.EFFECT_MESSAGE;
     }
 }

@@ -1,12 +1,11 @@
 package com.eu.habbo.habbohotel.messenger.history;
 
-import org.junit.jupiter.api.Test;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.util.ArrayList;
 import java.util.List;
-
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
+import org.junit.jupiter.api.Test;
 
 class MessengerHistoryServiceTest {
     @Test
@@ -32,10 +31,12 @@ class MessengerHistoryServiceTest {
         repository.rows.add(new MessengerStoredMessage(1, 9, 7, 0, "first", null, 100));
         MessengerHistoryService service = new MessengerHistoryService(repository, 30, 500);
 
-        MessengerHistoryPage page = service.loadHistory(9, 7, 0, 500);
+        MessengerHistoryPage page = service.loadHistory(9, 7, 0, MessengerHistoryService.MAX_PAGE_SIZE + 4_500);
 
-        assertEquals(50, repository.requestedLimit);
-        assertEquals(List.of(1L, 2L, 3L), page.messages().stream().map(MessengerStoredMessage::id).toList());
+        assertEquals(MessengerHistoryService.MAX_PAGE_SIZE, repository.requestedLimit);
+        assertEquals(
+                List.of(1L, 2L, 3L),
+                page.messages().stream().map(MessengerStoredMessage::id).toList());
     }
 
     @Test
@@ -56,6 +57,24 @@ class MessengerHistoryServiceTest {
         MessengerHistoryService service = new MessengerHistoryService(repository, 30, 500);
 
         assertEquals(List.of(7, 8, 9), service.listActiveMemberIds(12, 7));
+    }
+
+    @Test
+    void persistsStructuredHabbiconsAndRejectsNoncanonicalIdsAndMetadata() {
+        FakeRepository repository = new FakeRepository();
+        MessengerHistoryService service = new MessengerHistoryService(repository);
+        MessengerStoredMessage message =
+                service.sendMessage(9, 7, 0, MessengerHistoryService.HABBICON_MESSAGE, "71", "");
+        assertEquals(MessengerHistoryService.HABBICON_MESSAGE, message.type());
+        assertEquals("71", message.message());
+        for (String invalid : List.of("duck", "-1", "0", "071", "1.2", "9999999999")) {
+            assertThrows(
+                    IllegalArgumentException.class,
+                    () -> service.sendMessage(9, 7, 0, MessengerHistoryService.HABBICON_MESSAGE, invalid, ""));
+        }
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> service.sendMessage(9, 7, 0, MessengerHistoryService.HABBICON_MESSAGE, "71", "injected"));
     }
 
     private static final class FakeRepository implements MessengerHistoryRepository {
@@ -82,19 +101,22 @@ class MessengerHistoryServiceTest {
         }
 
         @Override
-        public List<MessengerStoredMessage> loadHistory(long conversationId, int userId, long beforeMessageId, int limit) {
+        public List<MessengerStoredMessage> loadHistory(
+                long conversationId, int userId, long beforeMessageId, int limit) {
             requestedLimit = limit;
             return new ArrayList<>(rows);
         }
 
         @Override
-        public MessengerStoredMessage storeDirectMessage(int senderId, int recipientId, int type, String message, String metadata) {
+        public MessengerStoredMessage storeDirectMessage(
+                int senderId, int recipientId, int type, String message, String metadata) {
             throw new UnsupportedOperationException();
         }
 
         @Override
-        public MessengerStoredMessage storeConversationMessage(long conversationId, int senderId, int type, String message, String metadata) {
-            throw new UnsupportedOperationException();
+        public MessengerStoredMessage storeConversationMessage(
+                long conversationId, int senderId, int type, String message, String metadata) {
+            return new MessengerStoredMessage(1, conversationId, senderId, type, message, metadata, 100);
         }
 
         @Override

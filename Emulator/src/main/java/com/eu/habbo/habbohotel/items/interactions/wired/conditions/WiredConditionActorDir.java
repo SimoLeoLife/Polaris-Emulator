@@ -8,14 +8,15 @@ import com.eu.habbo.habbohotel.rooms.RoomUnit;
 import com.eu.habbo.habbohotel.wired.WiredConditionType;
 import com.eu.habbo.habbohotel.wired.core.WiredContext;
 import com.eu.habbo.habbohotel.wired.core.WiredManager;
+import com.eu.habbo.habbohotel.wired.core.WiredQuantifier;
 import com.eu.habbo.habbohotel.wired.core.WiredSourceUtil;
+import com.eu.habbo.habbohotel.wired.protocol.WiredOfficialQuantifier;
 import com.eu.habbo.messages.ServerMessage;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.List;
 
-public class WiredConditionActorDir extends InteractionWiredCondition {
+public class WiredConditionActorDir extends InteractionWiredCondition implements WiredOfficialQuantifier {
     private static final int QUANTIFIER_ALL = 0;
     private static final int QUANTIFIER_ANY = 1;
     private static final int ALL_DIRECTIONS_MASK = createDirectionMask();
@@ -47,10 +48,8 @@ public class WiredConditionActorDir extends InteractionWiredCondition {
         message.appendInt(this.getBaseItem().getSpriteId());
         message.appendInt(this.getId());
         message.appendString("");
-        message.appendInt(3);
+        message.appendInt(1);
         message.appendInt(this.directionMask);
-        message.appendInt(this.userSource);
-        message.appendInt(this.quantifier);
         message.appendInt(0);
         message.appendInt(this.getType().code);
         message.appendInt(0);
@@ -62,8 +61,11 @@ public class WiredConditionActorDir extends InteractionWiredCondition {
         int[] params = settings.getIntParams();
 
         this.directionMask = (params.length > 0) ? this.normalizeDirectionMask(params[0]) : 0;
-        this.userSource = (params.length > 1) ? this.normalizeUserSource(params[1]) : WiredSourceUtil.SOURCE_TRIGGER;
-        this.quantifier = (params.length > 2) ? this.normalizeQuantifier(params[2]) : QUANTIFIER_ALL;
+        // Official layout: [direction mask], the users in the official source slot, the quantifier in its slot.
+        this.userSource = settings.getUserSourceTypes().length > 0
+                ? this.normalizeUserSource(settings.getUserSourceTypes()[0])
+                : WiredSourceUtil.SOURCE_TRIGGER;
+        this.quantifier = this.normalizeQuantifier(settings.getQuantifierCode());
 
         return true;
     }
@@ -76,7 +78,7 @@ public class WiredConditionActorDir extends InteractionWiredCondition {
 
         List<RoomUnit> targets = WiredSourceUtil.resolveUsers(ctx, this.userSource);
         if (targets.isEmpty()) {
-            return false;
+            return WiredQuantifier.overEmpty(this.quantifier != QUANTIFIER_ANY);
         }
 
         if (this.quantifier == QUANTIFIER_ANY) {
@@ -94,11 +96,7 @@ public class WiredConditionActorDir extends InteractionWiredCondition {
 
     @Override
     public String getWiredData() {
-        return WiredManager.getGson().toJson(new JsonData(
-                this.directionMask,
-                this.userSource,
-                this.quantifier
-        ));
+        return WiredManager.getGson().toJson(new JsonData(this.directionMask, this.userSource, this.quantifier));
     }
 
     @Override
@@ -195,5 +193,10 @@ public class WiredConditionActorDir extends InteractionWiredCondition {
             this.userSource = userSource;
             this.quantifier = quantifier;
         }
+    }
+
+    @Override
+    public int officialQuantifierCode() {
+        return this.quantifier;
     }
 }

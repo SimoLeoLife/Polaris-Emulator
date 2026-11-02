@@ -6,59 +6,73 @@
 
     <groupId>com.eu.habbo</groupId>
     <artifactId>Polaris</artifactId>
-    <version>4.2.60</version>
+    <version>4.2.98</version>
     <name>Polaris</name>
+    <licenses>
+        <license>
+            <name>GNU General Public License v3.0</name>
+            <url>https://www.gnu.org/licenses/gpl-3.0.html</url>
+            <distribution>repo</distribution>
+        </license>
+    </licenses>
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <project.build.outputTimestamp>2026-07-20T00:00:00Z</project.build.outputTimestamp>
+        <project.build.outputTimestamp>2026-10-06T12:40:36Z</project.build.outputTimestamp>
         <maven.compiler.release>25</maven.compiler.release>
         <maven.build.java.version>[25,27)</maven.build.java.version>
 
-        <netty.version>4.2.16.Final</netty.version>
-        <gson.version>2.14.0</gson.version>
-        <mariadb.version>3.5.9</mariadb.version>
+        <netty.version>4.2.19.Final</netty.version>
+        <gson.version>2.15.0</gson.version>
+        <mariadb.version>3.5.11</mariadb.version>
         <hikaricp.version>7.1.0</hikaricp.version>
-        <caffeine.version>3.2.4</caffeine.version>
+        <dropwizard-metrics.version>4.2.40</dropwizard-metrics.version>
+        <caffeine.version>3.3.1</caffeine.version>
         <resilience4j.version>2.4.0</resilience4j.version>
-        <hibernate-validator.version>9.1.2.Final</hibernate-validator.version>
-        <commons-lang3.version>3.20.0</commons-lang3.version>
+        <hibernate-validator.version>9.1.5.Final</hibernate-validator.version>
+        <commons-lang3.version>3.21.0</commons-lang3.version>
         <commons-math3.version>3.6.1</commons-math3.version>
-        <jsoup.version>1.22.2</jsoup.version>
-        <slf4j.version>2.0.18</slf4j.version>
-        <error-prone-annotations.version>2.49.0</error-prone-annotations.version>
-        <logback.version>1.5.38</logback.version>
+        <jsoup.version>1.23.2</jsoup.version>
+        <slf4j.version>2.0.20</slf4j.version>
+        <error-prone-annotations.version>2.51.0</error-prone-annotations.version>
+        <logback.version>1.6.5</logback.version>
         <jansi.version>2.4.3</jansi.version>
         <bcrypt.version>0.10.2</bcrypt.version>
         <jakarta-mail.version>2.0.5</jakarta-mail.version>
-        <junit.version>6.1.2</junit.version>
-        <javaparser.version>3.27.1</javaparser.version>
-        <flyway.version>12.11.0</flyway.version>
-        <testcontainers.version>1.21.4</testcontainers.version>
-        <mockito.version>5.23.0</mockito.version>
+        <junit.version>6.1.3</junit.version>
+        <javaparser.version>3.28.2</javaparser.version>
+        <flyway.version>13.11.1</flyway.version>
+        <testcontainers.version>2.0.5</testcontainers.version>
+        <mockito.version>5.24.0</mockito.version>
         <trove4j.reference.version>3.0.3</trove4j.reference.version>
 
         <maven-clean-plugin.version>3.5.0</maven-clean-plugin.version>
-        <maven-compiler-plugin.version>3.15.0</maven-compiler-plugin.version>
-        <maven-deploy-plugin.version>3.1.4</maven-deploy-plugin.version>
+        <maven-compiler-plugin.version>3.16.0</maven-compiler-plugin.version>
+        <maven-deploy-plugin.version>3.2.0</maven-deploy-plugin.version>
+        <maven-dependency-plugin.version>3.11.0</maven-dependency-plugin.version>
         <maven-enforcer-plugin.version>3.6.3</maven-enforcer-plugin.version>
-        <maven-failsafe-plugin.version>3.5.6</maven-failsafe-plugin.version>
-        <maven-install-plugin.version>3.1.4</maven-install-plugin.version>
-        <maven-jar-plugin.version>3.5.0</maven-jar-plugin.version>
+        <maven-failsafe-plugin.version>3.6.1</maven-failsafe-plugin.version>
+        <maven-install-plugin.version>3.2.0</maven-install-plugin.version>
+        <maven-jar-plugin.version>3.5.1</maven-jar-plugin.version>
         <maven-javadoc-plugin.version>3.12.0</maven-javadoc-plugin.version>
         <maven-resources-plugin.version>3.5.0</maven-resources-plugin.version>
-        <maven-shade-plugin.version>3.6.0</maven-shade-plugin.version>
+        <maven-shade-plugin.version>3.6.2</maven-shade-plugin.version>
         <maven-site-plugin.version>3.22.0</maven-site-plugin.version>
-        <maven-surefire-plugin.version>3.5.6</maven-surefire-plugin.version>
-        <versions-maven-plugin.version>2.21.0</versions-maven-plugin.version>
-        <cyclonedx-maven-plugin.version>2.9.2</cyclonedx-maven-plugin.version>
+        <maven-surefire-plugin.version>3.6.1</maven-surefire-plugin.version>
+        <versions-maven-plugin.version>2.23.0</versions-maven-plugin.version>
+        <cyclonedx-maven-plugin.version>2.9.3</cyclonedx-maven-plugin.version>
         <jacoco-plugin.version>0.8.15</jacoco-plugin.version>
-        <jacoco.minimum.instruction.coveredratio>0.07</jacoco.minimum.instruction.coveredratio>
-        <japicmp.version>0.23.1</japicmp.version>
-        <spotless-maven-plugin.version>3.8.0</spotless-maven-plugin.version>
+        <!-- Measured 39.4% of the instructions on the tests that run without Docker (CI runs more). Keep the minimum
+             a few points under what is measured, and raise it when the coverage rises. -->
+        <jacoco.minimum.instruction.coveredratio>0.35</jacoco.minimum.instruction.coveredratio>
+        <japicmp.version>0.26.5</japicmp.version>
+        <spotless-maven-plugin.version>3.10.4</spotless-maven-plugin.version>
         <palantir-java-format.version>2.96.0</palantir-java-format.version>
-        <spotbugs-maven-plugin.version>4.10.3.0</spotbugs-maven-plugin.version>
+        <spotbugs-maven-plugin.version>4.10.5.0</spotbugs-maven-plugin.version>
         <spotless.ratchetFrom>HEAD^</spotless.ratchetFrom>
+        <!-- Surefire/Failsafe read this late (@{argLine}) so the coverage profile can
+             prepend the JaCoCo agent without losing the flags below. -->
+        <argLine></argLine>
     </properties>
 
     <build>
@@ -93,6 +107,11 @@
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-deploy-plugin</artifactId>
                     <version>${maven-deploy-plugin.version}</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-dependency-plugin</artifactId>
+                    <version>${maven-dependency-plugin.version}</version>
                 </plugin>
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
@@ -170,11 +189,25 @@
                                         <exclude>META-INF/*.SF</exclude>
                                         <exclude>META-INF/*.DSA</exclude>
                                         <exclude>META-INF/*.RSA</exclude>
+                                        <!-- Per-dependency licence texts and module descriptors
+                                             collide in the fat jar and carry nothing at runtime. -->
+                                        <exclude>META-INF/LICENSE*</exclude>
+                                        <exclude>META-INF/license*</exclude>
+                                        <exclude>META-INF/NOTICE*</exclude>
+                                        <exclude>META-INF/DEPENDENCIES</exclude>
+                                        <exclude>META-INF/versions/*/module-info.class</exclude>
+                                        <exclude>module-info.class</exclude>
+                                        <exclude>COPYRIGHT.txt</exclude>
+                                        <exclude>LICENSE.txt</exclude>
                                     </excludes>
                                 </filter>
                             </filters>
                             <transformers>
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
+                                <!-- Every Netty module ships its own version entries; keep them all. -->
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.AppendingTransformer">
+                                    <resource>META-INF/io.netty.versions.properties</resource>
+                                </transformer>
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
                                     <mainClass>com.eu.habbo.Emulator</mainClass>
                                     <manifestEntries>
@@ -219,16 +252,49 @@
                 </executions>
             </plugin>
 
+            <!-- Exposes ${org.mockito:mockito-core:jar} for the test agent flags. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>dependency-paths</id>
+                        <goals>
+                            <goal>properties</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>${maven-surefire-plugin.version}</version>
                 <configuration>
+                    <!-- Mockito attaches as an explicit agent (JDK self-attach is being
+                         phased out); JNA needs native access for Testcontainers;
+                         -Xshare:off silences the CDS notice the agent triggers. -->
+                    <argLine>@{argLine} -javaagent:${org.mockito:mockito-core:jar} -Xshare:off --enable-native-access=ALL-UNNAMED</argLine>
                     <!-- Unit tests only; integration tests (*IT) run under Failsafe. -->
                     <excludes>
                         <exclude>**/*IT.java</exclude>
                     </excludes>
                 </configuration>
+                <executions>
+                    <!-- Keep this test independent of suite order: CatalogManager must be
+                         mockable before any other test has installed global configuration,
+                         so it also runs alone in its own fork. -->
+                    <execution>
+                        <id>lifecycle-isolation</id>
+                        <goals>
+                            <goal>test</goal>
+                        </goals>
+                        <configuration>
+                            <test>GameEnvironmentDisposalTest</test>
+                            <reportsDirectory>${project.build.directory}/surefire-reports/lifecycle-isolation</reportsDirectory>
+                        </configuration>
+                    </execution>
+                </executions>
             </plugin>
 
             <!-- Failsafe runs integration tests (*IT) in the verify phase, so the
@@ -238,6 +304,7 @@
                 <artifactId>maven-failsafe-plugin</artifactId>
                 <version>${maven-failsafe-plugin.version}</version>
                 <configuration>
+                    <argLine>@{argLine} -javaagent:${org.mockito:mockito-core:jar} -Xshare:off --enable-native-access=ALL-UNNAMED</argLine>
                     <forkedProcessTimeoutInSeconds>600</forkedProcessTimeoutInSeconds>
                     <includes>
                         <include>**/*IT.java</include>
@@ -446,7 +513,27 @@
         <!-- Netty -->
         <dependency>
             <groupId>io.netty</groupId>
-            <artifactId>netty-all</artifactId>
+            <artifactId>netty-common</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-buffer</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-transport</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-codec-base</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-codec-http</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-handler</artifactId>
         </dependency>
 
         <!-- GSON -->
@@ -468,7 +555,7 @@
         <dependency>
             <groupId>it.unimi.dsi</groupId>
             <artifactId>fastutil</artifactId>
-            <version>8.5.18</version>
+            <version>8.5.19</version>
             <scope>compile</scope>
         </dependency>
 
@@ -478,6 +565,21 @@
             <artifactId>HikariCP</artifactId>
             <version>${hikaricp.version}</version>
             <scope>compile</scope>
+        </dependency>
+
+        <!-- HikariCP's optional Dropwizard health-check hook. Compile-time only, so
+             SpotBugs can resolve HealthCheckRegistry instead of reporting it missing. -->
+        <dependency>
+            <groupId>io.dropwizard.metrics</groupId>
+            <artifactId>metrics-healthchecks</artifactId>
+            <version>${dropwizard-metrics.version}</version>
+            <scope>provided</scope>
+            <exclusions>
+                <exclusion>
+                    <groupId>org.slf4j</groupId>
+                    <artifactId>slf4j-api</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
 
         <!-- Caffeine cache - high-performance local caching for hot emulator lookups -->
@@ -625,17 +727,12 @@
         <!-- Testcontainers — throwaway MariaDB for integration (*IT) tests -->
         <dependency>
             <groupId>org.testcontainers</groupId>
-            <artifactId>testcontainers</artifactId>
+            <artifactId>testcontainers-mariadb</artifactId>
             <scope>test</scope>
         </dependency>
         <dependency>
             <groupId>org.testcontainers</groupId>
-            <artifactId>mariadb</artifactId>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.testcontainers</groupId>
-            <artifactId>junit-jupiter</artifactId>
+            <artifactId>testcontainers-junit-jupiter</artifactId>
             <scope>test</scope>
         </dependency>
 

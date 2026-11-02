@@ -1,17 +1,11 @@
 package com.eu.habbo.habbohotel.wired.core;
 
-import com.eu.habbo.Emulator;
+import com.eu.habbo.WiredCompatibilityDiagnostics;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredEffect;
-import com.eu.habbo.habbohotel.items.interactions.InteractionWiredExtra;
-import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraFilterFurni;
-import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraFilterFurniByVariable;
-import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraFilterUser;
-import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraFilterUsersByVariable;
 import com.eu.habbo.habbohotel.rooms.Room;
 import com.eu.habbo.habbohotel.rooms.RoomUnit;
 import com.eu.habbo.habbohotel.users.HabboItem;
 import com.eu.habbo.habbohotel.wired.api.IWiredEffect;
-
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -19,27 +13,48 @@ import java.util.List;
 
 public final class WiredSourceUtil {
     public static final int SOURCE_TRIGGER = 0;
+    /** The user a bot reached; only under a Bot Reaches User trigger. */
+    public static final int SOURCE_REACHED_USER = 10;
+
     public static final int SOURCE_CLICKED_USER = 11;
     public static final int SOURCE_SELECTED = 100;
     public static final int SOURCE_SELECTOR = 200;
     public static final int SOURCE_SIGNAL = 201;
 
-    private WiredSourceUtil() {
-    }
+    private WiredSourceUtil() {}
 
+    /**
+     * "Use the triggering item" means the furni the event happened on, and falls back to the wired
+     * trigger box when the event has no furni of its own.
+     *
+     * <p>Twenty of the thirty-four events carry no source item - says, enters room, game starts, team
+     * wins, dances, key presses - so without that fallback the option resolved to an empty list and
+     * every furni effect built on one of those triggers did nothing at all, with no way to see why.
+     * The selectors already asked for the fallback through {@link #resolveItemsRaw}; effects and
+     * conditions now get the same answer to the same question.
+     *
+     * <p>Nothing that works today changes: the fourteen events that do carry a furni still resolve to
+     * it. Removing furni is safe here because that effect refuses to touch any wired furni at all.
+     */
     public static List<HabboItem> resolveItems(WiredContext ctx, int sourceType, Collection<HabboItem> selectedItems) {
-        List<HabboItem> resolvedItems = resolveItemsInternal(ctx, sourceType, selectedItems, false);
+        List<HabboItem> resolvedItems = resolveItemsInternal(ctx, sourceType, selectedItems, true);
 
         if (ctx == null) {
             return resolvedItems;
         }
 
-        return (sourceType == SOURCE_SELECTOR)
-                ? resolvedItems
-                : WiredSelectionFilterSupport.filterItems(ctx.room(), ctx.triggerItem(), ctx, resolvedItems);
+        // The filter add-ons narrow what the selectors picked (applied once after them), never another source.
+        List<HabboItem> filtered = resolvedItems;
+
+        if (filtered.isEmpty() && ctx.state() != null) {
+            ctx.state().noteUnresolvedFurniSource(sourceType);
+        }
+
+        return filtered;
     }
 
-    public static List<HabboItem> resolveItemsRaw(WiredContext ctx, int sourceType, Collection<HabboItem> selectedItems) {
+    public static List<HabboItem> resolveItemsRaw(
+            WiredContext ctx, int sourceType, Collection<HabboItem> selectedItems) {
         return resolveItemsInternal(ctx, sourceType, selectedItems, true);
     }
 
@@ -54,9 +69,14 @@ public final class WiredSourceUtil {
             return resolvedUsers;
         }
 
-        return (sourceType == SOURCE_SELECTOR)
-                ? resolvedUsers
-                : WiredSelectionFilterSupport.filterUsers(ctx.room(), ctx.triggerItem(), ctx, resolvedUsers);
+        // The filter add-ons narrow what the selectors picked (applied once after them), never another source.
+        List<RoomUnit> filtered = resolvedUsers;
+
+        if (filtered.isEmpty() && ctx.state() != null) {
+            ctx.state().noteUnresolvedUserSource(sourceType);
+        }
+
+        return filtered;
     }
 
     public static List<RoomUnit> resolveUsersRaw(WiredContext ctx, int sourceType) {
@@ -70,6 +90,7 @@ public final class WiredSourceUtil {
     public static boolean isDefaultUserSource(int value) {
         switch (value) {
             case SOURCE_TRIGGER:
+            case SOURCE_REACHED_USER:
             case SOURCE_CLICKED_USER:
             case SOURCE_SELECTOR:
             case SOURCE_SIGNAL:
@@ -127,10 +148,27 @@ public final class WiredSourceUtil {
         return ctx.targets();
     }
 
+    /**
+     * Set while a stack's selectors are being re-run to answer "what did the selectors pick". A
+     * selector whose own reference reads that source would otherwise start the same run again,
+     * forever, until the thread's stack overflows.
+     */
+    private static final ThreadLocal<Boolean> RESOLVING_SELECTORS = new ThreadLocal<>();
+
     private static WiredContext executeSelectors(WiredContext originalCtx) {
-        if (originalCtx == null) {
+        if (originalCtx == null || RESOLVING_SELECTORS.get() != null) {
             return null;
         }
+
+        RESOLVING_SELECTORS.set(Boolean.TRUE);
+        try {
+            return runSelectors(originalCtx);
+        } finally {
+            RESOLVING_SELECTORS.remove();
+        }
+    }
+
+    private static WiredContext runSelectors(WiredContext originalCtx) {
 
         Room room = originalCtx.room();
         HabboItem triggerItem = originalCtx.triggerItem();
@@ -145,20 +183,25 @@ public final class WiredSourceUtil {
                 originalCtx.stack(),
                 originalCtx.services(),
                 new WiredState(100),
-                originalCtx.legacySettings()
-        );
+                originalCtx.legacySettings());
         selectorCtx.setIncludeWiredSelectorItems(originalCtx.includeWiredSelectorItems());
 
         List<InteractionWiredEffect> selectorEffects = getOrderedSelectorEffects(originalCtx, room, triggerItem);
-        executeSelectorEffects(selectorCtx, selectorEffects, false);
-        executeSelectorEffects(selectorCtx, selectorEffects, true);
+        WiredTargets.Defaults defaults = selectorCtx.targets().setDefaultsAside();
+        try {
+            executeSelectorEffects(selectorCtx, selectorEffects, false);
+            executeSelectorEffects(selectorCtx, selectorEffects, true);
+        } finally {
+            selectorCtx.targets().restoreDefaults(defaults);
+        }
 
         applySelectionFilterExtras(room, triggerItem, selectorCtx);
 
         return selectorCtx;
     }
 
-    private static void executeSelectorEffects(WiredContext selectorCtx, List<InteractionWiredEffect> selectorEffects, boolean deferred) {
+    private static void executeSelectorEffects(
+            WiredContext selectorCtx, List<InteractionWiredEffect> selectorEffects, boolean deferred) {
         for (InteractionWiredEffect effect : selectorEffects) {
             if (effect == null || effect.usesExistingSelectorTargets() != deferred) {
                 continue;
@@ -170,8 +213,13 @@ public final class WiredSourceUtil {
 
             try {
                 selectorCtx.state().step();
-                effect.execute(selectorCtx);
+                WiredExecutionScope.execute(effect, selectorCtx);
             } catch (Exception ignored) {
+                WiredCompatibilityDiagnostics.record(
+                        WiredCompatibilityDiagnostics.FailurePoint.SOURCE_SELECTOR_EFFECT,
+                        selectorCtx.room().getId(),
+                        effect.getId(),
+                        ignored);
             }
         }
     }
@@ -187,13 +235,13 @@ public final class WiredSourceUtil {
                 originalCtx.stack(),
                 originalCtx.services(),
                 new WiredState(100),
-                originalCtx.legacySettings()
-        );
+                originalCtx.legacySettings());
         selectorCtx.setIncludeWiredSelectorItems(includeWiredItems);
         return selectorCtx;
     }
 
-    private static List<InteractionWiredEffect> getOrderedSelectorEffects(WiredContext originalCtx, Room room, HabboItem triggerItem) {
+    private static List<InteractionWiredEffect> getOrderedSelectorEffects(
+            WiredContext originalCtx, Room room, HabboItem triggerItem) {
         List<InteractionWiredEffect> selectorEffects = new ArrayList<>();
 
         if (originalCtx != null && originalCtx.hasStack()) {
@@ -208,7 +256,8 @@ public final class WiredSourceUtil {
             }
         }
 
-        Collection<InteractionWiredEffect> roomEffects = room.getRoomSpecialTypes().getEffects(triggerItem.getX(), triggerItem.getY());
+        Collection<InteractionWiredEffect> roomEffects =
+                room.getRoomSpecialTypes().getEffects(triggerItem.getX(), triggerItem.getY());
         for (InteractionWiredEffect effect : WiredExecutionOrderUtil.sort(roomEffects)) {
             if (effect != null && effect.isSelector()) {
                 selectorEffects.add(effect);
@@ -222,7 +271,8 @@ public final class WiredSourceUtil {
         WiredSelectionFilterSupport.applySelectorFilters(room, triggerItem, selectorCtx);
     }
 
-    private static List<HabboItem> resolveItemsInternal(WiredContext ctx, int sourceType, Collection<HabboItem> selectedItems, boolean allowTriggerItemFallback) {
+    private static List<HabboItem> resolveItemsInternal(
+            WiredContext ctx, int sourceType, Collection<HabboItem> selectedItems, boolean allowTriggerItemFallback) {
         if (ctx == null) {
             return Collections.emptyList();
         }
@@ -239,7 +289,16 @@ public final class WiredSourceUtil {
                         : Collections.emptyList();
             case SOURCE_SIGNAL:
                 if (ctx.eventType() == WiredEvent.Type.SIGNAL_RECEIVED) {
-                    return ctx.sourceItem().map(Collections::singletonList).orElse(Collections.emptyList());
+                    // Everything the signal passed on. A signal built without the sets still names its one
+                    // furni, unless that is the receiving antenna (the triggering furni of the stack).
+                    List<HabboItem> forwarded = ctx.event().getForwardedItems();
+                    if (!forwarded.isEmpty()) {
+                        return new ArrayList<>(forwarded);
+                    }
+                    return ctx.sourceItem()
+                            .filter(item -> item.getId() != ctx.event().getSignalChannel())
+                            .map(Collections::singletonList)
+                            .orElse(Collections.emptyList());
                 }
                 return Collections.emptyList();
             default:
@@ -247,17 +306,29 @@ public final class WiredSourceUtil {
         }
     }
 
-    private static List<RoomUnit> resolveUsersInternal(WiredContext ctx, int sourceType, Collection<RoomUnit> selectedUsers) {
+    private static List<RoomUnit> resolveUsersInternal(
+            WiredContext ctx, int sourceType, Collection<RoomUnit> selectedUsers) {
         if (ctx == null) {
             return Collections.emptyList();
         }
 
         switch (sourceType) {
             case SOURCE_TRIGGER:
-                return ctx.actor().map(Collections::singletonList).orElse(Collections.emptyList());
+                return triggeringUsers(ctx);
             case SOURCE_CLICKED_USER:
                 if (ctx.eventType() == WiredEvent.Type.USER_CLICKS_USER) {
-                    return ctx.event().getTargetUnit().map(Collections::singletonList).orElse(Collections.emptyList());
+                    return ctx.event()
+                            .getTargetUnit()
+                            .map(Collections::singletonList)
+                            .orElse(Collections.emptyList());
+                }
+                return Collections.emptyList();
+            case SOURCE_REACHED_USER:
+                if (ctx.eventType() == WiredEvent.Type.BOT_REACHED_HABBO) {
+                    return ctx.event()
+                            .getTargetUnit()
+                            .map(Collections::singletonList)
+                            .orElse(Collections.emptyList());
                 }
                 return Collections.emptyList();
             case SOURCE_SELECTED:
@@ -269,12 +340,25 @@ public final class WiredSourceUtil {
                         : Collections.emptyList();
             case SOURCE_SIGNAL:
                 if (ctx.eventType() == WiredEvent.Type.SIGNAL_RECEIVED) {
+                    List<RoomUnit> forwarded = ctx.event().getForwardedUsers();
+                    if (!forwarded.isEmpty()) {
+                        return new ArrayList<>(forwarded);
+                    }
                     return ctx.actor().map(Collections::singletonList).orElse(Collections.emptyList());
                 }
                 return Collections.emptyList();
             default:
-                return ctx.actor().map(Collections::singletonList).orElse(Collections.emptyList());
+                return triggeringUsers(ctx);
         }
+    }
+
+    /**
+     * The triggering user: the event's actor. When a bot reaches a user that is the bot, as in Habbo
+     * (a Bot Talk To Avatar to the triggering user says nothing); the user it reached is the Reached
+     * User source.
+     */
+    private static List<RoomUnit> triggeringUsers(WiredContext ctx) {
+        return ctx.actor().map(Collections::singletonList).orElse(Collections.emptyList());
     }
 
     private static List<HabboItem> resolveTriggerItems(WiredContext ctx, boolean allowTriggerItemFallback) {

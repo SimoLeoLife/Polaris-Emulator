@@ -5,7 +5,6 @@ import com.eu.habbo.habbohotel.rooms.Room;
 import com.eu.habbo.habbohotel.rooms.RoomUnit;
 import com.eu.habbo.habbohotel.users.HabboItem;
 import com.eu.habbo.messages.ServerMessage;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 
@@ -29,14 +28,14 @@ public class InteractionStackHelper extends HabboItem {
     }
 
     @Override
-    public void onWalk(RoomUnit roomUnit, Room room, Object[] objects) throws Exception {
-
-    }
+    public void onWalk(RoomUnit roomUnit, Room room, Object[] objects) throws Exception {}
 
     @Override
     public void serializeExtradata(ServerMessage serverMessage) {
         serverMessage.appendInt((this.isLimited() ? 256 : 0));
-        serverMessage.appendString(this.getExtradata());
+        // Only the height reaches the client: the multi-walk flag lives behind a
+        // suffix the official stuff data never carries.
+        serverMessage.appendString(StackHelperExtradata.legacy(this.getExtradata()));
 
         super.serializeExtradata(serverMessage);
     }

@@ -1,7 +1,10 @@
 package com.eu.habbo.habbohotel.catalog.marketplace;
 
 import com.eu.habbo.Emulator;
+import com.eu.habbo.habbohotel.earnings.EarningsCategory;
+import com.eu.habbo.habbohotel.earnings.EarningsNotifications;
 import com.eu.habbo.habbohotel.economy.EconomyMutationResult;
+import com.eu.habbo.habbohotel.economy.EconomyOperationId;
 import com.eu.habbo.habbohotel.gameclients.GameClient;
 import com.eu.habbo.habbohotel.users.Habbo;
 import com.eu.habbo.habbohotel.users.HabboItem;
@@ -11,6 +14,7 @@ import com.eu.habbo.messages.ServerMessage;
 import com.eu.habbo.messages.incoming.catalog.marketplace.RequestOffersEvent;
 import com.eu.habbo.messages.outgoing.catalog.marketplace.MarketplaceBuyErrorComposer;
 import com.eu.habbo.messages.outgoing.catalog.marketplace.MarketplaceCancelSaleComposer;
+import com.eu.habbo.messages.outgoing.catalog.marketplace.MarketplaceItemInfoComposer;
 import com.eu.habbo.messages.outgoing.inventory.AddHabboItemComposer;
 import com.eu.habbo.messages.outgoing.inventory.InventoryRefreshComposer;
 import com.eu.habbo.messages.outgoing.inventory.RemoveHabboItemComposer;
@@ -35,7 +39,7 @@ import org.slf4j.LoggerFactory;
 public class MarketPlace {
     private static final Logger LOGGER = LoggerFactory.getLogger(MarketPlace.class);
     private static final String PURCHASE_OFFER_SQL = """
-            SELECT item_id, user_id, price, state
+            SELECT item_id, user_id, price, state, timestamp
             FROM marketplace_items
             WHERE id = ? LIMIT 1
             """;
@@ -58,7 +62,7 @@ public class MarketPlace {
         Set<MarketPlaceOffer> offers = new HashSet<>();
         try (Connection connection = Emulator.getDatabase().getDataSource().getConnection();
                 PreparedStatement statement = connection.prepareStatement(
-                        "SELECT items_base.type AS type, items.item_id AS base_item_id, items.limited_data AS ltd_data, marketplace_items.* FROM marketplace_items INNER JOIN items ON marketplace_items.item_id = items.id INNER JOIN items_base ON items.item_id = items_base.id WHERE marketplace_items.user_id = ?")) {
+                        "SELECT items_base.type AS type, items.item_id AS base_item_id, items.limited_data AS ltd_data, marketplace_items.* FROM marketplace_items INNER JOIN items ON marketplace_items.item_id = items.id INNER JOIN items_base ON items.item_id = items_base.id WHERE marketplace_items.user_id = ? AND marketplace_items.seller_claimed = 0")) {
             statement.setInt(1, habbo.getHabboInfo().getId());
             try (ResultSet set = statement.executeQuery()) {
                 while (set.next()) {
@@ -84,6 +88,80 @@ public class MarketPlace {
                 .isCancelled()) {
             takeBackItem(habbo, offer);
         }
+    }
+
+    /**
+     * The AIR 13 "recall all" button (`MarketPlaceLogic.recallAllOffers`): pulls every
+     * still-open offer of this player back into their inventory and answers with the ids
+     * that were actually recalled, so the client removes exactly those rows.
+     */
+    public static List<Integer> takeBackAllItems(Habbo habbo) {
+        List<Integer> recalled = new ArrayList<>();
+
+        for (MarketPlaceOffer offer : new ArrayList<>(habbo.getInventory().getMarketplaceItems())) {
+            if (offer == null || offer.getState() != MarketPlaceState.OPEN) {
+                continue;
+            }
+
+            if (Emulator.getPluginManager()
+                    .fireEvent(new MarketPlaceItemCancelledEvent(offer))
+                    .isCancelled()) {
+                continue;
+            }
+
+            takeBackItem(habbo, offer);
+
+            if (!habbo.getInventory().getMarketplaceItems().contains(offer)) {
+                recalled.add(offer.getOfferId());
+            }
+        }
+
+        return recalled;
+    }
+
+    /**
+     * The AIR 13 "clear history" button (`MarketPlaceLogic.clearOwnHistory`): empties one
+     * tab of the own-offers window. The official client only ever asks for sold
+     * ({@code 2}) or expired ({@code 3}) — `MarketPlaceOfferState.isClearable` — and so
+     * does this method, because an open offer is still on sale.
+     *
+     * <p>A row of ours is never simply forgotten: a sold offer still owes its credits and
+     * an expired offer still holds the furni, so clearing a tab settles it first. Sold
+     * rows are paid out exactly like the redeem button does, expired rows put the furni
+     * back in the inventory. Both leave the tab empty, which is what the button promises,
+     * and neither loses anything.
+     */
+    public static boolean clearOwnHistory(GameClient client, int state) {
+        if (client == null || client.getHabbo() == null) {
+            return false;
+        }
+
+        Habbo habbo = client.getHabbo();
+
+        if (state == MarketPlaceState.SOLD.getState()) {
+            getCredits(client);
+            return true;
+        }
+
+        if (state != MarketPlaceState.CLOSED.getState()) {
+            return false;
+        }
+
+        for (MarketPlaceOffer offer : new ArrayList<>(habbo.getInventory().getMarketplaceItems())) {
+            if (offer == null || offer.getState() != MarketPlaceState.CLOSED) {
+                continue;
+            }
+
+            if (Emulator.getPluginManager()
+                    .fireEvent(new MarketPlaceItemCancelledEvent(offer))
+                    .isCancelled()) {
+                continue;
+            }
+
+            takeBackItem(habbo, offer);
+        }
+
+        return true;
     }
 
     private static void takeBackItem(Habbo habbo, MarketPlaceOffer offer) {
@@ -112,37 +190,26 @@ public class MarketPlace {
                             return;
                         }
 
-                        try (PreparedStatement statement = connection.prepareStatement(
-                                "DELETE FROM marketplace_items WHERE id = ? AND state != 2")) {
-                            statement.setInt(1, offer.getOfferId());
-                            int count = statement.executeUpdate();
+                        // The offer row goes and the item comes back together, or neither: a failed item update
+                        // used to leave the offer deleted and the item owned by nobody (user_id -1).
+                        if (!returnOfferItem(connection, habbo, offer)) {
+                            habbo.getClient().sendResponse(new MarketplaceCancelSaleComposer(offer, false));
+                            return;
+                        }
 
-                            if (count != 0) {
-                                habbo.getInventory().removeMarketplaceOffer(offer);
-                                try (PreparedStatement updateItems = connection.prepareStatement(
-                                        "UPDATE items SET user_id = ? WHERE id = ? LIMIT 1")) {
-                                    updateItems.setInt(1, habbo.getHabboInfo().getId());
-                                    updateItems.setInt(2, offer.getSoldItemId());
-                                    updateItems.execute();
-
-                                    try (PreparedStatement selectItem =
-                                            connection.prepareStatement("SELECT * FROM items WHERE id = ? LIMIT 1")) {
-                                        selectItem.setInt(1, offer.getSoldItemId());
-                                        try (ResultSet set = selectItem.executeQuery()) {
-                                            while (set.next()) {
-                                                HabboItem item = Emulator.getGameEnvironment()
-                                                        .getItemManager()
-                                                        .loadHabboItem(set);
-                                                habbo.getInventory()
-                                                        .getItemsComponent()
-                                                        .addItem(item);
-                                                habbo.getClient()
-                                                        .sendResponse(new MarketplaceCancelSaleComposer(offer, true));
-                                                habbo.getClient().sendResponse(new AddHabboItemComposer(item));
-                                                habbo.getClient().sendResponse(new InventoryRefreshComposer());
-                                            }
-                                        }
-                                    }
+                        habbo.getInventory().removeMarketplaceOffer(offer);
+                        try (PreparedStatement selectItem =
+                                connection.prepareStatement("SELECT * FROM items WHERE id = ? LIMIT 1")) {
+                            selectItem.setInt(1, offer.getSoldItemId());
+                            try (ResultSet set = selectItem.executeQuery()) {
+                                while (set.next()) {
+                                    HabboItem item = Emulator.getGameEnvironment()
+                                            .getItemManager()
+                                            .loadHabboItem(set);
+                                    habbo.getInventory().getItemsComponent().addItem(item);
+                                    habbo.getClient().sendResponse(new MarketplaceCancelSaleComposer(offer, true));
+                                    habbo.getClient().sendResponse(new AddHabboItemComposer(item));
+                                    habbo.getClient().sendResponse(new InventoryRefreshComposer());
                                 }
                             }
                         }
@@ -155,70 +222,65 @@ public class MarketPlace {
         }
     }
 
+    private static boolean returnOfferItem(Connection connection, Habbo habbo, MarketPlaceOffer offer)
+            throws SQLException {
+        boolean autoCommit = connection.getAutoCommit();
+        connection.setAutoCommit(false);
+        try {
+            try (PreparedStatement statement =
+                    connection.prepareStatement("DELETE FROM marketplace_items WHERE id = ? AND state != 2")) {
+                statement.setInt(1, offer.getOfferId());
+                if (statement.executeUpdate() == 0) {
+                    connection.rollback();
+                    return false;
+                }
+            }
+
+            try (PreparedStatement updateItems =
+                    connection.prepareStatement("UPDATE items SET user_id = ? WHERE id = ? LIMIT 1")) {
+                updateItems.setInt(1, habbo.getHabboInfo().getId());
+                updateItems.setInt(2, offer.getSoldItemId());
+                if (updateItems.executeUpdate() != 1) {
+                    connection.rollback();
+                    LOGGER.warn(
+                            "Marketplace offer {} kept: its item {} is missing",
+                            offer.getOfferId(),
+                            offer.getSoldItemId());
+                    return false;
+                }
+            }
+
+            connection.commit();
+            return true;
+        } catch (SQLException | RuntimeException e) {
+            connection.rollback();
+            throw e;
+        } finally {
+            connection.setAutoCommit(autoCommit);
+        }
+    }
+
     public static List<MarketPlaceOffer> getOffers(int minPrice, int maxPrice, String search, int sort) {
+        return getOffers(minPrice, maxPrice, search, sort, false);
+    }
+
+    /**
+     * @param combineUniques the AIR 13 `combine_uniques_checkbox` of
+     *     `marketplace_search_simple`. When it is on, every serial of the same
+     *     limited-edition furni collapses into one row (grouped by base furni only); when
+     *     it is off, each serial keeps its own row, which is how the search has always
+     *     behaved here.
+     */
+    public static List<MarketPlaceOffer> getOffers(
+            int minPrice, int maxPrice, String search, int sort, boolean combineUniques) {
         List<MarketPlaceOffer> offers = new ArrayList<>(10);
-        String query =
-                "SELECT B.* FROM marketplace_items a INNER JOIN (SELECT b.item_id AS base_item_id, b.limited_data AS ltd_data, marketplace_items.*, AVG(price) as avg, MIN(marketplace_items.price) as minPrice, MAX(marketplace_items.price) as maxPrice, COUNT(*) as number, (SELECT COUNT(*) FROM marketplace_items c INNER JOIN items as items_b ON c.item_id = items_b.id WHERE state = 2 AND items_b.item_id = base_item_id AND DATE(from_unixtime(sold_timestamp)) = CURDATE()) as sold_count_today FROM marketplace_items INNER JOIN items b ON marketplace_items.item_id = b.id INNER JOIN items_base bi ON b.item_id = bi.id INNER JOIN catalog_items ci ON bi.id = ci.item_ids WHERE price = (SELECT MIN(e.price) FROM marketplace_items e, items d WHERE e.item_id = d.id AND d.item_id = b.item_id AND e.state = 1 AND e.timestamp > ? AND e.price BETWEEN ? AND ? GROUP BY d.item_id) AND state = 1 AND timestamp > ? AND marketplace_items.price BETWEEN ? AND ?";
-        if (minPrice > 0) {
-            query += " AND CEIL(price + (price / 100)) >= ?";
-        }
-        if (maxPrice > 0 && maxPrice > minPrice) {
-            query += " AND CEIL(price + (price / 100)) <= ?";
-        }
-        if (!search.isEmpty()) {
-            query += " AND ( bi.public_name LIKE ? OR ci.catalog_name LIKE ? ) ";
-        }
-
-        query += " GROUP BY base_item_id, ltd_data";
-
-        switch (sort) {
-            case 6:
-                query += " ORDER BY number ASC";
-                break;
-            case 5:
-                query += " ORDER BY number DESC";
-                break;
-            case 4:
-                query += " ORDER BY sold_count_today ASC";
-                break;
-            case 3:
-                query += " ORDER BY sold_count_today DESC";
-                break;
-            case 2:
-                query += " ORDER BY minPrice ASC";
-                break;
-            default:
-            case 1:
-                query += " ORDER BY minPrice DESC";
-                break;
-        }
-
-        query += ")";
-
-        query += " AS B ON a.id = B.id";
-
-        query += " LIMIT 250";
+        MarketplaceOffersQuery.Request request =
+                new MarketplaceOffersQuery.Request(minPrice, maxPrice, search, sort, combineUniques);
 
         try (Connection connection = Emulator.getDatabase().getDataSource().getConnection();
-                PreparedStatement statement = connection.prepareStatement(query)) {
-            int paramIndex = 1;
-            statement.setInt(paramIndex++, Emulator.getIntUnixTimestamp() - 172800);
-            statement.setInt(paramIndex++, MINIMUM_LISTING_PRICE);
-            statement.setInt(paramIndex++, MAXIMUM_LISTING_PRICE);
-            statement.setInt(paramIndex++, Emulator.getIntUnixTimestamp() - 172800);
-            statement.setInt(paramIndex++, MINIMUM_LISTING_PRICE);
-            statement.setInt(paramIndex++, MAXIMUM_LISTING_PRICE);
-            if (minPrice > 0) {
-                statement.setInt(paramIndex++, minPrice);
-            }
-            if (maxPrice > 0 && maxPrice > minPrice) {
-                statement.setInt(paramIndex++, maxPrice);
-            }
-            if (!search.isEmpty()) {
-                String likeSearch = "%" + com.eu.habbo.util.SqlLikeEscaper.escape(search) + "%";
-                statement.setString(paramIndex++, likeSearch);
-                statement.setString(paramIndex++, likeSearch);
-            }
+                PreparedStatement statement = connection.prepareStatement(MarketplaceOffersQuery.sql(request))) {
+            MarketplaceOffersQuery.bind(
+                    statement, request, Emulator.getIntUnixTimestamp(), MINIMUM_LISTING_PRICE, MAXIMUM_LISTING_PRICE);
 
             try (ResultSet set = statement.executeQuery()) {
                 while (set.next()) {
@@ -233,15 +295,30 @@ public class MarketPlace {
     }
 
     public static void serializeItemInfo(int itemId, ServerMessage message) {
+        serializeItemInfo(MarketplaceItemInfoComposer.CATEGORY_FLOOR, itemId, message);
+    }
+
+    /**
+     * MarketplaceItemStats: the history rows run oldest day first (the client draws them as one
+     * line), and the request's category and sprite id are echoed so the client accepts the answer.
+     * AIR's parser reads two more ints after those for its make-offer window: the lowest price an
+     * open offer of the furni asks right now (what buyers pay, like the average price) and the
+     * suggested asking price (see {@link #suggestedPrice}). Older clients stop reading before them.
+     */
+    public static void serializeItemInfo(int category, int itemId, ServerMessage message) {
+        int recentSalesAverage = averageLastXDays(itemId, 7);
+        int[] openOffers = openOffers(itemId);
+        int lowestOpenPrice = openOffers[1];
+
         try (Connection connection = Emulator.getDatabase().getDataSource().getConnection();
                 PreparedStatement statement = connection.prepareStatement(
-                        "SELECT avg(marketplace_items.price) as price, COUNT(*) as sold, (datediff(NOW(), DATE(from_unixtime(marketplace_items.timestamp)))) as day FROM marketplace_items INNER JOIN items ON items.id = marketplace_items.item_id INNER JOIN items_base ON items.item_id = items_base.id WHERE items.limited_data = '0:0' AND marketplace_items.state = 2 AND items_base.sprite_id = ? AND DATE(from_unixtime(marketplace_items.timestamp)) >= NOW() - INTERVAL 30 DAY GROUP BY DATE(from_unixtime(marketplace_items.timestamp))",
+                        "SELECT avg(marketplace_items.price) as price, COUNT(*) as sold, (datediff(NOW(), DATE(from_unixtime(marketplace_items.timestamp)))) as day FROM marketplace_items INNER JOIN items ON items.id = marketplace_items.item_id INNER JOIN items_base ON items.item_id = items_base.id WHERE items.limited_data = '0:0' AND marketplace_items.state = 2 AND items_base.sprite_id = ? AND DATE(from_unixtime(marketplace_items.timestamp)) >= NOW() - INTERVAL 30 DAY GROUP BY DATE(from_unixtime(marketplace_items.timestamp)) ORDER BY DATE(from_unixtime(marketplace_items.timestamp)) ASC",
                         ResultSet.TYPE_SCROLL_INSENSITIVE,
                         ResultSet.CONCUR_READ_ONLY)) {
             statement.setInt(1, itemId);
 
-            message.appendInt(avarageLastXDays(itemId, 7));
-            message.appendInt(itemsOnSale(itemId));
+            message.appendInt(calculateCommision(recentSalesAverage));
+            message.appendInt(openOffers[0]);
             message.appendInt(30);
 
             try (ResultSet set = statement.executeQuery()) {
@@ -256,34 +333,63 @@ public class MarketPlace {
                 }
             }
 
-            message.appendInt(1);
+            message.appendInt(category);
             message.appendInt(itemId);
+            message.appendInt(lowestOpenPrice > 0 ? calculateCommision(lowestOpenPrice) : 0);
+            message.appendInt(suggestedPrice(recentSalesAverage, lowestOpenPrice));
         } catch (SQLException e) {
             LOGGER.error("Caught SQL exception", e);
         }
     }
 
     public static int itemsOnSale(int baseItemId) {
+        return openOffers(baseItemId)[0];
+    }
+
+    /**
+     * The furni's open, unexpired offers: {@code [count, lowest asking price]}, the price without
+     * commission and 0 when there is no offer.
+     */
+    private static int[] openOffers(int baseItemId) {
         int number = 0;
+        int lowest = 0;
         try (Connection connection = Emulator.getDatabase().getDataSource().getConnection();
                 PreparedStatement statement = connection.prepareStatement(
-                        "SELECT COUNT(*) as number, AVG(price) as avg FROM marketplace_items INNER JOIN items ON marketplace_items.item_id = items.id INNER JOIN items_base ON items.item_id = items_base.id WHERE state = 1 AND timestamp >= ? AND items_base.sprite_id = ?",
+                        "SELECT COUNT(*) as number, MIN(price) as lowest FROM marketplace_items INNER JOIN items ON marketplace_items.item_id = items.id INNER JOIN items_base ON items.item_id = items_base.id WHERE state = 1 AND timestamp >= ? AND items_base.sprite_id = ?",
                         ResultSet.TYPE_SCROLL_INSENSITIVE,
                         ResultSet.CONCUR_READ_ONLY)) {
             statement.setInt(1, Emulator.getIntUnixTimestamp() - 172800);
             statement.setInt(2, baseItemId);
             try (ResultSet set = statement.executeQuery()) {
-                set.first();
-                number = set.getInt("number");
+                if (set.first()) {
+                    number = set.getInt("number");
+                    lowest = set.getInt("lowest");
+                }
             }
         } catch (SQLException e) {
             LOGGER.error("Caught SQL exception", e);
         }
 
-        return number;
+        return new int[] {number, lowest};
     }
 
-    private static int avarageLastXDays(int baseItemId, int days) {
+    /**
+     * The asking price AIR's "copy suggested price" button puts into the make-offer window. Here an
+     * asking price is what the seller receives (buyers pay the commission on top), so the suggestion
+     * is in that unit: the average price of the furni's sales in the last week or, without recent
+     * sales, the lowest asking price of its open offers. Zero when there is neither, which hides the
+     * suggestion line and the copy button.
+     */
+    public static int suggestedPrice(int recentSalesAverage, int lowestOpenPrice) {
+        if (recentSalesAverage > 0) {
+            return recentSalesAverage;
+        }
+
+        return Math.max(lowestOpenPrice, 0);
+    }
+
+    /** The average sale price (without commission) of the furni over the last {@code days} days; 0 when none. */
+    private static int averageLastXDays(int baseItemId, int days) {
         int avg = 0;
         try (Connection connection = Emulator.getDatabase().getDataSource().getConnection();
                 PreparedStatement statement = connection.prepareStatement(
@@ -301,7 +407,7 @@ public class MarketPlace {
             LOGGER.error("Caught SQL exception", e);
         }
 
-        return calculateCommision(avg);
+        return avg;
     }
 
     public static void buyItem(int offerId, GameClient client) {
@@ -325,7 +431,18 @@ public class MarketPlace {
                                     }
 
                                     int price = MarketPlace.calculateCommision(rawPrice);
-                                    if (set.getInt("state") != 1) {
+                                    // An offer past the listing window no longer appears in
+                                    // the marketplace and its furni can be redeemed by the
+                                    // seller, but it stays state = 1: buying one by id used
+                                    // to work. An offer of the buyer's own was never
+                                    // refused either, which moved credits to themselves
+                                    // minus the commission.
+                                    boolean expired = set.getInt("timestamp")
+                                            < Emulator.getIntUnixTimestamp()
+                                                    - MarketplaceOffersQuery.LISTING_WINDOW_SECONDS;
+                                    boolean ownOffer = set.getInt("user_id")
+                                            == client.getHabbo().getHabboInfo().getId();
+                                    if (set.getInt("state") != 1 || expired || ownOffer) {
                                         sendErrorMessage(client, set.getInt("item_id"), offerId);
                                     } else if ((MARKETPLACE_CURRENCY == 0
                                                     && price
@@ -412,6 +529,8 @@ public class MarketPlace {
                                             if (offer != null) {
                                                 offer.setState(MarketPlaceState.SOLD);
                                                 offer.setSoldTimestamp(soldTimestamp);
+                                                // AIR: the sale waits in the seller's earnings window.
+                                                EarningsNotifications.newReward(habbo, EarningsCategory.MARKETPLACE);
                                             }
                                         }
                                     }
@@ -463,7 +582,10 @@ public class MarketPlace {
     public static boolean sellItem(GameClient client, HabboItem item, int price) {
         if (item == null || client == null) return false;
 
-        if (!item.getBaseItem().allowMarketplace() || !isValidListingPrice(price)) return false;
+        // A rented item expires back to the hotel: listing it sells a loan.
+        if (!item.getBaseItem().allowMarketplace() || item.hasRentPeriod() || !isValidListingPrice(price)) {
+            return false;
+        }
 
         MarketPlaceItemOfferedEvent event = new MarketPlaceItemOfferedEvent(client.getHabbo(), item, price);
         if (Emulator.getPluginManager().fireEvent(event).isCancelled()) {
@@ -472,19 +594,25 @@ public class MarketPlace {
 
         RequestOffersEvent.cachedResults.clear();
 
-        client.sendResponse(new RemoveHabboItemComposer(event.item.getGiftAdjustedId()));
-        client.sendResponse(new InventoryRefreshComposer());
+        // The client is told the item left only once the offer is saved: a failed insert kept the item on the server
+        // while the client showed it gone until the next refresh.
+        int clientItemId = event.item.getGiftAdjustedId();
+        boolean fromGift = event.item.isFromGift();
 
         event.item.setFromGift(false);
 
         MarketPlaceOffer offer = new MarketPlaceOffer(event.item, event.price, client.getHabbo());
         if (!offer.isPersisted()) {
+            event.item.setFromGift(fromGift);
             LOGGER.warn(
                     "Marketplace offer insert failed for user {} item {}",
                     client.getHabbo().getHabboInfo().getId(),
                     event.item.getId());
             return false;
         }
+
+        client.sendResponse(new RemoveHabboItemComposer(clientItemId));
+        client.sendResponse(new InventoryRefreshComposer());
 
         client.getHabbo().getInventory().addMarketplaceOffer(offer);
         client.getHabbo().getInventory().getItemsComponent().removeHabboItem(event.item);
@@ -496,6 +624,13 @@ public class MarketPlace {
     }
 
     public static void getCredits(GameClient client) {
+        claimSoldCredits(client);
+    }
+
+    /**
+     * Pays the seller what their sold offers earned and returns the amount paid (0 when nothing was paid).
+     */
+    public static int claimSoldCredits(GameClient client) {
         Set<MarketPlaceOffer> offers = new HashSet<>();
         offers.addAll(client.getHabbo().getInventory().getMarketplaceItems());
 
@@ -504,7 +639,7 @@ public class MarketPlace {
             if (offer.getState().equals(MarketPlaceState.SOLD)) {
                 if (offer.getPrice() < 0) {
                     LOGGER.warn("Rejected negative marketplace payout for offer {}", offer.getOfferId());
-                    return;
+                    return 0;
                 }
                 claimable += offer.getPrice();
             }
@@ -518,7 +653,7 @@ public class MarketPlace {
                     "Marketplace payout for user {} exceeds wallet range: {}",
                     client.getHabbo().getHabboInfo().getId(),
                     claimable);
-            return;
+            return 0;
         }
         try {
             WalletBalanceMath.checkedBalance(currentBalance, (int) claimable);
@@ -528,19 +663,20 @@ public class MarketPlace {
                     client.getHabbo().getHabboInfo().getId(),
                     currentBalance,
                     claimable);
-            return;
+            return 0;
         }
 
         int credits = 0;
+        int sellerId = client.getHabbo().getHabboInfo().getId();
+        List<MarketPlaceOffer> claimed = new ArrayList<>();
 
         synchronized (client.getHabbo().getInventory()) {
             for (MarketPlaceOffer offer : offers) {
                 if (offer.getState().equals(MarketPlaceState.SOLD)) {
-                    if (removeUser(offer)) {
+                    if (removeUser(offer, sellerId)) {
                         client.getHabbo().getInventory().removeMarketplaceOffer(offer);
                         credits = WalletBalanceMath.checkedBalance(credits, offer.getPrice());
-                        offer.needsUpdate(true);
-                        Emulator.getThreading().run(offer);
+                        claimed.add(offer);
                     }
                 }
             }
@@ -548,19 +684,78 @@ public class MarketPlace {
 
         offers.clear();
 
-        if (MARKETPLACE_CURRENCY == 0) {
-            client.getHabbo().giveCredits(credits);
-        } else {
-            client.getHabbo().givePoints(MARKETPLACE_CURRENCY, credits);
+        if (claimed.isEmpty() || credits == 0) {
+            return 0;
+        }
+
+        // The payout says whether it happened (a plugin or the ledger can refuse it). When it did not, the offers are
+        // handed back as unclaimed: they used to stay claimed with nothing paid and no way to claim them again.
+        String operationId = EconomyOperationId.create("marketplace-payout:" + sellerId);
+        boolean paid = MARKETPLACE_CURRENCY == 0
+                ? client.getHabbo().applyCredits(credits, "marketplace.payout", operationId, sellerId)
+                : client.getHabbo()
+                        .applyPoints(MARKETPLACE_CURRENCY, credits, "marketplace.payout", operationId, sellerId);
+
+        if (!paid) {
+            synchronized (client.getHabbo().getInventory()) {
+                for (MarketPlaceOffer offer : claimed) {
+                    if (releaseClaim(offer, sellerId)) {
+                        client.getHabbo().getInventory().addMarketplaceOffer(offer);
+                    }
+                }
+            }
+            LOGGER.warn("Marketplace payout of {} refused for user {}; offers released", credits, sellerId);
+            return 0;
+        }
+
+        for (MarketPlaceOffer offer : claimed) {
+            offer.needsUpdate(true);
+            Emulator.getThreading().run(offer);
+        }
+
+        return credits;
+    }
+
+    /** The claim methods share one way to the database. */
+    private static Connection openConnection() throws SQLException {
+        return Emulator.getDatabase().getDataSource().getConnection();
+    }
+
+    /** Undoes {@link #removeUser} for an offer whose payout did not go through. */
+    private static boolean releaseClaim(MarketPlaceOffer offer, int sellerId) {
+        try (Connection connection = openConnection();
+                PreparedStatement statement = connection.prepareStatement(
+                        "UPDATE marketplace_items SET seller_claimed = 0 WHERE id = ? AND user_id = ? AND seller_claimed = 1")) {
+            statement.setInt(1, offer.getOfferId());
+            statement.setInt(2, sellerId);
+            return statement.executeUpdate() > 0;
+        } catch (SQLException e) {
+            LOGGER.error("Marketplace claim of offer {} could not be released", offer.getOfferId(), e);
+            return false;
         }
     }
 
-    private static boolean removeUser(MarketPlaceOffer offer) {
-        try (Connection connection = Emulator.getDatabase().getDataSource().getConnection();
-                PreparedStatement statement =
-                        connection.prepareStatement("UPDATE marketplace_items SET user_id = ? WHERE id = ?")) {
-            statement.setInt(1, -1);
-            statement.setInt(2, offer.getOfferId());
+    /**
+     * Takes a sold offer's proceeds, once.
+     *
+     * <p>The offer is marked as paid out with {@code seller_claimed}. It used to be detached by setting its
+     * {@code user_id} to -1, which a database with the {@code fk_market_user} foreign key refuses, so the seller
+     * was never paid. The row keeps its seller and its sold state, so the price history still counts the sale.
+     *
+     * <p>The update carried no condition beyond the id, so two sessions of the same
+     * seller could each claim the same sold offer and each be paid for it. Keyed on the
+     * seller and the sold state, only the first one gets the row - and an offer that is
+     * not this user's, or not sold, is never claimable at all.
+     *
+     * @return whether this caller is the one that claimed it
+     */
+    private static boolean removeUser(MarketPlaceOffer offer, int sellerId) {
+        try (Connection connection = openConnection();
+                PreparedStatement statement = connection.prepareStatement(
+                        "UPDATE marketplace_items SET seller_claimed = 1 WHERE id = ? AND user_id = ? AND state = ? AND seller_claimed = 0")) {
+            statement.setInt(1, offer.getOfferId());
+            statement.setInt(2, sellerId);
+            statement.setInt(3, MarketPlaceState.SOLD.getState());
             return statement.executeUpdate() > 0;
         } catch (SQLException e) {
             LOGGER.error("Caught SQL exception", e);

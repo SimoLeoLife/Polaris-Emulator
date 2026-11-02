@@ -5,7 +5,9 @@ import com.eu.habbo.habbohotel.commands.FurniDataCommand;
 import com.eu.habbo.habbohotel.items.interactions.InteractionDice;
 import com.eu.habbo.habbohotel.items.interactions.pets.InteractionMonsterPlantSeed;
 import com.eu.habbo.habbohotel.pets.MonsterplantPet;
+import com.eu.habbo.habbohotel.rooms.BuildersClubItemIds;
 import com.eu.habbo.habbohotel.rooms.Room;
+import com.eu.habbo.habbohotel.rooms.RoomPlayTestSupport;
 import com.eu.habbo.habbohotel.users.HabboItem;
 import com.eu.habbo.habbohotel.wired.core.WiredManager;
 import com.eu.habbo.messages.incoming.MessageHandler;
@@ -24,7 +26,14 @@ public class ToggleFloorItemEvent extends MessageHandler {
     private static final Logger LOGGER = LoggerFactory.getLogger(ToggleFloorItemEvent.class);
 
     private static HashSet<String> PET_BOXES = new HashSet<>(Arrays.asList(
-            "val11_present", "gnome_box", "leprechaun_box", "velociraptor_egg", "pterosaur_egg", "petbox_epic"));
+            "val11_present",
+            "gnome_box",
+            "leprechaun_box",
+            "velociraptor_egg",
+            "pterosaur_egg",
+            "petbox_epic",
+            "cowbox",
+            "cowbox_gold"));
 
     @Override
     public int getRatelimit() {
@@ -38,7 +47,7 @@ public class ToggleFloorItemEvent extends MessageHandler {
 
             if (room == null) return;
 
-            int itemId = this.packet.readInt();
+            int itemId = BuildersClubItemIds.fromWire(this.currentRoom(), this.packet.readInt());
             int state = this.packet.readInt();
 
             if (!RoomItemInputGuard.isPositiveId(itemId)) return;
@@ -51,6 +60,10 @@ public class ToggleFloorItemEvent extends MessageHandler {
                 this.client.getHabbo().alert(FurniDataCommand.buildItemInfo(item, state));
                 return;
             }
+
+            // AIR playtest mode: only furni that everybody may use (usage policy 2) can be used, so a
+            // wired box does not open its editor either.
+            if (!RoomPlayTestSupport.mayUse(this.client.getHabbo(), item)) return;
 
             WiredManager.cancelPendingUserClicksFurni(
                     room, this.client.getHabbo().getRoomUnit(), item);
@@ -113,21 +126,26 @@ public class ToggleFloorItemEvent extends MessageHandler {
                     return;
                 }
 
-                Emulator.getThreading().runPersistence(new QueryDeleteHabboItem(item.getId()));
-
+                // The rarity is read before the seed is claimed: extradata that is not a number used to
+                // throw here after the claim and the delete, and the seed was gone with no plant.
                 boolean isRare = item.getBaseItem().getName().contains("rare");
-                int rarity = 0;
+                int rarity = seedRarity(item.getExtradata());
 
-                if (item.getExtradata().isEmpty() || Integer.parseInt(item.getExtradata()) - 1 < 0) {
+                if (rarity < 0) {
                     rarity = isRare
                             ? InteractionMonsterPlantSeed.randomGoldenRarityLevel()
                             : InteractionMonsterPlantSeed.randomRarityLevel();
-                } else {
-                    try {
-                        rarity = Integer.parseInt(item.getExtradata()) - 1;
-                    } catch (Exception e) {
-                    }
                 }
+
+                // Claim the seed before anything is created from it: a pickup or a room
+                // eviction racing this used to leave the seed alive in an inventory while
+                // its row was already deleted, so it could be placed and grown again.
+                if (!room.claimItem(item)) {
+                    return;
+                }
+
+                Emulator.getThreading().runPersistence(new QueryDeleteHabboItem(item.getId()));
+
                 MonsterplantPet pet = Emulator.getGameEnvironment()
                         .getPetManager()
                         .createMonsterplant(
@@ -137,7 +155,6 @@ public class ToggleFloorItemEvent extends MessageHandler {
                                 room.getLayout().getTile(item.getX(), item.getY()),
                                 rarity);
                 room.sendComposer(new RemoveFloorItemComposer(item, true).compose());
-                room.removeHabboItem(item);
                 room.updateTile(room.getLayout().getTile(item.getX(), item.getY()));
                 room.placePet(pet, item.getX(), item.getY(), item.getZ(), item.getRotation());
                 pet.cycle();
@@ -151,9 +168,23 @@ public class ToggleFloorItemEvent extends MessageHandler {
                 return;
             }
 
+            String previousState = item.getExtradata();
             item.onClick(this.client, room, new Object[] {state});
+            if (!java.util.Objects.equals(previousState, item.getExtradata())) {
+                com.eu.habbo.habbohotel.quests.QuestProgressEvents.progress(
+                        this.client.getHabbo(), com.eu.habbo.habbohotel.quests.QuestGoalType.USE_FURNI, 1);
+            }
         } catch (Exception e) {
             LOGGER.error("Caught exception", e);
+        }
+    }
+
+    /** The rarity a seed's extradata asks for, or -1 for a random one (empty, zero or not a number). */
+    static int seedRarity(String extradata) {
+        try {
+            return Integer.parseInt(extradata.trim()) - 1;
+        } catch (RuntimeException e) {
+            return -1;
         }
     }
 }

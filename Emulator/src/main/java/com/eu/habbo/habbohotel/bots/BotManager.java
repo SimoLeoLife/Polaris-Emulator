@@ -163,7 +163,8 @@ public class BotManager {
                 }
 
                 RoomUnit roomUnit = new RoomUnit();
-                roomUnit.setRotation(RoomUserRotation.SOUTH);
+                // AIR: a placed bot faces direction 2.
+                roomUnit.setRotation(RoomUserRotation.EAST);
                 roomUnit.setLocation(location);
 
                 double stackHeight = room.getTopHeightAt(location.x, location.y);
@@ -248,9 +249,13 @@ public class BotManager {
                 bot.needsUpdate(true);
                 Emulator.getThreading().run(bot);
 
-                Habbo receiver = habbo == null
-                        ? Emulator.getGameEnvironment().getHabboManager().getHabbo(receiverInfo.getId())
-                        : habbo;
+                // The bot goes back to its owner, who may not be the one picking it up (a room owner
+                // or staff clearing a visitor's bot): handing it to the picker left two copies of the
+                // same bot id, one in their inventory while the database named the visitor.
+                Habbo receiver = receiverInfo.getId()
+                                == (habbo == null ? -1 : habbo.getHabboInfo().getId())
+                        ? habbo
+                        : Emulator.getGameEnvironment().getHabboManager().getHabbo(receiverInfo.getId());
                 if (receiver != null) {
                     receiver.getInventory().getBotsComponent().addBot(bot);
                     receiver.getClient().sendResponse(new AddBotComposer(bot));

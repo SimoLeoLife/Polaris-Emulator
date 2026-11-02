@@ -14,7 +14,6 @@ import com.eu.habbo.habbohotel.wired.core.WiredEvent;
 import com.eu.habbo.habbohotel.wired.core.WiredManager;
 import com.eu.habbo.habbohotel.wired.tick.WiredTickable;
 import com.eu.habbo.messages.ServerMessage;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
@@ -28,6 +27,9 @@ import java.util.List;
  * </p>
  */
 public class WiredTriggerRepeater extends InteractionWiredTrigger implements WiredTickable, WiredTriggerReset {
+    /** Shared with the short repeater, which ticks through the same reset. */
+    final WiredRepeaterPhase phase = new WiredRepeaterPhase();
+
     public static final WiredTriggerType type = WiredTriggerType.PERIODICALLY;
     public static final int DEFAULT_DELAY = 10 * 500; // 5 seconds default
     private static final int STEP_MS = 500;
@@ -78,7 +80,8 @@ public class WiredTriggerRepeater extends InteractionWiredTrigger implements Wir
             storedRepeatTime = null;
         }
 
-        this.repeatTime = WiredTimerInputGuard.normalizeStoredMillis(storedRepeatTime, MIN_DELAY, LEGACY_FALLBACK_DELAY);
+        this.repeatTime =
+                WiredTimerInputGuard.normalizeStoredMillis(storedRepeatTime, MIN_DELAY, LEGACY_FALLBACK_DELAY);
     }
 
     @Override
@@ -135,11 +138,13 @@ public class WiredTriggerRepeater extends InteractionWiredTrigger implements Wir
         // Calculate elapsed time based on global tick count
         // All repeaters with the same interval fire on the exact same tick
         long elapsedMs = tickCount * tickIntervalMs;
-        
+
         // Fire when elapsed time is a multiple of repeatTime
-        if (elapsedMs % this.repeatTime == 0) {
-            long currentTime = System.currentTimeMillis();
-            if (this.getRoomId() != 0 && room.isLoaded()
+        long currentTime = System.currentTimeMillis();
+        if (this.phase.shouldFire(
+                elapsedMs % this.repeatTime == 0, room.getCycleTimestamp(), currentTime, this.repeatTime)) {
+            if (this.getRoomId() != 0
+                    && room.isLoaded()
                     && WiredManager.isTriggerExecutionAllowed(room, this, currentTime)) {
                 WiredManager.triggerTimerRepeat(room, this);
             }
@@ -148,7 +153,7 @@ public class WiredTriggerRepeater extends InteractionWiredTrigger implements Wir
 
     @Override
     public void resetTimer() {
-        // No-op - using global tick count, no local state to reset
+        this.phase.reset(System.currentTimeMillis());
     }
 
     @Override

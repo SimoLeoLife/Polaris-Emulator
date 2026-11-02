@@ -6,14 +6,13 @@ import com.eu.habbo.habbohotel.users.HabboInfo;
 import com.eu.habbo.messages.incoming.MessageHandler;
 import com.eu.habbo.messages.outgoing.camera.CameraPublishWaitMessageComposer;
 import com.eu.habbo.messages.outgoing.catalog.NotEnoughPointsTypeComposer;
-import com.eu.habbo.plugin.events.users.UserPublishPictureEvent;
 import com.eu.habbo.plugin.PluginEventInputGuard;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
+import com.eu.habbo.plugin.events.users.UserPublishPictureEvent;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class CameraPublishToWebEvent extends MessageHandler {
     private static final Logger LOGGER = LoggerFactory.getLogger(CameraPublishToWebEvent.class);
@@ -31,7 +30,8 @@ public class CameraPublishToWebEvent extends MessageHandler {
 
         int points = habboInfo.getCurrencyAmount(CAMERA_PUBLISH_POINTS_TYPE);
         if (points < CAMERA_PUBLISH_POINTS) {
-            String currencyName = Emulator.getTexts().getValue("seasonal.name." + CAMERA_PUBLISH_POINTS_TYPE, "currency");
+            String currencyName =
+                    Emulator.getTexts().getValue("seasonal.name." + CAMERA_PUBLISH_POINTS_TYPE, "currency");
             habbo.alert("You don't have enough " + currencyName + "!");
             this.client.sendResponse(new NotEnoughPointsTypeComposer(false, true, CAMERA_PUBLISH_POINTS_TYPE));
             return;
@@ -39,8 +39,17 @@ public class CameraPublishToWebEvent extends MessageHandler {
 
         int photoTimestamp = habboInfo.getPhotoTimestamp();
         String photoJSON = habboInfo.getPhotoJSON();
-        if (photoTimestamp == 0 || photoJSON.isEmpty() || !photoJSON.contains(Integer.toString(photoTimestamp)))
+        if (photoTimestamp == 0
+                || photoJSON == null
+                || photoJSON.isEmpty()
+                || !photoJSON.contains(Integer.toString(photoTimestamp))) return;
+
+        if (!CameraPurchaseEvent.isInPhotoRoom(habboInfo)) {
+            LOGGER.warn(
+                    "Camera publish for {} aborted: the user left the room the photo was taken in.",
+                    habboInfo.getUsername());
             return;
+        }
 
         int currentTimestamp = Emulator.getIntUnixTimestamp();
         int timeSinceLastPublish = currentTimestamp - habboInfo.getWebPublishTimestamp();
@@ -49,24 +58,46 @@ public class CameraPublishToWebEvent extends MessageHandler {
             int wait = CAMERA_PUBLISH_DELAY - timeSinceLastPublish;
             this.client.sendResponse(new CameraPublishWaitMessageComposer(false, wait, habboInfo.getPhotoURL()));
         } else {
-            UserPublishPictureEvent publishPictureEvent = new UserPublishPictureEvent(habbo, habboInfo.getPhotoURL(), currentTimestamp, habboInfo.getPhotoRoomId());
+            UserPublishPictureEvent publishPictureEvent = new UserPublishPictureEvent(
+                    habbo, habboInfo.getPhotoURL(), currentTimestamp, habboInfo.getPhotoRoomId());
 
             if (!Emulator.getPluginManager().fireEvent(publishPictureEvent).isCancelled()) {
                 if (!PluginEventInputGuard.isPositiveId(publishPictureEvent.roomId)
-                        || Emulator.getGameEnvironment().getRoomManager().loadRoom(publishPictureEvent.roomId) == null) {
+                        || Emulator.getGameEnvironment().getRoomManager().loadRoom(publishPictureEvent.roomId)
+                                == null) {
                     return;
                 }
 
-                try (Connection connection = Emulator.getDatabase().getDataSource().getConnection();
-                     PreparedStatement statement = connection.prepareStatement("INSERT INTO camera_web (user_id, room_id, timestamp, url) VALUES (?, ?, ?, ?)")) {
+                // Take the publish slot atomically: of two packets racing past the delay check
+                // above, only one publishes and pays.
+                int previousPublish = habboInfo.claimWebPublish(currentTimestamp, CAMERA_PUBLISH_DELAY);
+                if (previousPublish < 0) return;
+
+                // The points are taken first and must really go: the void givePoints after the insert hid a refused
+                // debit (a plugin, the ledger), and the photo was published for free.
+                boolean charged = CAMERA_PUBLISH_POINTS > 0;
+                if (charged && !habbo.tryTakePoints(CAMERA_PUBLISH_POINTS_TYPE, CAMERA_PUBLISH_POINTS)) {
+                    habboInfo.releaseWebPublish(currentTimestamp, previousPublish);
+                    this.client.sendResponse(new NotEnoughPointsTypeComposer(false, true, CAMERA_PUBLISH_POINTS_TYPE));
+                    return;
+                }
+
+                try (Connection connection =
+                                Emulator.getDatabase().getDataSource().getConnection();
+                        PreparedStatement statement = connection.prepareStatement(
+                                "INSERT INTO camera_web (user_id, room_id, timestamp, url) VALUES (?, ?, ?, ?)")) {
                     statement.setInt(1, habboInfo.getId());
                     statement.setInt(2, publishPictureEvent.roomId);
                     statement.setInt(3, publishPictureEvent.timestamp);
                     statement.setString(4, publishPictureEvent.URL);
                     statement.execute();
-                    habboInfo.setWebPublishTimestamp(currentTimestamp);
-                    habbo.givePoints(CAMERA_PUBLISH_POINTS_TYPE, -CAMERA_PUBLISH_POINTS);
+                    com.eu.habbo.habbohotel.quests.QuestProgressEvents.progress(
+                            habbo, com.eu.habbo.habbohotel.quests.QuestGoalType.PUBLISH_PICTURE, 1);
                 } catch (SQLException e) {
+                    habboInfo.releaseWebPublish(currentTimestamp, previousPublish);
+                    if (charged) {
+                        habbo.givePoints(CAMERA_PUBLISH_POINTS_TYPE, CAMERA_PUBLISH_POINTS, "camera.publish.refund");
+                    }
                     LOGGER.error("Caught SQL exception", e);
                 }
             }

@@ -5,6 +5,7 @@ import com.eu.habbo.habbohotel.bots.Bot;
 import com.eu.habbo.habbohotel.gameclients.GameClient;
 import com.eu.habbo.habbohotel.items.Item;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredEffect;
+import com.eu.habbo.habbohotel.items.interactions.wired.WiredInputGuard;
 import com.eu.habbo.habbohotel.items.interactions.wired.WiredSettings;
 import com.eu.habbo.habbohotel.rooms.Room;
 import com.eu.habbo.habbohotel.rooms.RoomUnit;
@@ -12,15 +13,16 @@ import com.eu.habbo.habbohotel.wired.WiredEffectType;
 import com.eu.habbo.habbohotel.wired.core.WiredBotSourceUtil;
 import com.eu.habbo.habbohotel.wired.core.WiredContext;
 import com.eu.habbo.habbohotel.wired.core.WiredManager;
+import com.eu.habbo.habbohotel.wired.protocol.WiredOfficialSources;
 import com.eu.habbo.messages.ServerMessage;
+import com.eu.habbo.messages.incoming.rooms.items.RoomItemInputGuard;
 import com.eu.habbo.messages.incoming.wired.WiredSaveException;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.List;
 import java.util.regex.Pattern;
 
-public class WiredEffectBotClothes extends InteractionWiredEffect {
+public class WiredEffectBotClothes extends InteractionWiredEffect implements WiredOfficialSources {
     public static final WiredEffectType type = WiredEffectType.BOT_CLOTHES;
 
     private String botName = "";
@@ -43,8 +45,7 @@ public class WiredEffectBotClothes extends InteractionWiredEffect {
         message.appendInt(this.getBaseItem().getSpriteId());
         message.appendInt(this.getId());
         message.appendString(this.botName + ((char) 9) + "" + this.botLook);
-        message.appendInt(1);
-        message.appendInt(this.botSource);
+        message.appendInt(0);
         message.appendInt(0);
         message.appendInt(this.getType().code);
         message.appendInt(this.getDelay());
@@ -52,24 +53,41 @@ public class WiredEffectBotClothes extends InteractionWiredEffect {
     }
 
     @Override
+    public int[] officialFurniSources() {
+        return new int[0];
+    }
+
+    @Override
+    public int[] officialUserSources() {
+        return new int[] {this.botSource};
+    }
+
+    @Override
     public boolean saveData(WiredSettings settings, GameClient gameClient) throws WiredSaveException {
         String dataString = settings.getStringParam();
         int delay = settings.getDelay();
 
-        if(delay > Emulator.getConfig().getInt("hotel.wired.max_delay", 20))
+        if (delay > Emulator.getConfig().getInt("hotel.wired.max_delay", WiredInputGuard.DEFAULT_MAX_DELAY))
             throw new WiredSaveException("Delay too long");
 
         String splitBy = "\t";
-        if(!dataString.contains(splitBy))
-            throw new WiredSaveException("Malformed data string");
+        if (!dataString.contains(splitBy)) throw new WiredSaveException("Malformed data string");
 
-        String[] data = dataString.split(Pattern.quote(splitBy));
+        // AIR saves "name\t" with no figure too (stored empty; it then dresses nobody).
+        String[] data = dataString.split(Pattern.quote(splitBy), -1);
 
-        if (data.length != 2)
-            throw new WiredSaveException("Malformed data string. Invalid data length");
+        if (data.length != 2) throw new WiredSaveException("Malformed data string. Invalid data length");
 
-        this.botSource = (settings.getIntParams().length > 0) ? WiredBotSourceUtil.normalizeBotSource(settings.getIntParams()[0]) : WiredBotSourceUtil.SOURCE_BOT_NAME;
-        this.botName = data[0].substring(0, Math.min(data[0].length(), Emulator.getConfig().getInt("hotel.wired.message.max_length", 100)));
+        // The look goes straight onto the bot and out to everyone in the room; a malformed one is
+        // refused here rather than broadcast.
+        if (!data[1].isEmpty() && !RoomItemInputGuard.isValidFigure(data[1]))
+            throw new WiredSaveException("Invalid figure");
+
+        // Official: "name\tfigure", no int params; the bots are user slot 0.
+        this.botSource =
+                WiredBotSourceUtil.normalizeBotSource(settings.userSource(0, WiredBotSourceUtil.SOURCE_BOT_NAME));
+        this.botName = data[0].substring(
+                0, Math.min(data[0].length(), Emulator.getConfig().getInt("hotel.wired.message.max_length", 100)));
         this.botLook = data[1];
         this.setDelay(delay);
 
@@ -83,10 +101,15 @@ public class WiredEffectBotClothes extends InteractionWiredEffect {
 
     @Override
     public void execute(WiredContext ctx) {
+        if (!RoomItemInputGuard.isValidFigure(this.botLook)) return;
+
         Room room = ctx.room();
         List<Bot> bots = WiredBotSourceUtil.resolveBots(ctx, room, this.botSource, this.botName);
 
         for (Bot bot : bots) {
+            // The new look is saved with the bot, so a visitor's bot placed here is left as its owner made it.
+            if (bot.getOwnerId() != room.getOwnerId()) continue;
+
             bot.setFigure(this.botLook);
         }
     }
@@ -107,21 +130,20 @@ public class WiredEffectBotClothes extends InteractionWiredEffect {
         String wiredData = set.getString("wired_data");
 
         JsonData jsonData = WiredEffectPayloadGuard.fromJson(wiredData, JsonData.class);
-        if(jsonData != null) {
+        if (jsonData != null) {
             this.setDelay(WiredEffectPayloadGuard.delay(jsonData.delay));
             this.botName = WiredEffectPayloadGuard.text(jsonData.bot_name);
-            this.botLook = jsonData.look != null ? jsonData.look : "";
+            this.botLook = RoomItemInputGuard.isValidFigure(jsonData.look) ? jsonData.look : "";
             this.botSource = (jsonData.botSource != null)
                     ? WiredBotSourceUtil.normalizeBotSource(jsonData.botSource)
                     : WiredBotSourceUtil.SOURCE_BOT_NAME;
-        }
-        else {
+        } else {
             String[] data = wiredData != null ? wiredData.split(((char) 9) + "") : new String[0];
 
             if (data.length >= 3) {
                 this.setDelay(WiredEffectPayloadGuard.parseDelay(data[0]));
                 this.botName = WiredEffectPayloadGuard.text(data[1]);
-                this.botLook = data[2];
+                this.botLook = RoomItemInputGuard.isValidFigure(data[2]) ? data[2] : "";
             }
 
             this.needsUpdate(true);

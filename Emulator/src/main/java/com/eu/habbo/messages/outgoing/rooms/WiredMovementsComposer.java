@@ -1,12 +1,16 @@
 package com.eu.habbo.messages.outgoing.rooms;
 
+import com.eu.habbo.habbohotel.rooms.BuildersClubItemIds;
 import com.eu.habbo.messages.ServerMessage;
 import com.eu.habbo.messages.outgoing.MessageComposer;
 import com.eu.habbo.messages.outgoing.Outgoing;
-
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 public class WiredMovementsComposer extends MessageComposer {
@@ -42,28 +46,24 @@ public class WiredMovementsComposer extends MessageComposer {
         return this.response;
     }
 
-    private static List<MovementData> normalizeMovements(List<MovementData> source)
-    {
-        if((source == null) || source.isEmpty()) return new ArrayList<>();
+    private static List<MovementData> normalizeMovements(List<MovementData> source) {
+        if ((source == null) || source.isEmpty()) return new ArrayList<>();
 
         final LinkedHashMap<String, MovementData> normalized = new LinkedHashMap<>();
 
-        for(final MovementData movement : source)
-        {
-            if(movement == null) continue;
+        for (final MovementData movement : source) {
+            if (movement == null) continue;
 
             final String key = movementKey(movement);
 
-            if(key == null)
-            {
+            if (key == null) {
                 normalized.put(UUID.randomUUID().toString(), movement);
                 continue;
             }
 
             final MovementData existing = normalized.get(key);
 
-            if(existing == null)
-            {
+            if (existing == null) {
                 normalized.put(key, movement);
                 continue;
             }
@@ -74,70 +74,119 @@ public class WiredMovementsComposer extends MessageComposer {
         return new ArrayList<>(normalized.values());
     }
 
-    private static String movementKey(MovementData movement)
-    {
-        if(movement instanceof FurniMovementData)
-        {
+    /** The furni id of a furni movement entry, or -1 for any other entry. */
+    public static int furniId(MovementData movement) {
+        return (movement instanceof FurniMovementData furni) ? furni.id : -1;
+    }
+
+    /**
+     * Leaves out the furni that end where they started, in place and rotation: one firing moved
+     * them and brought them back. {@code droppable} names the furni this may apply to and
+     * {@code originalRotations} their rotation before the first move.
+     */
+    public static List<MovementData> withoutReturnedFurni(
+            List<MovementData> movements, Set<Integer> droppable, Map<Integer, Integer> originalRotations) {
+        if (movements == null || movements.isEmpty() || droppable == null || droppable.isEmpty()) {
+            return movements;
+        }
+
+        Map<Integer, FurniMovementData> first = new HashMap<>();
+        Map<Integer, FurniMovementData> last = new HashMap<>();
+
+        for (MovementData movement : movements) {
+            if (movement instanceof FurniMovementData furni && droppable.contains(furni.id)) {
+                first.putIfAbsent(furni.id, furni);
+                last.put(furni.id, furni);
+            }
+        }
+
+        Set<Integer> returned = new HashSet<>();
+
+        for (Map.Entry<Integer, FurniMovementData> entry : first.entrySet()) {
+            FurniMovementData start = entry.getValue();
+            FurniMovementData end = last.get(entry.getKey());
+            Integer originalRotation = originalRotations == null ? null : originalRotations.get(entry.getKey());
+
+            if (start.fromX == end.toX
+                    && start.fromY == end.toY
+                    && Double.compare(start.fromZ, end.toZ) == 0
+                    && originalRotation != null
+                    && originalRotation == end.rotation) {
+                returned.add(entry.getKey());
+            }
+        }
+
+        if (returned.isEmpty()) {
+            return movements;
+        }
+
+        List<MovementData> kept = new ArrayList<>(movements.size());
+
+        for (MovementData movement : movements) {
+            if (!(movement instanceof FurniMovementData furni) || !returned.contains(furni.id)) {
+                kept.add(movement);
+            }
+        }
+
+        return kept;
+    }
+
+    private static String movementKey(MovementData movement) {
+        if (movement instanceof FurniMovementData) {
             return "furni:" + ((FurniMovementData) movement).id;
         }
 
-        if(movement instanceof UserMovementData)
-        {
+        if (movement instanceof UserMovementData) {
             return "user:" + ((UserMovementData) movement).id;
         }
 
-        if(movement instanceof UserDirectionData)
-        {
+        if (movement instanceof UserDirectionData) {
             return "userdir:" + ((UserDirectionData) movement).id;
         }
 
-        if(movement instanceof WallItemMovementData)
-        {
+        if (movement instanceof WallItemMovementData) {
             return "wall:" + ((WallItemMovementData) movement).id;
         }
 
         return null;
     }
 
-    private static MovementData mergeMovement(MovementData previous, MovementData current)
-    {
-        if((previous instanceof FurniMovementData) && (current instanceof FurniMovementData))
-        {
+    private static MovementData mergeMovement(MovementData previous, MovementData current) {
+        if ((previous instanceof FurniMovementData) && (current instanceof FurniMovementData)) {
             final FurniMovementData oldMovement = (FurniMovementData) previous;
             final FurniMovementData newMovement = (FurniMovementData) current;
 
             return furniMovement(
-                oldMovement.id,
-                oldMovement.fromX,
-                oldMovement.fromY,
-                newMovement.toX,
-                newMovement.toY,
-                oldMovement.fromZ,
-                newMovement.toZ,
-                newMovement.rotation,
-                newMovement.duration,
-                newMovement.elapsed,
-                newMovement.anchorType,
-                newMovement.anchorId);
+                    oldMovement.id,
+                    oldMovement.fromX,
+                    oldMovement.fromY,
+                    newMovement.toX,
+                    newMovement.toY,
+                    oldMovement.fromZ,
+                    newMovement.toZ,
+                    newMovement.rotation,
+                    newMovement.duration,
+                    newMovement.elapsed,
+                    newMovement.anchorType,
+                    newMovement.anchorId);
         }
 
-        if((previous instanceof UserMovementData) && (current instanceof UserMovementData))
-        {
+        if ((previous instanceof UserMovementData) && (current instanceof UserMovementData)) {
             final UserMovementData oldMovement = (UserMovementData) previous;
             final UserMovementData newMovement = (UserMovementData) current;
 
             return new UserMovementData(
-                oldMovement.id,
-                oldMovement.fromX,
-                oldMovement.fromY,
-                newMovement.toX,
-                newMovement.toY,
-                oldMovement.fromZ,
-                newMovement.toZ,
-                newMovement.movementType,
-                newMovement.bodyDirection,
-                newMovement.headDirection,
-                newMovement.duration);
+                    oldMovement.id,
+                    oldMovement.fromX,
+                    oldMovement.fromY,
+                    newMovement.toX,
+                    newMovement.toY,
+                    oldMovement.fromZ,
+                    newMovement.toZ,
+                    newMovement.movementType,
+                    newMovement.bodyDirection,
+                    newMovement.headDirection,
+                    newMovement.duration);
         }
 
         return current;
@@ -147,24 +196,70 @@ public class WiredMovementsComposer extends MessageComposer {
         return furniMovement(id, fromX, fromY, toX, toY, fromZ, toZ, 0, DEFAULT_DURATION, 0, FURNI_ANCHOR_NONE, 0);
     }
 
-    public static MovementData furniMovement(int id, int fromX, int fromY, int toX, int toY, double fromZ, double toZ, int rotation, int duration) {
+    public static MovementData furniMovement(
+            int id, int fromX, int fromY, int toX, int toY, double fromZ, double toZ, int rotation, int duration) {
         return furniMovement(id, fromX, fromY, toX, toY, fromZ, toZ, rotation, duration, 0, FURNI_ANCHOR_NONE, 0);
     }
 
-    public static MovementData furniMovement(int id, int fromX, int fromY, int toX, int toY, double fromZ, double toZ, int rotation, int duration, int elapsed) {
+    public static MovementData furniMovement(
+            int id,
+            int fromX,
+            int fromY,
+            int toX,
+            int toY,
+            double fromZ,
+            double toZ,
+            int rotation,
+            int duration,
+            int elapsed) {
         return furniMovement(id, fromX, fromY, toX, toY, fromZ, toZ, rotation, duration, elapsed, FURNI_ANCHOR_NONE, 0);
     }
 
-    public static MovementData furniMovement(int id, int fromX, int fromY, int toX, int toY, double fromZ, double toZ, int rotation, int duration, int elapsed, int anchorType, int anchorId) {
-        return new FurniMovementData(id, fromX, fromY, toX, toY, fromZ, toZ, rotation, duration, elapsed, anchorType, anchorId);
+    public static MovementData furniMovement(
+            int id,
+            int fromX,
+            int fromY,
+            int toX,
+            int toY,
+            double fromZ,
+            double toZ,
+            int rotation,
+            int duration,
+            int elapsed,
+            int anchorType,
+            int anchorId) {
+        return new FurniMovementData(
+                id, fromX, fromY, toX, toY, fromZ, toZ, rotation, duration, elapsed, anchorType, anchorId);
     }
 
-    public static MovementData userWalkMovement(int id, int fromX, int fromY, int toX, int toY, double fromZ, double toZ, int bodyDirection, int headDirection, int duration) {
-        return new UserMovementData(id, fromX, fromY, toX, toY, fromZ, toZ, USER_MOVEMENT_WALK, bodyDirection, headDirection, duration);
+    public static MovementData userWalkMovement(
+            int id,
+            int fromX,
+            int fromY,
+            int toX,
+            int toY,
+            double fromZ,
+            double toZ,
+            int bodyDirection,
+            int headDirection,
+            int duration) {
+        return new UserMovementData(
+                id, fromX, fromY, toX, toY, fromZ, toZ, USER_MOVEMENT_WALK, bodyDirection, headDirection, duration);
     }
 
-    public static MovementData userSlideMovement(int id, int fromX, int fromY, int toX, int toY, double fromZ, double toZ, int bodyDirection, int headDirection, int duration) {
-        return new UserMovementData(id, fromX, fromY, toX, toY, fromZ, toZ, USER_MOVEMENT_SLIDE, bodyDirection, headDirection, duration);
+    public static MovementData userSlideMovement(
+            int id,
+            int fromX,
+            int fromY,
+            int toX,
+            int toY,
+            double fromZ,
+            double toZ,
+            int bodyDirection,
+            int headDirection,
+            int duration) {
+        return new UserMovementData(
+                id, fromX, fromY, toX, toY, fromZ, toZ, USER_MOVEMENT_SLIDE, bodyDirection, headDirection, duration);
     }
 
     public static MovementData userDirectionUpdate(int id, int headDirection, int bodyDirection) {
@@ -207,7 +302,18 @@ public class WiredMovementsComposer extends MessageComposer {
         private final int headDirection;
         private final int duration;
 
-        private UserMovementData(int id, int fromX, int fromY, int toX, int toY, double fromZ, double toZ, int movementType, int bodyDirection, int headDirection, int duration) {
+        private UserMovementData(
+                int id,
+                int fromX,
+                int fromY,
+                int toX,
+                int toY,
+                double fromZ,
+                double toZ,
+                int movementType,
+                int bodyDirection,
+                int headDirection,
+                int duration) {
             super(TYPE_USER_MOVE);
             this.id = id;
             this.fromX = fromX;
@@ -252,7 +358,19 @@ public class WiredMovementsComposer extends MessageComposer {
         private final int anchorType;
         private final int anchorId;
 
-        private FurniMovementData(int id, int fromX, int fromY, int toX, int toY, double fromZ, double toZ, int rotation, int duration, int elapsed, int anchorType, int anchorId) {
+        private FurniMovementData(
+                int id,
+                int fromX,
+                int fromY,
+                int toX,
+                int toY,
+                double fromZ,
+                double toZ,
+                int rotation,
+                int duration,
+                int elapsed,
+                int anchorType,
+                int anchorId) {
             super(TYPE_FURNI_MOVE);
             this.id = id;
             this.fromX = fromX;
@@ -276,12 +394,12 @@ public class WiredMovementsComposer extends MessageComposer {
             response.appendInt(this.toY);
             response.appendString(Double.toString(this.fromZ));
             response.appendString(Double.toString(this.toZ));
-            response.appendInt(this.id);
+            response.appendInt(BuildersClubItemIds.toWire(this.id));
             response.appendInt(this.rotation);
             response.appendInt(this.duration);
             response.appendInt(this.elapsed);
             response.appendInt(this.anchorType);
-            response.appendInt(this.anchorId);
+            response.appendInt(BuildersClubItemIds.toWire(this.anchorId, this.anchorType == FURNI_ANCHOR_FURNI));
         }
     }
 
@@ -319,7 +437,7 @@ public class WiredMovementsComposer extends MessageComposer {
 
         @Override
         public void append(ServerMessage response) {
-            response.appendInt(this.id);
+            response.appendInt(BuildersClubItemIds.toWire(this.id));
             response.appendBoolean(this.enabled);
 
             for (int index = 0; index < 9; index++) {

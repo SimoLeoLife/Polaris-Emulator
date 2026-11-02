@@ -5,6 +5,7 @@ import com.eu.habbo.habbohotel.gameclients.GameClient;
 import com.eu.habbo.habbohotel.items.Item;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredEffect;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredTrigger;
+import com.eu.habbo.habbohotel.items.interactions.wired.WiredInputGuard;
 import com.eu.habbo.habbohotel.items.interactions.wired.WiredSettings;
 import com.eu.habbo.habbohotel.permissions.Permission;
 import com.eu.habbo.habbohotel.rooms.Room;
@@ -13,22 +14,20 @@ import com.eu.habbo.habbohotel.rooms.RoomChatMessageBubbles;
 import com.eu.habbo.habbohotel.rooms.RoomUnit;
 import com.eu.habbo.habbohotel.users.Habbo;
 import com.eu.habbo.habbohotel.wired.WiredEffectType;
-import com.eu.habbo.habbohotel.wired.core.WiredManager;
 import com.eu.habbo.habbohotel.wired.core.WiredContext;
+import com.eu.habbo.habbohotel.wired.core.WiredManager;
 import com.eu.habbo.habbohotel.wired.core.WiredSourceUtil;
 import com.eu.habbo.habbohotel.wired.core.WiredTextPlaceholderUtil;
 import com.eu.habbo.messages.ServerMessage;
 import com.eu.habbo.messages.incoming.wired.WiredSaveException;
 import com.eu.habbo.messages.outgoing.rooms.users.RoomUserWhisperComposer;
 import com.eu.habbo.threading.runnables.RoomUnitKick;
-
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class WiredEffectKickHabbo extends InteractionWiredEffect {
     private static final Logger LOGGER = LoggerFactory.getLogger(WiredEffectKickHabbo.class);
@@ -49,31 +48,46 @@ public class WiredEffectKickHabbo extends InteractionWiredEffect {
     public void execute(WiredContext ctx) {
         Room room = ctx.room();
 
-        LOGGER.debug("[KickHabbo] targets.users().size={} usersModifiedBySelector={}",
-                ctx.targets().users().size(), ctx.targets().isUsersModifiedBySelector());
+        LOGGER.debug(
+                "[KickHabbo] targets.users().size={} usersModifiedBySelector={}",
+                ctx.targets().users().size(),
+                ctx.targets().isUsersModifiedBySelector());
 
+        // Kick exceptions are whispered in the Wired bubble (34), as in Habbo.
+        // Behaviour observed in plus-emulator/PlusEMU 382666b3, reimplemented.
         for (RoomUnit unit : WiredSourceUtil.resolveUsers(ctx, this.userSource)) {
             Habbo habbo = room.getHabbo(unit);
-            LOGGER.debug("[KickHabbo] RoomUnit id={} type={} -> Habbo={}", unit.getId(), unit.getRoomUnitType(),
+            LOGGER.debug(
+                    "[KickHabbo] RoomUnit id={} type={} -> Habbo={}",
+                    unit.getId(),
+                    unit.getRoomUnitType(),
                     habbo != null ? habbo.getHabboInfo().getUsername() : "null");
             if (habbo == null) continue;
 
             if (habbo.hasPermission(Permission.ACC_UNKICKABLE)) {
-                habbo.whisper(Emulator.getTexts().getValue("hotel.wired.kickexception.unkickable"));
+                habbo.whisper(
+                        Emulator.getTexts().getValue("hotel.wired.kickexception.unkickable"),
+                        RoomChatMessageBubbles.WIRED);
                 continue;
             }
 
             if (habbo.getHabboInfo().getId() == room.getOwnerId()) {
-                habbo.whisper(Emulator.getTexts().getValue("hotel.wired.kickexception.owner"));
+                habbo.whisper(
+                        Emulator.getTexts().getValue("hotel.wired.kickexception.owner"), RoomChatMessageBubbles.WIRED);
                 continue;
             }
 
-            room.giveEffect(habbo, 4, 2);
-
-            if (!this.message.isEmpty()) {
+            // AIR always whispers the kicked user first, an empty line when the box has no message, in the wired
+            // style, then shows the kick effect.
+            // A user whose connection is closing has no client any more; the kick still applies.
+            if (habbo.getClient() != null) {
                 String message = WiredTextPlaceholderUtil.applyUsernamePlaceholders(ctx, this.message);
-                habbo.getClient().sendResponse(new RoomUserWhisperComposer(new RoomChatMessage(message, habbo, habbo, RoomChatMessageBubbles.ALERT)));
+                habbo.getClient()
+                        .sendResponse(new RoomUserWhisperComposer(
+                                new RoomChatMessage(message, habbo, habbo, RoomChatMessageBubbles.WIRED)));
             }
+
+            room.giveEffect(habbo, 4, 2);
 
             Emulator.getThreading().run(new RoomUnitKick(habbo, room, true), 2000);
         }
@@ -94,13 +108,12 @@ public class WiredEffectKickHabbo extends InteractionWiredEffect {
     public void loadWiredData(ResultSet set, Room room) throws SQLException {
         String wiredData = set.getString("wired_data");
 
-        if(wiredData.startsWith("{")) {
+        if (wiredData.startsWith("{")) {
             JsonData data = WiredManager.getGson().fromJson(wiredData, JsonData.class);
             this.setDelay(data.delay);
             this.message = data.message;
             this.userSource = data.userSource;
-        }
-        else {
+        } else {
             try {
                 String[] data = set.getString("wired_data").split("\t");
 
@@ -141,8 +154,7 @@ public class WiredEffectKickHabbo extends InteractionWiredEffect {
         message.appendInt(this.getBaseItem().getSpriteId());
         message.appendInt(this.getId());
         message.appendString(this.message);
-        message.appendInt(1);
-        message.appendInt(this.userSource);
+        message.appendInt(0);
         message.appendInt(0);
         message.appendInt(this.getType().code);
         message.appendInt(this.getDelay());
@@ -167,13 +179,15 @@ public class WiredEffectKickHabbo extends InteractionWiredEffect {
     public boolean saveData(WiredSettings settings, GameClient gameClient) throws WiredSaveException {
         String message = settings.getStringParam();
         int[] params = settings.getIntParams();
-        this.userSource = (params.length > 0) ? params[0] : WiredSourceUtil.SOURCE_TRIGGER;
+        // Official: no int params; the user source is the official source slot.
+        this.userSource = settings.userSource(0, WiredSourceUtil.SOURCE_TRIGGER);
         int delay = settings.getDelay();
 
-        if(delay > Emulator.getConfig().getInt("hotel.wired.max_delay", 20))
+        if (delay > Emulator.getConfig().getInt("hotel.wired.max_delay", WiredInputGuard.DEFAULT_MAX_DELAY))
             throw new WiredSaveException("Delay too long");
 
-        this.message = message.substring(0, Math.min(message.length(), Emulator.getConfig().getInt("hotel.wired.message.max_length", 100)));
+        this.message = message.substring(
+                0, Math.min(message.length(), Emulator.getConfig().getInt("hotel.wired.message.max_length", 100)));
         this.setDelay(delay);
 
         return true;
@@ -181,7 +195,8 @@ public class WiredEffectKickHabbo extends InteractionWiredEffect {
 
     @Override
     public boolean requiresTriggeringUser() {
-        return this.userSource == WiredSourceUtil.SOURCE_TRIGGER || WiredTextPlaceholderUtil.requiresActor(this.getRoom(), this);
+        return this.userSource == WiredSourceUtil.SOURCE_TRIGGER
+                || WiredTextPlaceholderUtil.requiresActor(this.getRoom(), this);
     }
 
     static class JsonData {

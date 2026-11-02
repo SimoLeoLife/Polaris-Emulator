@@ -26,10 +26,6 @@ public class MarkMentionsReadEvent extends MessageHandler {
 
         MentionManager manager = Emulator.getGameEnvironment().getMentionManager();
 
-        if (!manager.tryAcquireMarkRead(userId, mode)) {
-            return;
-        }
-
         manager.markRead(userId, mode, mentionId);
     }
 }

@@ -26,27 +26,61 @@ public class ConfigurationManager {
     private static final Logger LOGGER = LoggerFactory.getLogger(ConfigurationManager.class);
     private static final String EMULATOR_SETTINGS_TABLE = "emulator_settings";
     private static final String WIRED_SETTINGS_TABLE = "wired_emulator_settings";
+    private static final Set<String> STARTUP_OWNED_KEYS =
+            Set.of("runtime.operational.profile", "persistence.executor.threads");
 
-    private final Properties properties;
-    private final Properties wiredProperties;
+    /**
+     * Everything readers see, published as one reference. A reload used to clear the live Properties and
+     * refill them while other threads read, and those threads got the defaults for the whole reload.
+     */
+    private record Snapshot(Properties properties, Properties wiredProperties) {}
+
+    private volatile Snapshot snapshot = new Snapshot(new Properties(), new Properties());
     private final Set<String> dirtyKeys = ConcurrentHashMap.newKeySet();
     private final String configurationPath;
     public boolean loaded = false;
-    public boolean isLoading = false;
+
+    /** True while a reload runs. Readers keep the previous snapshot meanwhile, so nothing waits on it. */
+    public volatile boolean isLoading = false;
 
     public ConfigurationManager(String configurationPath) {
-        this.properties = new Properties();
-        this.wiredProperties = new Properties();
         this.configurationPath = configurationPath;
         this.reload();
     }
 
     public void reload() {
-        this.isLoading = true;
-        this.properties.clear();
-        this.wiredProperties.clear();
-        this.dirtyKeys.clear();
+        synchronized (this) {
+            this.isLoading = true;
+            try {
+                Properties properties = new Properties();
+                Properties wiredProperties = new Properties();
+                this.loadBootstrap(properties);
+                if (this.loaded) {
+                    this.loadFromDatabase(properties, wiredProperties);
+                }
+                this.snapshot = new Snapshot(properties, wiredProperties);
+                this.dirtyKeys.clear();
+            } finally {
+                this.isLoading = false;
+            }
+        }
 
+        for (ConfigRegistry.ValidationIssue issue : ConfigRegistry.standard().validate(this)) {
+            LOGGER.error(
+                    "Invalid first-party configuration key {} with value '{}': {}",
+                    issue.key(),
+                    issue.value(),
+                    issue.reason());
+        }
+        LOGGER.info("Configuration Manager -> Loaded!");
+
+        if (Emulator.getPluginManager() != null) {
+            Emulator.getPluginManager().fireEvent(new EmulatorConfigUpdatedEvent());
+        }
+    }
+
+    /** config.ini, or the environment when DB_HOSTNAME is set. */
+    private void loadBootstrap(Properties properties) {
         InputStream input = null;
 
         String envDbHostname = System.getenv("DB_HOSTNAME");
@@ -61,7 +95,7 @@ public class ConfigurationManager {
             try {
                 File f = new File(this.configurationPath);
                 input = new FileInputStream(f);
-                this.properties.load(input);
+                properties.load(input);
 
             } catch (IOException ex) {
                 LOGGER.error("Failed to load config file.", ex);
@@ -99,6 +133,8 @@ public class ConfigurationManager {
 
             // Runtime
             envMapping.put("runtime.threads", "RT_THREADS");
+            envMapping.put("runtime.operational.profile", "RUNTIME_OPERATIONAL_PROFILE");
+            envMapping.put("persistence.executor.threads", "PERSISTENCE_EXECUTOR_THREADS");
             envMapping.put("logging.errors.runtime", "RT_LOG_ERRORS");
             envMapping.put("hotel.timezone", "HOTEL_TIMEZONE");
 
@@ -108,43 +144,41 @@ public class ConfigurationManager {
                 if (envValue == null || envValue.length() == 0) {
                     LOGGER.info("Cannot find environment-value for variable `{}`", entry.getValue());
                 } else {
-                    this.properties.setProperty(entry.getKey(), envValue);
+                    properties.setProperty(entry.getKey(), envValue);
                 }
             }
         }
-
-        if (this.loaded) {
-            this.loadFromDatabase();
-        }
-
-        this.isLoading = false;
-        for (ConfigRegistry.ValidationIssue issue : ConfigRegistry.standard().validate(this)) {
-            LOGGER.error(
-                    "Invalid first-party configuration key {} with value '{}': {}",
-                    issue.key(),
-                    issue.value(),
-                    issue.reason());
-        }
-        LOGGER.info("Configuration Manager -> Loaded!");
-
-        if (Emulator.getPluginManager() != null) {
-            Emulator.getPluginManager().fireEvent(new EmulatorConfigUpdatedEvent());
-        }
     }
 
-    public void loadFromDatabase() {
+    /** Layers the settings tables over what is loaded now, published in one step. */
+    public synchronized void loadFromDatabase() {
+        Snapshot current = this.snapshot;
+        Properties properties = copy(current.properties());
+        Properties wiredProperties = copy(current.wiredProperties());
+        this.loadFromDatabase(properties, wiredProperties);
+        this.snapshot = new Snapshot(properties, wiredProperties);
+    }
+
+    private void loadFromDatabase(Properties properties, Properties wiredProperties) {
         LOGGER.info("Loading configuration from database...");
 
         long millis = System.currentTimeMillis();
-        this.loadSettingsTable(EMULATOR_SETTINGS_TABLE, this.properties, false);
-        this.loadSettingsTable(WIRED_SETTINGS_TABLE, this.wiredProperties, true);
+        this.loadSettingsTable(EMULATOR_SETTINGS_TABLE, properties, false);
+        this.loadSettingsTable(WIRED_SETTINGS_TABLE, wiredProperties, true);
 
         LOGGER.info("Configuration -> loaded! ({} MS)", System.currentTimeMillis() - millis);
     }
 
+    private static Properties copy(Properties source) {
+        Properties copy = new Properties();
+        copy.putAll(source);
+        return copy;
+    }
+
     public synchronized void saveToDatabase() {
-        this.saveSettingsTable(EMULATOR_SETTINGS_TABLE, this.properties, false);
-        this.saveSettingsTable(WIRED_SETTINGS_TABLE, this.wiredProperties, true);
+        Snapshot current = this.snapshot;
+        this.saveSettingsTable(EMULATOR_SETTINGS_TABLE, current.properties(), false);
+        this.saveSettingsTable(WIRED_SETTINGS_TABLE, current.wiredProperties(), true);
     }
 
     public String getValue(String key) {
@@ -156,8 +190,6 @@ public class ConfigurationManager {
     }
 
     private String getValue(String key, String defaultValue, boolean logMissing) {
-        if (this.isLoading) return defaultValue;
-
         String value = this.getValueIfPresent(key);
         if (value != null) return value;
 
@@ -168,15 +200,14 @@ public class ConfigurationManager {
     }
 
     public String getValueIfPresent(String key) {
-        if (this.isLoading) return null;
-
-        Properties targetProperties = this.resolveProperties(key);
-        if (targetProperties.containsKey(key)) {
-            return targetProperties.getProperty(key);
+        Snapshot current = this.snapshot;
+        String value = this.resolveProperties(current, key).getProperty(key);
+        if (value != null) {
+            return value;
         }
 
-        if (this.isWiredSettingKey(key) && this.properties.containsKey(key)) {
-            return this.properties.getProperty(key);
+        if (this.isWiredSettingKey(key)) {
+            return current.properties().getProperty(key);
         }
 
         return null;
@@ -187,8 +218,6 @@ public class ConfigurationManager {
     }
 
     public boolean getBoolean(String key, boolean defaultValue) {
-        if (this.isLoading) return defaultValue;
-
         String value = this.getValueIfPresent(key);
         if (value == null) return defaultValue;
         return switch (value.trim().toLowerCase(Locale.ROOT)) {
@@ -206,8 +235,6 @@ public class ConfigurationManager {
     }
 
     public int getInt(String key, Integer defaultValue) {
-        if (this.isLoading) return defaultValue;
-
         try {
             return Integer.parseInt(this.getValue(key, defaultValue.toString()));
         } catch (Exception e) {
@@ -221,8 +248,6 @@ public class ConfigurationManager {
     }
 
     public double getDouble(String key, Double defaultValue) {
-        if (this.isLoading) return defaultValue;
-
         try {
             return Double.parseDouble(this.getValue(key, defaultValue.toString()));
         } catch (Exception e) {
@@ -256,7 +281,10 @@ public class ConfigurationManager {
             if (statement.execute("SELECT * FROM " + tableName)) {
                 try (ResultSet set = statement.getResultSet()) {
                     while (set.next()) {
-                        targetProperties.put(set.getString("key"), set.getString("value"));
+                        String key = set.getString("key");
+                        if (!STARTUP_OWNED_KEYS.contains(key)) {
+                            targetProperties.put(key, set.getString("value"));
+                        }
                     }
                 }
             }
@@ -280,7 +308,13 @@ public class ConfigurationManager {
             return;
         }
 
-        String sql = "UPDATE " + tableName + " SET `value` = ? WHERE `key` = ? LIMIT 1";
+        // An upsert: a key changed at runtime that has no row yet (set by config.ini or by a plugin
+        // without register) was lost by a plain UPDATE, silently.
+        String sql = wired
+                ? "INSERT INTO " + tableName + " (`value`, `key`, `comment`) VALUES (?, ?, '')"
+                        + " ON DUPLICATE KEY UPDATE `value` = VALUES(`value`)"
+                : "INSERT INTO " + tableName + " (`value`, `key`) VALUES (?, ?)"
+                        + " ON DUPLICATE KEY UPDATE `value` = VALUES(`value`)";
 
         try (Connection connection = Emulator.getDatabase().getDataSource().getConnection();
                 PreparedStatement statement = connection.prepareStatement(sql)) {
@@ -325,7 +359,11 @@ public class ConfigurationManager {
     }
 
     private Properties resolveProperties(String key) {
-        return this.isWiredSettingKey(key) ? this.wiredProperties : this.properties;
+        return this.resolveProperties(this.snapshot, key);
+    }
+
+    private Properties resolveProperties(Snapshot current, String key) {
+        return this.isWiredSettingKey(key) ? current.wiredProperties() : current.properties();
     }
 
     private boolean isWiredSettingKey(String key) {

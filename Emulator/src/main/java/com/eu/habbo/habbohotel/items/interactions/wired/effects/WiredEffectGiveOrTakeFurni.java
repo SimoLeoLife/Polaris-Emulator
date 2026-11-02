@@ -1,10 +1,13 @@
 package com.eu.habbo.habbohotel.items.interactions.wired.effects;
 
 import com.eu.habbo.Emulator;
+import com.eu.habbo.WiredPlatform;
 import com.eu.habbo.habbohotel.gameclients.GameClient;
 import com.eu.habbo.habbohotel.items.Item;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredEffect;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredTrigger;
+import com.eu.habbo.habbohotel.items.interactions.wired.WiredInputGuard;
+import com.eu.habbo.habbohotel.items.interactions.wired.WiredRewardPolicy;
 import com.eu.habbo.habbohotel.items.interactions.wired.WiredSettings;
 import com.eu.habbo.habbohotel.rooms.Room;
 import com.eu.habbo.habbohotel.rooms.RoomUnit;
@@ -68,7 +71,9 @@ public class WiredEffectGiveOrTakeFurni extends InteractionWiredEffect {
     @Override
     public void execute(WiredContext ctx) {
         Room room = ctx.room();
-        if (room == null) return;
+        // An unconfigured box holds no base item, and must return before reaching for the item
+        // manager - the same guard its sibling WiredEffectPlaceFurni has always had.
+        if (room == null || this.baseItemId <= 0) return;
 
         Item baseItem = Emulator.getGameEnvironment().getItemManager().getItem(this.baseItemId);
         if (baseItem == null) return;
@@ -144,11 +149,10 @@ public class WiredEffectGiveOrTakeFurni extends InteractionWiredEffect {
         message.appendInt(this.getBaseItem().getSpriteId());
         message.appendInt(this.getId());
         message.appendString("");
-        message.appendInt(4);
+        message.appendInt(3);
         message.appendInt(this.baseItemId);
         message.appendInt(this.quantity);
         message.appendInt(this.giveOrTake);
-        message.appendInt(this.userSource);
         message.appendInt(0);
         message.appendInt(type.code);
         message.appendInt(this.getDelay());
@@ -171,10 +175,17 @@ public class WiredEffectGiveOrTakeFurni extends InteractionWiredEffect {
 
     @Override
     public boolean saveData(WiredSettings settings, GameClient gameClient) throws WiredSaveException {
+        // Value out of nothing: the amount cap bounds one firing, not a room full of them.
+        if (!WiredRewardPolicy.canConfigure(gameClient)) {
+            return false;
+        }
+
         int[] params = settings.getIntParams();
-        if (params.length < 4) {
+        if (params.length < 3) {
             throw new WiredSaveException("Invalid data");
         }
+
+        int nextMode = (params[2] == MODE_TAKE) ? MODE_TAKE : MODE_GIVE;
 
         int nextBaseItemId = params[0];
         if (nextBaseItemId <= 0
@@ -183,14 +194,18 @@ public class WiredEffectGiveOrTakeFurni extends InteractionWiredEffect {
         }
 
         int delay = settings.getDelay();
-        if (delay > Emulator.getConfig().getInt("hotel.wired.max_delay", 20)) {
+        int maxDelay = WiredPlatform.configuration() == null
+                ? 20
+                : WiredPlatform.configuration().getInt("hotel.wired.max_delay", WiredInputGuard.DEFAULT_MAX_DELAY);
+        if (delay > maxDelay) {
             throw new WiredSaveException("Delay too long");
         }
 
         this.baseItemId = nextBaseItemId;
         this.quantity = clampQuantity(params[1]);
-        this.giveOrTake = (params[2] == MODE_TAKE) ? MODE_TAKE : MODE_GIVE;
-        this.userSource = params[3];
+        this.giveOrTake = nextMode;
+        // Ours: [base item, quantity, give or take]; the user source is the official source slot.
+        this.userSource = settings.userSource(0, WiredSourceUtil.SOURCE_TRIGGER);
         this.setDelay(delay);
 
         return true;
@@ -211,8 +226,10 @@ public class WiredEffectGiveOrTakeFurni extends InteractionWiredEffect {
     public void loadWiredData(ResultSet set, Room room) throws SQLException {
         String wiredData = set.getString("wired_data");
 
-        if (wiredData != null && wiredData.startsWith("{")) {
-            JsonData data = WiredManager.getGson().fromJson(wiredData, JsonData.class);
+        // The guard answers null for anything it cannot parse, truncated documents included,
+        // so the defaults below cover a corrupt row instead of the load failing on it.
+        JsonData data = WiredEffectPayloadGuard.fromJson(wiredData, JsonData.class);
+        if (data != null) {
             this.baseItemId = data.baseItemId;
             this.quantity = clampQuantity(data.quantity);
             this.giveOrTake = (data.giveOrTake == MODE_TAKE) ? MODE_TAKE : MODE_GIVE;

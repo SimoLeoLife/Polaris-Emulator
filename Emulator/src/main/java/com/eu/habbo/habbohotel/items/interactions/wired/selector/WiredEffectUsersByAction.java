@@ -9,22 +9,21 @@ import com.eu.habbo.habbohotel.rooms.RoomUnit;
 import com.eu.habbo.habbohotel.rooms.RoomUnitStatus;
 import com.eu.habbo.habbohotel.wired.WiredEffectType;
 import com.eu.habbo.habbohotel.wired.WiredUserActionType;
+import com.eu.habbo.habbohotel.wired.core.WiredActionMemory;
 import com.eu.habbo.habbohotel.wired.core.WiredContext;
 import com.eu.habbo.habbohotel.wired.core.WiredEvent;
 import com.eu.habbo.habbohotel.wired.core.WiredManager;
+import com.eu.habbo.habbohotel.wired.protocol.WiredOfficialSelector;
 import com.eu.habbo.messages.ServerMessage;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.LinkedHashSet;
 import java.util.Set;
 
-public class WiredEffectUsersByAction extends InteractionWiredEffect {
-    private static final String CACHE_LAST_ACTION_ID = "wired.last_user_action.id";
-    private static final String CACHE_LAST_ACTION_PARAMETER = "wired.last_user_action.parameter";
-    private static final String CACHE_LAST_ACTION_TIMESTAMP = "wired.last_user_action.timestamp";
-    private static final long TRANSIENT_ACTION_WINDOW_MS = 5_000L;
-    private static final int DEFAULT_ACTION = WiredUserActionType.WAVE;
+public class WiredEffectUsersByAction extends InteractionWiredEffect implements WiredOfficialSelector {
+    static final int OFFICIAL_ACTION_IDS = 2;
+    // A fresh box selects sitting users, as officially.
+    private static final int DEFAULT_ACTION = WiredUserActionType.SIT;
 
     public static final WiredEffectType type = WiredEffectType.USERS_BY_ACTION_SELECTOR;
 
@@ -40,7 +39,8 @@ public class WiredEffectUsersByAction extends InteractionWiredEffect {
         super(set, baseItem);
     }
 
-    public WiredEffectUsersByAction(int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
+    public WiredEffectUsersByAction(
+            int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
         super(id, userId, item, extradata, limitedStack, limitedSells);
     }
 
@@ -59,7 +59,8 @@ public class WiredEffectUsersByAction extends InteractionWiredEffect {
             }
         }
 
-        result = this.applySelectorModifiers(result, room.getRoomUnits(), ctx.targets().users(), this.filterExisting, this.invert);
+        result = this.applySelectorModifiers(
+                result, room.getRoomUnits(), ctx.targets().users(), this.filterExisting, this.invert);
 
         ctx.targets().setUsers(result);
     }
@@ -71,15 +72,42 @@ public class WiredEffectUsersByAction extends InteractionWiredEffect {
         this.onPickUp();
 
         if (params.length > 0) this.selectedAction = this.normalizeAction(params[0]);
-        if (params.length > 1) this.signFilterEnabled = (params[1] == 1);
-        if (params.length > 2) this.signId = this.normalizeSignId(params[2]);
-        if (params.length > 3) this.danceFilterEnabled = (params[3] == 1);
-        if (params.length > 4) this.danceId = this.normalizeDanceId(params[4]);
-        if (params.length > 5) this.filterExisting = (params[5] == 1);
-        if (params.length > 6) this.invert = (params[6] == 1);
+        // Official: [action], the sign or dance extra in the string param, filter and invert in the
+        // selector switches.
+        int extra = WiredUserActionType.extraCode(this.selectedAction, settings.getStringParam());
+        if (this.selectedAction == WiredUserActionType.SIGN && extra >= 0) {
+            this.signFilterEnabled = true;
+            this.signId = extra;
+        }
+        if (this.selectedAction == WiredUserActionType.DANCE && extra >= 0) {
+            this.danceFilterEnabled = true;
+            this.danceId = extra;
+        }
+        this.filterExisting = settings.isSelectorFilter();
+        this.invert = settings.isSelectorInvert();
 
         this.setDelay(settings.getDelay());
         return true;
+    }
+
+    @Override
+    public int[] officialFurniSources() {
+        return new int[0];
+    }
+
+    @Override
+    public int[] officialUserSources() {
+        return new int[0];
+    }
+
+    @Override
+    public boolean selectorFilter() {
+        return this.filterExisting;
+    }
+
+    @Override
+    public boolean selectorInvert() {
+        return this.invert;
     }
 
     @Override
@@ -99,16 +127,16 @@ public class WiredEffectUsersByAction extends InteractionWiredEffect {
 
     @Override
     public String getWiredData() {
-        return WiredManager.getGson().toJson(new JsonData(
-                this.selectedAction,
-                this.signFilterEnabled,
-                this.signId,
-                this.danceFilterEnabled,
-                this.danceId,
-                this.filterExisting,
-                this.invert,
-                this.getDelay()
-        ));
+        return WiredManager.getGson()
+                .toJson(new JsonData(
+                        this.selectedAction,
+                        this.signFilterEnabled,
+                        this.signId,
+                        this.danceFilterEnabled,
+                        this.danceId,
+                        this.filterExisting,
+                        this.invert,
+                        this.getDelay()));
     }
 
     @Override
@@ -125,7 +153,10 @@ public class WiredEffectUsersByAction extends InteractionWiredEffect {
             return;
         }
 
-        this.selectedAction = this.normalizeAction(data.selectedAction);
+        this.selectedAction = this.normalizeAction(
+                data.actionIds >= OFFICIAL_ACTION_IDS
+                        ? data.selectedAction
+                        : WiredUserActionType.fromLegacy(data.selectedAction));
         this.signFilterEnabled = data.signFilterEnabled;
         this.signId = this.normalizeSignId(data.signId);
         this.danceFilterEnabled = data.danceFilterEnabled;
@@ -154,15 +185,10 @@ public class WiredEffectUsersByAction extends InteractionWiredEffect {
         message.appendInt(0);
         message.appendInt(this.getBaseItem().getSpriteId());
         message.appendInt(this.getId());
-        message.appendString("");
-        message.appendInt(7);
+        message.appendString(WiredUserActionType.extraString(
+                this.selectedAction, this.signFilterEnabled, this.signId, this.danceFilterEnabled, this.danceId));
+        message.appendInt(1);
         message.appendInt(this.selectedAction);
-        message.appendInt(this.signFilterEnabled ? 1 : 0);
-        message.appendInt(this.signId);
-        message.appendInt(this.danceFilterEnabled ? 1 : 0);
-        message.appendInt(this.danceId);
-        message.appendInt(this.filterExisting ? 1 : 0);
-        message.appendInt(this.invert ? 1 : 0);
         message.appendInt(0);
         message.appendInt(this.getType().code);
         message.appendInt(this.getDelay());
@@ -175,22 +201,7 @@ public class WiredEffectUsersByAction extends InteractionWiredEffect {
     }
 
     private int normalizeAction(int action) {
-        switch (action) {
-            case WiredUserActionType.WAVE:
-            case WiredUserActionType.BLOW_KISS:
-            case WiredUserActionType.LAUGH:
-            case WiredUserActionType.AWAKE:
-            case WiredUserActionType.RELAX:
-            case WiredUserActionType.SIT:
-            case WiredUserActionType.STAND:
-            case WiredUserActionType.LAY:
-            case WiredUserActionType.SIGN:
-            case WiredUserActionType.DANCE:
-            case WiredUserActionType.THUMB_UP:
-                return action;
-            default:
-                return DEFAULT_ACTION;
-        }
+        return WiredUserActionType.isAction(action) ? action : DEFAULT_ACTION;
     }
 
     private int normalizeSignId(int value) {
@@ -228,7 +239,8 @@ public class WiredEffectUsersByAction extends InteractionWiredEffect {
             return false;
         }
 
-        return this.matchesConfiguredAction(ctx.event().getActionId(), ctx.event().getActionParameter());
+        return this.matchesConfiguredAction(
+                ctx.event().getActionId(), ctx.event().getActionParameter());
     }
 
     private boolean matchesCurrentState(RoomUnit roomUnit) {
@@ -239,6 +251,13 @@ public class WiredEffectUsersByAction extends InteractionWiredEffect {
                 return roomUnit.hasStatus(RoomUnitStatus.LAY);
             case WiredUserActionType.RELAX:
                 return roomUnit.isIdle();
+            // The states the official selector also reads off the avatar.
+            case WiredUserActionType.STAND:
+                return !roomUnit.hasStatus(RoomUnitStatus.SIT) && !roomUnit.hasStatus(RoomUnitStatus.LAY);
+            case WiredUserActionType.AWAKE:
+                return !roomUnit.isIdle();
+            case WiredUserActionType.WAVE:
+                return roomUnit.hasStatus(RoomUnitStatus.WAVE);
             case WiredUserActionType.SIGN:
                 return this.matchesSignState(roomUnit);
             case WiredUserActionType.DANCE:
@@ -248,24 +267,10 @@ public class WiredEffectUsersByAction extends InteractionWiredEffect {
         }
     }
 
+    /** AIR remembers an action 5 s (respect 2.5 s); blow kiss, laugh and dance are never remembered. */
     private boolean matchesRecentAction(RoomUnit roomUnit) {
-        Object actionValue = roomUnit.getCacheable().get(CACHE_LAST_ACTION_ID);
-        Object parameterValue = roomUnit.getCacheable().get(CACHE_LAST_ACTION_PARAMETER);
-        Object timestampValue = roomUnit.getCacheable().get(CACHE_LAST_ACTION_TIMESTAMP);
-
-        if (!(actionValue instanceof Integer) || !(timestampValue instanceof Long)) {
-            return false;
-        }
-
-        long timestamp = (Long) timestampValue;
-        if ((System.currentTimeMillis() - timestamp) > TRANSIENT_ACTION_WINDOW_MS) {
-            return false;
-        }
-
-        int actionId = (Integer) actionValue;
-        int parameter = (parameterValue instanceof Integer) ? (Integer) parameterValue : -1;
-
-        return this.matchesConfiguredAction(actionId, parameter);
+        int[] recent = WiredActionMemory.selectorRecent(roomUnit, System.currentTimeMillis());
+        return recent != null && this.matchesConfiguredAction(recent[0], recent[1]);
     }
 
     private boolean matchesConfiguredAction(int actionId, int actionParameter) {
@@ -315,6 +320,9 @@ public class WiredEffectUsersByAction extends InteractionWiredEffect {
     }
 
     static class JsonData {
+        /** 2: the official action ids; rows saved before have none and use the old ids. */
+        int actionIds = OFFICIAL_ACTION_IDS;
+
         int selectedAction;
         boolean signFilterEnabled;
         int signId;
@@ -324,7 +332,15 @@ public class WiredEffectUsersByAction extends InteractionWiredEffect {
         boolean invert;
         int delay;
 
-        JsonData(int selectedAction, boolean signFilterEnabled, int signId, boolean danceFilterEnabled, int danceId, boolean filterExisting, boolean invert, int delay) {
+        JsonData(
+                int selectedAction,
+                boolean signFilterEnabled,
+                int signId,
+                boolean danceFilterEnabled,
+                int danceId,
+                boolean filterExisting,
+                boolean invert,
+                int delay) {
             this.selectedAction = selectedAction;
             this.signFilterEnabled = signFilterEnabled;
             this.signId = signId;

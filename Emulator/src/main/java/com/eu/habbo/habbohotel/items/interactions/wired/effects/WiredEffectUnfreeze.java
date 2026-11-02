@@ -1,10 +1,12 @@
 package com.eu.habbo.habbohotel.items.interactions.wired.effects;
 
 import com.eu.habbo.Emulator;
+import com.eu.habbo.WiredPlatform;
 import com.eu.habbo.habbohotel.gameclients.GameClient;
 import com.eu.habbo.habbohotel.items.Item;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredEffect;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredTrigger;
+import com.eu.habbo.habbohotel.items.interactions.wired.WiredInputGuard;
 import com.eu.habbo.habbohotel.items.interactions.wired.WiredSettings;
 import com.eu.habbo.habbohotel.rooms.Room;
 import com.eu.habbo.habbohotel.rooms.RoomUnit;
@@ -15,7 +17,7 @@ import com.eu.habbo.habbohotel.wired.core.WiredManager;
 import com.eu.habbo.habbohotel.wired.core.WiredSourceUtil;
 import com.eu.habbo.messages.ServerMessage;
 import com.eu.habbo.messages.incoming.wired.WiredSaveException;
-
+import com.eu.habbo.threading.ThreadPooling;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
@@ -43,8 +45,27 @@ public class WiredEffectUnfreeze extends InteractionWiredEffect {
                 continue;
             }
 
-            WiredFreezeUtil.unfreeze(room, roomUnit);
+            unfreezeOnTheRoomTick(room, roomUnit);
         }
+    }
+
+    /** Habbo unfreezes on the room's next 500 ms tick, not the moment the box runs. */
+    static void unfreezeOnTheRoomTick(Room room, RoomUnit roomUnit) {
+        ThreadPooling threading = WiredPlatform.threading();
+        if (threading == null) {
+            WiredFreezeUtil.unfreeze(room, roomUnit);
+            return;
+        }
+
+        long now = System.currentTimeMillis();
+        long delay = Math.max(0L, WiredEffectTeleport.nextRoomBoundary(room.getCycleTimestamp(), now) - now);
+        threading.run(
+                () -> {
+                    if (WiredFreezeUtil.isFrozen(roomUnit) && roomUnit.getRoom() == room) {
+                        WiredFreezeUtil.unfreeze(room, roomUnit);
+                    }
+                },
+                delay);
     }
 
     @Deprecated
@@ -91,8 +112,7 @@ public class WiredEffectUnfreeze extends InteractionWiredEffect {
         message.appendInt(this.getBaseItem().getSpriteId());
         message.appendInt(this.getId());
         message.appendString("");
-        message.appendInt(1);
-        message.appendInt(this.userSource);
+        message.appendInt(0);
         message.appendInt(0);
         message.appendInt(this.getType().code);
         message.appendInt(this.getDelay());
@@ -116,10 +136,11 @@ public class WiredEffectUnfreeze extends InteractionWiredEffect {
     @Override
     public boolean saveData(WiredSettings settings, GameClient gameClient) throws WiredSaveException {
         int[] params = settings.getIntParams();
-        this.userSource = (params.length > 0) ? params[0] : WiredSourceUtil.SOURCE_TRIGGER;
+        // Official: no int params; the user source is the official source slot.
+        this.userSource = settings.userSource(0, WiredSourceUtil.SOURCE_TRIGGER);
 
         int delay = settings.getDelay();
-        if (delay > Emulator.getConfig().getInt("hotel.wired.max_delay", 20)) {
+        if (delay > Emulator.getConfig().getInt("hotel.wired.max_delay", WiredInputGuard.DEFAULT_MAX_DELAY)) {
             throw new WiredSaveException("Delay too long");
         }
 

@@ -1,11 +1,11 @@
 package com.eu.habbo.habbohotel.items.interactions.wired.effects;
 
-import com.eu.habbo.Emulator;
+import com.eu.habbo.WiredPlatform;
+import com.eu.habbo.core.ConfigurationManager;
 import com.eu.habbo.habbohotel.gameclients.GameClient;
 import com.eu.habbo.habbohotel.items.Item;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredEffect;
 import com.eu.habbo.habbohotel.items.interactions.wired.WiredSettings;
-import com.eu.habbo.habbohotel.rooms.FurnitureMovementError;
 import com.eu.habbo.habbohotel.rooms.Room;
 import com.eu.habbo.habbohotel.rooms.RoomTile;
 import com.eu.habbo.habbohotel.rooms.RoomUnit;
@@ -17,7 +17,6 @@ import com.eu.habbo.habbohotel.wired.core.WiredMoveCarryHelper;
 import com.eu.habbo.habbohotel.wired.core.WiredSourceUtil;
 import com.eu.habbo.messages.ServerMessage;
 import com.eu.habbo.messages.incoming.wired.WiredSaveException;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
@@ -25,7 +24,8 @@ import java.util.Comparator;
 import java.util.List;
 
 /**
- * Move-furni-as-group effect (furni classname {@code wf_act_move_furni_as_group}). Shifts the
+ * Our "move group one step" effect (furni classname {@code wf_act_move_group_step}; the official
+ * "move as group" is {@link WiredEffectMoveAsGroup}). Shifts the
  * selected furni one tile in a configured direction by the same vector. Unlike
  * {@link WiredEffectMoveFurniTo} (which moves the triggering item toward selected targets), this
  * moves the selected items themselves.
@@ -39,7 +39,8 @@ import java.util.List;
  * abort packed groups, whose members' destinations are each other's still-occupied tiles.)</p>
  */
 public class WiredEffectMoveFurniAsGroup extends InteractionWiredEffect {
-    public static final WiredEffectType type = WiredEffectType.MOVE_FURNI_AS_GROUP;
+    // Ours (wf_act_move_group_step): the official "move as group" is WiredEffectMoveAsGroup.
+    public static final WiredEffectType type = WiredEffectType.MOVE_FURNI_GROUP_STEP;
 
     private final List<HabboItem> items = new ArrayList<>();
     private int direction;
@@ -49,25 +50,32 @@ public class WiredEffectMoveFurniAsGroup extends InteractionWiredEffect {
         super(set, baseItem);
     }
 
-    public WiredEffectMoveFurniAsGroup(int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
+    public WiredEffectMoveFurniAsGroup(
+            int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
         super(id, userId, item, extradata, limitedStack, limitedSells);
     }
 
     @Override
     public boolean saveData(WiredSettings settings, GameClient gameClient) throws WiredSaveException {
         Room room = this.getRoom();
-        if (room == null)
-            return false;
+        if (room == null) return false;
 
         this.items.clear();
 
-        if (settings.getIntParams().length < 2)
-            throw new WiredSaveException("invalid data");
+        // Ours: [direction]; the furni source is the official source slot.
+        if (settings.getIntParams().length < 1) throw new WiredSaveException("invalid data");
 
         this.direction = ((settings.getIntParams()[0] % 8) + 8) % 8;
-        this.furniSource = settings.getIntParams()[1];
+        this.furniSource = settings.furniSource(0, WiredSourceUtil.SOURCE_TRIGGER);
 
         int count = settings.getFurniIds().length;
+
+        ConfigurationManager config = WiredPlatform.configuration();
+        int cap = (config == null) ? Integer.MAX_VALUE : config.getInt("hotel.wired.furni.selection.count");
+        if (count > cap) {
+            throw new WiredSaveException("Too many furni selected");
+        }
+
         if (count > 0 && this.furniSource == WiredSourceUtil.SOURCE_TRIGGER) {
             this.furniSource = WiredSourceUtil.SOURCE_SELECTED;
         }
@@ -92,34 +100,39 @@ public class WiredEffectMoveFurniAsGroup extends InteractionWiredEffect {
 
     @Override
     public void execute(WiredContext ctx) {
-        if (ctx == null)
-            return;
+        if (ctx == null) return;
 
         Room room = ctx.room();
-        if (room == null || room.getLayout() == null)
-            return;
+        if (room == null || room.getLayout() == null) return;
 
-        List<HabboItem> effectiveItems = new ArrayList<>(WiredSourceUtil.resolveItems(ctx, this.furniSource, this.items));
+        List<HabboItem> effectiveItems =
+                new ArrayList<>(WiredSourceUtil.resolveItems(ctx, this.furniSource, this.items));
         effectiveItems.removeIf(item -> item == null || room.getHabboItem(item.getId()) == null);
 
-        if (effectiveItems.isEmpty())
-            return;
+        if (effectiveItems.isEmpty()) return;
+
+        // Habbo lists a group's moves in pick order, though the leading edge moves first.
+        List<Integer> pickOrder = effectiveItems.stream().map(HabboItem::getId).toList();
+        int firstMovement = WiredMoveCarryHelper.collectedMovementCount();
 
         // Move the leading edge first so members don't collide with un-moved members.
         int dx = directionDeltaX(this.direction);
         int dy = directionDeltaY(this.direction);
-        effectiveItems.sort(Comparator.comparingInt((HabboItem i) -> i.getX() * dx + i.getY() * dy).reversed());
+        effectiveItems.sort(Comparator.comparingInt((HabboItem i) -> i.getX() * dx + i.getY() * dy)
+                .reversed());
 
         for (HabboItem item : effectiveItems) {
             RoomTile current = room.getLayout().getTile(item.getX(), item.getY());
-            if (current == null)
-                continue;
+            if (current == null) continue;
 
             RoomTile target = room.getLayout().getTileInFront(current, this.direction, 1);
-            if (target == null || !target.getAllowStack())
-                continue;
+            if (target == null || !target.getAllowStack()) continue;
 
             WiredMoveCarryHelper.moveFurni(room, this, item, target, item.getRotation(), null, false, ctx);
+        }
+
+        if (firstMovement >= 0) {
+            WiredMoveCarryHelper.orderCollectedFurni(firstMovement, pickOrder);
         }
     }
 
@@ -136,30 +149,24 @@ public class WiredEffectMoveFurniAsGroup extends InteractionWiredEffect {
                 .map(HabboItem::getId)
                 .toList();
 
-        return WiredManager.getGson().toJson(new JsonData(
-                this.direction,
-                this.getDelay(),
-                validIds,
-                this.furniSource
-        ));
+        return WiredManager.getGson().toJson(new JsonData(this.direction, this.getDelay(), validIds, this.furniSource));
     }
 
     @Override
     public void serializeWiredData(ServerMessage message, Room room) {
         List<HabboItem> snapshot = new ArrayList<>(this.items);
-        snapshot.removeIf(item -> item == null || item.getRoomId() != this.getRoomId() || room.getHabboItem(item.getId()) == null);
+        snapshot.removeIf(item ->
+                item == null || item.getRoomId() != this.getRoomId() || room.getHabboItem(item.getId()) == null);
 
         message.appendBoolean(false);
         message.appendInt(WiredManager.MAXIMUM_FURNI_SELECTION);
         message.appendInt(snapshot.size());
-        for (HabboItem item : snapshot)
-            message.appendInt(item.getId());
+        for (HabboItem item : snapshot) message.appendInt(item.getId());
         message.appendInt(this.getBaseItem().getSpriteId());
         message.appendInt(this.getId());
         message.appendString("");
-        message.appendInt(2);
+        message.appendInt(1);
         message.appendInt(this.direction);
-        message.appendInt(this.furniSource);
         message.appendInt(0);
         message.appendInt(this.getType().code);
         message.appendInt(this.getDelay());
@@ -171,12 +178,10 @@ public class WiredEffectMoveFurniAsGroup extends InteractionWiredEffect {
         this.items.clear();
         String wiredData = set.getString("wired_data");
 
-        if (wiredData == null || !wiredData.startsWith("{"))
-            return;
+        if (wiredData == null || !wiredData.startsWith("{")) return;
 
         JsonData data = WiredManager.getGson().fromJson(wiredData, JsonData.class);
-        if (data == null)
-            return;
+        if (data == null) return;
 
         this.direction = ((data.direction % 8) + 8) % 8;
         this.setDelay(data.delay);

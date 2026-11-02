@@ -3,9 +3,11 @@ package com.eu.habbo.plugin;
 import com.eu.habbo.Emulator;
 import com.eu.habbo.core.ConfigurationManager;
 import com.eu.habbo.core.Easter;
+import com.eu.habbo.habbohotel.commands.CommandHandler;
 import com.eu.habbo.habbohotel.games.freeze.FreezeGame;
 import com.eu.habbo.habbohotel.games.tag.TagGame;
 import com.eu.habbo.habbohotel.items.interactions.games.football.InteractionFootballGate;
+import com.eu.habbo.habbohotel.users.RoomLookOverride;
 import com.eu.habbo.habbohotel.wired.core.WiredManager;
 import com.eu.habbo.habbohotel.wired.highscores.WiredHighscoreManager;
 import com.eu.habbo.messages.PacketManager;
@@ -21,6 +23,7 @@ import com.eu.habbo.plugin.events.users.UserTakeStepEvent;
 import com.eu.habbo.threading.runnables.RoomTrashing;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import java.io.Closeable;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
@@ -57,7 +60,8 @@ public class PluginManager {
     // of building a parser per plugin-config load.
     private static final Gson PLUGIN_GSON = new GsonBuilder().create();
 
-    private final Set<HabboPlugin> plugins = new HashSet<>();
+    // Walked by every denied permission check on the network threads while a reload clears and refills it.
+    private final Set<HabboPlugin> plugins = ConcurrentHashMap.newKeySet();
     private final Set<Method> methods = new HashSet<>();
     private final BooleanSupplier honorPriority;
     private final Object dispatchStateLock = new Object();
@@ -161,9 +165,15 @@ public class PluginManager {
                     throw new RuntimeException("Invalid Jar! Missing plugin.json in: " + file.getName());
                 }
 
-                byte[] content = new byte[stream.available()];
+                // available() is only an estimate and one read() may return part of the file: read it whole, with a
+                // limit, so a large or slow plugin.json is neither cut short nor read without bound.
+                byte[] content = stream.readNBytes(MAX_PLUGIN_JSON_BYTES + 1);
+                if (content.length > MAX_PLUGIN_JSON_BYTES) {
+                    throw new RuntimeException(
+                            "plugin.json is larger than " + MAX_PLUGIN_JSON_BYTES + " bytes in: " + file.getName());
+                }
 
-                if (stream.read(content) > 0) {
+                if (content.length > 0) {
                     String body = new String(content, java.nio.charset.StandardCharsets.UTF_8);
 
                     HabboPluginConfiguration pluginConfigurtion =
@@ -184,10 +194,13 @@ public class PluginManager {
                         plugin.configuration = pluginConfigurtion;
                         plugin.classLoader = urlClassLoader;
                         plugin.stream = stream;
+                        // Registered only once it started: a plugin whose onEnable threw stayed listed half
+                        // set up, its handlers and permission checks live.
+                        plugin.onEnable();
                         this.plugins.add(plugin);
                         retainPluginResources = true;
-                        plugin.onEnable();
                     } catch (Exception e) {
+                        CommandHandler.removeCommandsLoadedBy(urlClassLoader);
                         LOGGER.error("Could not load plugin {}!", pluginConfigurtion.name);
                         LOGGER.error("Caught exception", e);
                     }
@@ -199,6 +212,16 @@ public class PluginManager {
                     closeRejectedPluginResources(stream, urlClassLoader, file.getName());
                 }
             }
+        }
+    }
+
+    private static void closeQuietly(Closeable resource, String pluginName) {
+        if (resource == null) return;
+
+        try {
+            resource.close();
+        } catch (IOException e) {
+            LOGGER.error("Failed to release a resource of plugin {}", pluginName, e);
         }
     }
 
@@ -220,6 +243,13 @@ public class PluginManager {
         }
     }
 
+    /** The largest plugin.json a plugin may ship. */
+    static final int MAX_PLUGIN_JSON_BYTES = 64 * 1024;
+
+    // The object a plugin's handler is called on, when the listener is not the plugin itself. Only the methods were
+    // kept, so a handler of a separate listener object was called on the plugin and always failed.
+    private final Map<Method, Object> listenerReceivers = new ConcurrentHashMap<>();
+
     public void registerEvents(HabboPlugin plugin, EventListener listener) {
         synchronized (this.dispatchStateLock) {
             synchronized (plugin.registeredEvents) {
@@ -238,6 +268,12 @@ public class PluginManager {
                                 plugin.registeredEvents
                                         .get(eventClass.asSubclass(Event.class))
                                         .add(method);
+
+                                if (listener != plugin) {
+                                    this.listenerReceivers.put(method, listener);
+                                } else {
+                                    this.listenerReceivers.remove(method);
+                                }
                             }
                         }
                     }
@@ -298,12 +334,13 @@ public class PluginManager {
 
                 try {
                     p.onDisable();
-                    p.stream.close();
-                    p.classLoader.close();
-                } catch (IOException e) {
-                    LOGGER.error("Caught exception", e);
                 } catch (Exception ex) {
                     LOGGER.error("Failed to disable {} because of an exception.", p.configuration.name, ex);
+                } finally {
+                    // Released even when onDisable threw: the class loader stayed in memory and the jar locked.
+                    CommandHandler.removeCommandsLoadedBy(p.classLoader);
+                    closeQuietly(p.stream, p.configuration.name);
+                    closeQuietly(p.classLoader, p.configuration.name);
                 }
             }
         }
@@ -317,6 +354,9 @@ public class PluginManager {
             this.reloading = true;
             try {
                 this.methods.clear();
+                // The listener instances of the plugins being reloaded go with their methods: kept, the old
+                // instances still received events after the reload.
+                this.listenerReceivers.clear();
                 this.loadPluginsInternal();
                 this.registerDefaultEvents();
             } finally {
@@ -346,6 +386,9 @@ public class PluginManager {
                     InteractionFootballGate.class.getMethod("onUserDisconnectEvent", UserDisconnectEvent.class));
             this.methods.add(InteractionFootballGate.class.getMethod("onUserExitRoomEvent", UserExitRoomEvent.class));
             this.methods.add(InteractionFootballGate.class.getMethod("onUserSavedLookEvent", UserSavedLookEvent.class));
+            this.methods.add(RoomLookOverride.class.getMethod("onUserExitRoomEvent", UserExitRoomEvent.class));
+            this.methods.add(RoomLookOverride.class.getMethod("onUserDisconnectEvent", UserDisconnectEvent.class));
+            this.methods.add(RoomLookOverride.class.getMethod("onUserSavedLookEvent", UserSavedLookEvent.class));
             this.methods.add(
                     PluginManager.class.getMethod("globalOnConfigurationUpdated", EmulatorConfigUpdatedEvent.class));
             this.methods.add(WiredHighscoreManager.class.getMethod("onEmulatorLoaded", EmulatorLoadedEvent.class));
@@ -378,11 +421,13 @@ public class PluginManager {
     }
 
     private void publishDispatchSnapshot() {
-        this.dispatchSnapshot = DispatchSnapshot.capture(this.methods, this.plugins);
+        this.dispatchSnapshot =
+                DispatchSnapshot.capture(this.methods, this.plugins, Map.copyOf(this.listenerReceivers));
     }
 
     private record HandlerInvocation(
             HabboPlugin plugin,
+            Object receiver,
             Method method,
             EventHandler annotation,
             Class<? extends Event> eventType,
@@ -393,18 +438,19 @@ public class PluginManager {
                 Comparator.comparingInt(HandlerInvocation::prioritySlot).thenComparing(HandlerInvocation::stableKey);
 
         static HandlerInvocation defaultHandler(Method method) {
-            return create(null, method);
+            return create(null, null, method);
         }
 
-        static HandlerInvocation pluginHandler(HabboPlugin plugin, Method method) {
-            return create(plugin, method);
+        static HandlerInvocation pluginHandler(HabboPlugin plugin, Object receiver, Method method) {
+            return create(plugin, receiver, method);
         }
 
-        private static HandlerInvocation create(HabboPlugin plugin, Method method) {
+        private static HandlerInvocation create(HabboPlugin plugin, Object receiver, Method method) {
             try {
                 method.trySetAccessible();
                 return new HandlerInvocation(
                         plugin,
+                        receiver,
                         method,
                         method.getAnnotation(EventHandler.class),
                         method.getParameterTypes()[0].asSubclass(Event.class),
@@ -451,7 +497,7 @@ public class PluginManager {
                 if (this.staticMethod) {
                     this.handle.invoke(event);
                 } else {
-                    this.handle.invoke(this.plugin, event);
+                    this.handle.invoke(this.receiver, event);
                 }
             } catch (Throwable exception) {
                 if (this.plugin == null) {
@@ -483,7 +529,7 @@ public class PluginManager {
             return new DispatchSnapshot(List.of(), Map.of(), Map.of(), List.of(), new ConcurrentHashMap<>());
         }
 
-        static DispatchSnapshot capture(Set<Method> methods, Set<HabboPlugin> plugins) {
+        static DispatchSnapshot capture(Set<Method> methods, Set<HabboPlugin> plugins, Map<Method, Object> receivers) {
             List<HandlerInvocation> defaults = methods.stream()
                     .filter(method -> method.getAnnotation(EventHandler.class) != null)
                     .map(HandlerInvocation::defaultHandler)
@@ -504,7 +550,8 @@ public class PluginManager {
                         List<HandlerInvocation> eventHandlers =
                                 handlers.computeIfAbsent(eventType, ignored -> new ArrayList<>());
                         registeredMethodsSnapshot.stream()
-                                .map(method -> HandlerInvocation.pluginHandler(plugin, method))
+                                .map(method -> HandlerInvocation.pluginHandler(
+                                        plugin, receivers.getOrDefault(method, plugin), method))
                                 .forEach(eventHandlers::add);
                     });
                 }

@@ -8,32 +8,43 @@ import com.eu.habbo.habbohotel.users.Habbo;
 import com.eu.habbo.messages.ServerMessage;
 import com.eu.habbo.messages.outgoing.MessageComposer;
 import com.eu.habbo.messages.outgoing.Outgoing;
+import it.unimi.dsi.fastutil.ints.IntArrayList;
+import it.unimi.dsi.fastutil.ints.IntList;
+import it.unimi.dsi.fastutil.ints.IntOpenHashSet;
+import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import java.util.List;
 
 public class CatalogPagesListComposer extends MessageComposer {
     private static final Logger LOGGER = LoggerFactory.getLogger(CatalogPagesListComposer.class);
 
+    private static final int MAX_OFFERS = 4000;
     private static final int MAX_CHILDREN = 500;
     private static final int MAX_DEPTH = 20;
 
     private final Habbo habbo;
     private final String mode;
     private final boolean hasPermission;
+    private final boolean newAdditionsAvailable;
 
     public CatalogPagesListComposer(Habbo habbo, String mode) {
+        this(habbo, mode, false);
+    }
+
+    /** {@code newAdditionsAvailable}: the official index flag that opens the new_additions page (AIR 15). */
+    public CatalogPagesListComposer(Habbo habbo, String mode, boolean newAdditionsAvailable) {
         this.habbo = habbo;
         this.mode = mode;
         this.hasPermission = this.habbo.hasPermission(Permission.ACC_CATALOG_IDS);
+        this.newAdditionsAvailable = newAdditionsAvailable;
     }
 
     @Override
     protected ServerMessage composeInternal() {
         try {
             CatalogPageType requestedType = CatalogPageType.fromString(this.mode);
-            List<CatalogPage> pages = Emulator.getGameEnvironment().getCatalogManager().getCatalogPages(-1, this.habbo, requestedType);
+            List<CatalogPage> pages =
+                    Emulator.getGameEnvironment().getCatalogManager().getCatalogPages(-1, this.habbo, requestedType);
 
             this.response.init(Outgoing.CatalogPagesListComposer);
 
@@ -52,7 +63,7 @@ public class CatalogPagesListComposer extends MessageComposer {
                 this.append(pages.get(idx), 1, requestedType);
             }
 
-            this.response.appendBoolean(false);
+            this.response.appendBoolean(this.newAdditionsAvailable);
             this.response.appendString(this.mode);
 
             return this.response;
@@ -64,7 +75,9 @@ public class CatalogPagesListComposer extends MessageComposer {
     }
 
     private void append(CatalogPage category, int depth, CatalogPageType requestedType) {
-        List<CatalogPage> pagesList = Emulator.getGameEnvironment().getCatalogManager().getCatalogPages(category.getId(), this.habbo, requestedType);
+        List<CatalogPage> pagesList = Emulator.getGameEnvironment()
+                .getCatalogManager()
+                .getCatalogPages(category.getId(), this.habbo, requestedType);
 
         this.response.appendBoolean(category.isVisible());
         this.response.appendInt(category.getIconImage());
@@ -73,9 +86,27 @@ public class CatalogPagesListComposer extends MessageComposer {
         this.response.appendString(category.getPageName());
         this.response.appendString(category.getCaption() + (this.hasPermission ? " (" + category.getId() + ")" : ""));
 
-        // Offer IDs are resolved when a page is opened (GetCatalogPage). Embedding ~80k
-        // ids in the index bloats the first catalog open by seconds on large catalogs.
-        this.response.appendInt(0);
+        IntList pageOfferIds = category.getOfferIds();
+        IntList offerIds = new IntArrayList(pageOfferIds.size());
+        IntOpenHashSet seenOfferIds = new IntOpenHashSet();
+        for (int idx = 0; idx < pageOfferIds.size(); idx++) {
+            int offerId = pageOfferIds.getInt(idx);
+            if (offerId > 0 && seenOfferIds.add(offerId)) offerIds.add(offerId);
+        }
+
+        int offerCount = Math.min(offerIds.size(), MAX_OFFERS);
+        if (offerIds.size() > MAX_OFFERS) {
+            LOGGER.warn(
+                    "Catalog page {} has {} offers; limiting the index packet to {}",
+                    category.getId(),
+                    offerIds.size(),
+                    MAX_OFFERS);
+        }
+
+        this.response.appendInt(offerCount);
+        for (int idx = 0; idx < offerCount; idx++) {
+            this.response.appendInt(offerIds.getInt(idx));
+        }
 
         if (depth >= MAX_DEPTH) {
             this.response.appendInt(0);
@@ -90,13 +121,16 @@ public class CatalogPagesListComposer extends MessageComposer {
         }
     }
 
-
     public Habbo getHabbo() {
         return habbo;
     }
 
     public String getMode() {
         return mode;
+    }
+
+    public boolean isNewAdditionsAvailable() {
+        return newAdditionsAvailable;
     }
 
     public boolean isHasPermission() {

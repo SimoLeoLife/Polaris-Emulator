@@ -8,9 +8,8 @@ import com.eu.habbo.habbohotel.rooms.RoomUnit;
 import com.eu.habbo.habbohotel.wired.WiredConditionType;
 import com.eu.habbo.habbohotel.wired.core.WiredContext;
 import com.eu.habbo.habbohotel.wired.core.WiredManager;
+import com.eu.habbo.habbohotel.wired.core.WiredRoomTime;
 import com.eu.habbo.messages.ServerMessage;
-import com.eu.habbo.util.HotelDateTimeUtil;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.LocalTime;
@@ -19,6 +18,11 @@ public class WiredConditionMatchTime extends InteractionWiredCondition {
     private static final int MODE_SKIP = 0;
     private static final int MODE_EXACT = 1;
     private static final int MODE_RANGE = 2;
+
+    /** An official "use" flag and range as our mode: off, a single value, or a range. */
+    static int mode(boolean use, int from, int to) {
+        return !use ? MODE_SKIP : (from == to ? MODE_EXACT : MODE_RANGE);
+    }
 
     public static final WiredConditionType type = WiredConditionType.MATCH_TIME;
 
@@ -31,12 +35,15 @@ public class WiredConditionMatchTime extends InteractionWiredCondition {
     private int secondMode = MODE_SKIP;
     private int secondFrom = 0;
     private int secondTo = 0;
+    /** AIR's timezone dropdown (the string param): a zone id, or empty for the room's wired timezone. */
+    private String timezone = "";
 
     public WiredConditionMatchTime(ResultSet set, Item baseItem) throws SQLException {
         super(set, baseItem);
     }
 
-    public WiredConditionMatchTime(int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
+    public WiredConditionMatchTime(
+            int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
         super(id, userId, item, extradata, limitedStack, limitedSells);
     }
 
@@ -52,17 +59,19 @@ public class WiredConditionMatchTime extends InteractionWiredCondition {
         message.appendInt(0);
         message.appendInt(this.getBaseItem().getSpriteId());
         message.appendInt(this.getId());
-        message.appendString("");
+        message.appendString(this.timezone);
+        // Official layout: [useSeconds, useMinutes, useHours, secondMin, secondMax, minuteMin, minuteMax,
+        // hourMin, hourMax]; an exact value is a range of one.
         message.appendInt(9);
-        message.appendInt(this.hourMode);
-        message.appendInt(this.hourFrom);
-        message.appendInt(this.hourTo);
-        message.appendInt(this.minuteMode);
-        message.appendInt(this.minuteFrom);
-        message.appendInt(this.minuteTo);
-        message.appendInt(this.secondMode);
+        message.appendInt(this.secondMode != MODE_SKIP ? 1 : 0);
+        message.appendInt(this.minuteMode != MODE_SKIP ? 1 : 0);
+        message.appendInt(this.hourMode != MODE_SKIP ? 1 : 0);
         message.appendInt(this.secondFrom);
-        message.appendInt(this.secondTo);
+        message.appendInt(this.secondMode == MODE_RANGE ? this.secondTo : this.secondFrom);
+        message.appendInt(this.minuteFrom);
+        message.appendInt(this.minuteMode == MODE_RANGE ? this.minuteTo : this.minuteFrom);
+        message.appendInt(this.hourFrom);
+        message.appendInt(this.hourMode == MODE_RANGE ? this.hourTo : this.hourFrom);
         message.appendInt(0);
         message.appendInt(this.getType().code);
         message.appendInt(0);
@@ -73,22 +82,24 @@ public class WiredConditionMatchTime extends InteractionWiredCondition {
     public boolean saveData(WiredSettings settings) {
         int[] params = settings.getIntParams();
 
-        this.hourMode = (params.length > 0) ? this.normalizeMode(params[0]) : MODE_SKIP;
-        this.hourFrom = (params.length > 1) ? this.normalizeHour(params[1]) : 0;
-        this.hourTo = (params.length > 2) ? this.normalizeHour(params[2]) : this.hourFrom;
-        this.minuteMode = (params.length > 3) ? this.normalizeMode(params[3]) : MODE_SKIP;
-        this.minuteFrom = (params.length > 4) ? this.normalizeMinuteOrSecond(params[4]) : 0;
-        this.minuteTo = (params.length > 5) ? this.normalizeMinuteOrSecond(params[5]) : this.minuteFrom;
-        this.secondMode = (params.length > 6) ? this.normalizeMode(params[6]) : MODE_SKIP;
-        this.secondFrom = (params.length > 7) ? this.normalizeMinuteOrSecond(params[7]) : 0;
-        this.secondTo = (params.length > 8) ? this.normalizeMinuteOrSecond(params[8]) : this.secondFrom;
+        this.secondFrom = (params.length > 3) ? this.normalizeMinuteOrSecond(params[3]) : 0;
+        this.secondTo = (params.length > 4) ? this.normalizeMinuteOrSecond(params[4]) : 59;
+        this.minuteFrom = (params.length > 5) ? this.normalizeMinuteOrSecond(params[5]) : 0;
+        this.minuteTo = (params.length > 6) ? this.normalizeMinuteOrSecond(params[6]) : 59;
+        this.hourFrom = (params.length > 7) ? this.normalizeHour(params[7]) : 0;
+        this.hourTo = (params.length > 8) ? this.normalizeHour(params[8]) : 23;
+        this.secondMode = mode(params.length > 0 && params[0] == 1, this.secondFrom, this.secondTo);
+        this.minuteMode = mode(params.length > 1 && params[1] == 1, this.minuteFrom, this.minuteTo);
+        this.hourMode = mode(params.length > 2 && params[2] == 1, this.hourFrom, this.hourTo);
+        this.timezone = WiredRoomTime.normalizeTimezone(settings.getStringParam());
 
         return true;
     }
 
     @Override
     public boolean evaluate(WiredContext ctx) {
-        LocalTime now = HotelDateTimeUtil.localTimeNow();
+        LocalTime now = WiredRoomTime.now((ctx != null) ? ctx.room() : null, this.timezone)
+                .toLocalTime();
 
         return this.matchesTimePart(now.getHour(), this.hourMode, this.hourFrom, this.hourTo)
                 && this.matchesTimePart(now.getMinute(), this.minuteMode, this.minuteFrom, this.minuteTo)
@@ -103,17 +114,18 @@ public class WiredConditionMatchTime extends InteractionWiredCondition {
 
     @Override
     public String getWiredData() {
-        return WiredManager.getGson().toJson(new JsonData(
-                this.hourMode,
-                this.hourFrom,
-                this.hourTo,
-                this.minuteMode,
-                this.minuteFrom,
-                this.minuteTo,
-                this.secondMode,
-                this.secondFrom,
-                this.secondTo
-        ));
+        return WiredManager.getGson()
+                .toJson(new JsonData(
+                        this.hourMode,
+                        this.hourFrom,
+                        this.hourTo,
+                        this.minuteMode,
+                        this.minuteFrom,
+                        this.minuteTo,
+                        this.secondMode,
+                        this.secondFrom,
+                        this.secondTo,
+                        this.timezone.isEmpty() ? null : this.timezone));
     }
 
     @Override
@@ -147,6 +159,8 @@ public class WiredConditionMatchTime extends InteractionWiredCondition {
             this.secondMode = this.normalizeMode(data.secondMode);
             this.secondFrom = this.normalizeMinuteOrSecond(data.secondFrom);
             this.secondTo = this.normalizeMinuteOrSecond(data.secondTo);
+            // Boxes saved before the timezone dropdown follow the room's wired timezone.
+            this.timezone = WiredRoomTime.normalizeTimezone(data.timezone);
             return;
         }
 
@@ -185,6 +199,7 @@ public class WiredConditionMatchTime extends InteractionWiredCondition {
         this.secondMode = MODE_SKIP;
         this.secondFrom = 0;
         this.secondTo = 0;
+        this.timezone = "";
     }
 
     private boolean matchesTimePart(int currentValue, int mode, int fromValue, int toValue) {
@@ -228,8 +243,19 @@ public class WiredConditionMatchTime extends InteractionWiredCondition {
         int secondMode;
         int secondFrom;
         int secondTo;
+        String timezone;
 
-        public JsonData(int hourMode, int hourFrom, int hourTo, int minuteMode, int minuteFrom, int minuteTo, int secondMode, int secondFrom, int secondTo) {
+        public JsonData(
+                int hourMode,
+                int hourFrom,
+                int hourTo,
+                int minuteMode,
+                int minuteFrom,
+                int minuteTo,
+                int secondMode,
+                int secondFrom,
+                int secondTo,
+                String timezone) {
             this.hourMode = hourMode;
             this.hourFrom = hourFrom;
             this.hourTo = hourTo;
@@ -239,6 +265,7 @@ public class WiredConditionMatchTime extends InteractionWiredCondition {
             this.secondMode = secondMode;
             this.secondFrom = secondFrom;
             this.secondTo = secondTo;
+            this.timezone = timezone;
         }
     }
 }

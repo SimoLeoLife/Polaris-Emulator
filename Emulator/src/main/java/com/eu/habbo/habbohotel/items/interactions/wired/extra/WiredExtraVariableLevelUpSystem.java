@@ -1,5 +1,6 @@
 package com.eu.habbo.habbohotel.items.interactions.wired.extra;
 
+import com.eu.habbo.WiredCompatibilityDiagnostics;
 import com.eu.habbo.habbohotel.gameclients.GameClient;
 import com.eu.habbo.habbohotel.items.Item;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredExtra;
@@ -8,7 +9,6 @@ import com.eu.habbo.habbohotel.rooms.Room;
 import com.eu.habbo.habbohotel.rooms.RoomUnit;
 import com.eu.habbo.habbohotel.wired.core.WiredManager;
 import com.eu.habbo.messages.ServerMessage;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
@@ -31,10 +31,22 @@ public class WiredExtraVariableLevelUpSystem extends InteractionWiredExtra {
     public static final int SUB_MAX_LEVEL = 7;
     public static final int SUBVARIABLE_COUNT = 8;
 
+    private static final int OFFICIAL_MODE_MANUAL = 0;
+    private static final int OFFICIAL_MODE_LINEAR = 1;
+    private static final int OFFICIAL_MODE_EXPONENTIAL = 2;
     private static final int DEFAULT_STEP_SIZE = 100;
-    private static final int DEFAULT_MAX_LEVEL = 10;
+    // Official defaults for a new box: 50 levels, 20 % growth, every sub-variable.
+    private static final int DEFAULT_MAX_LEVEL = 50;
+    // Hard ceiling on the level count. Consumers rebuild the full threshold
+    // table on every variable read (WiredVariableLevelSystemSupport), so an
+    // unbounded maxLevel or manual anchor level is a room-thread DoS.
+    // Kept private (not public) so it stays off the frozen wired plugin ABI
+    // (WiredPublicSurfaceCompatibilityTest); WiredVariableLevelSystemSupport
+    // holds its own private copy of the same cap.
+    private static final int MAX_LEVEL = 10_000;
     private static final int DEFAULT_FIRST_LEVEL_XP = 100;
-    private static final int DEFAULT_INCREASE_FACTOR = 100;
+    private static final int DEFAULT_INCREASE_FACTOR = 20;
+    private static final int DEFAULT_SUBVARIABLE_MASK = (1 << SUBVARIABLE_COUNT) - 1;
     private static final int MAX_MANUAL_TEXT_LENGTH = 4096;
 
     private int mode = MODE_LINEAR;
@@ -43,13 +55,14 @@ public class WiredExtraVariableLevelUpSystem extends InteractionWiredExtra {
     private int firstLevelXp = DEFAULT_FIRST_LEVEL_XP;
     private int increaseFactor = DEFAULT_INCREASE_FACTOR;
     private String interpolationText = "";
-    private int subvariableMask = (1 << SUB_CURRENT_LEVEL) | (1 << SUB_CURRENT_XP);
+    private int subvariableMask = DEFAULT_SUBVARIABLE_MASK;
 
     public WiredExtraVariableLevelUpSystem(ResultSet set, Item baseItem) throws SQLException {
         super(set, baseItem);
     }
 
-    public WiredExtraVariableLevelUpSystem(int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
+    public WiredExtraVariableLevelUpSystem(
+            int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
         super(id, userId, item, extradata, limitedStack, limitedSells);
     }
 
@@ -60,21 +73,71 @@ public class WiredExtraVariableLevelUpSystem extends InteractionWiredExtra {
 
     @Override
     public boolean saveData(WiredSettings settings, GameClient gameClient) {
-        this.applyConfig(parseJsonData(settings.getStringParam()));
+        int[] params = settings.getIntParams();
+        String text = settings.getStringParam();
+        if (params.length == 0 || (text != null && text.trim().startsWith("{"))) {
+            // A save from before the official layout: the whole config as JSON text.
+            this.applyConfig(parseJsonData(text));
+            return true;
+        }
+
+        // Official layout: [sub-variable mask, mode (0 manual, 1 linear, 2 exponential), the mode's
+        // figures: linear step and max level, or exponential first level XP, growth % and max level];
+        // the manual "level=xp" lines as text.
+        this.subvariableMask = params[0] & ((1 << SUBVARIABLE_COUNT) - 1);
+        int officialMode = params.length > 1 ? params[1] : OFFICIAL_MODE_LINEAR;
+        switch (officialMode) {
+            case OFFICIAL_MODE_MANUAL -> {
+                this.mode = MODE_MANUAL;
+                this.interpolationText = normalizeInterpolationText(text);
+            }
+            case OFFICIAL_MODE_EXPONENTIAL -> {
+                this.mode = MODE_EXPONENTIAL;
+                this.firstLevelXp =
+                        normalizeNonNegative(param(params, 2, DEFAULT_FIRST_LEVEL_XP), DEFAULT_FIRST_LEVEL_XP);
+                this.increaseFactor = Math.max(0, param(params, 3, DEFAULT_INCREASE_FACTOR));
+                this.maxLevel = normalizeMaxLevel(param(params, 4, DEFAULT_MAX_LEVEL));
+            }
+            default -> {
+                this.mode = MODE_LINEAR;
+                this.stepSize = normalizeNonNegative(param(params, 2, DEFAULT_STEP_SIZE), DEFAULT_STEP_SIZE);
+                this.maxLevel = normalizeMaxLevel(param(params, 3, DEFAULT_MAX_LEVEL));
+            }
+        }
         return true;
+    }
+
+    private static int param(int[] params, int index, int fallback) {
+        return index < params.length ? params[index] : fallback;
+    }
+
+    /** The official int params: the mask, the mode and that mode's figures. */
+    int[] officialIntParams() {
+        return switch (this.mode) {
+            case MODE_MANUAL -> new int[] {this.subvariableMask, OFFICIAL_MODE_MANUAL};
+            case MODE_EXPONENTIAL ->
+                new int[] {
+                    this.subvariableMask,
+                    OFFICIAL_MODE_EXPONENTIAL,
+                    this.firstLevelXp,
+                    this.increaseFactor,
+                    this.maxLevel
+                };
+            default -> new int[] {this.subvariableMask, OFFICIAL_MODE_LINEAR, this.stepSize, this.maxLevel};
+        };
     }
 
     @Override
     public String getWiredData() {
-        return WiredManager.getGson().toJson(new JsonData(
-            this.mode,
-            this.stepSize,
-            this.maxLevel,
-            this.firstLevelXp,
-            this.increaseFactor,
-            this.interpolationText,
-            this.getSelectedSubvariables()
-        ));
+        return WiredManager.getGson()
+                .toJson(new JsonData(
+                        this.mode,
+                        this.stepSize,
+                        this.maxLevel,
+                        this.firstLevelXp,
+                        this.increaseFactor,
+                        this.interpolationText,
+                        this.getSelectedSubvariables()));
     }
 
     @Override
@@ -84,8 +147,10 @@ public class WiredExtraVariableLevelUpSystem extends InteractionWiredExtra {
         message.appendInt(0);
         message.appendInt(this.getBaseItem().getSpriteId());
         message.appendInt(this.getId());
-        message.appendString(this.getWiredData());
-        message.appendInt(0);
+        message.appendString(this.mode == MODE_MANUAL ? this.interpolationText : "");
+        int[] params = this.officialIntParams();
+        message.appendInt(params.length);
+        for (int param : params) message.appendInt(param);
         message.appendInt(0);
         message.appendInt(CODE);
         message.appendInt(0);
@@ -112,12 +177,11 @@ public class WiredExtraVariableLevelUpSystem extends InteractionWiredExtra {
         this.firstLevelXp = DEFAULT_FIRST_LEVEL_XP;
         this.increaseFactor = DEFAULT_INCREASE_FACTOR;
         this.interpolationText = "";
-        this.subvariableMask = (1 << SUB_CURRENT_LEVEL) | (1 << SUB_CURRENT_XP);
+        this.subvariableMask = DEFAULT_SUBVARIABLE_MASK;
     }
 
     @Override
-    public void onWalk(RoomUnit roomUnit, Room room, Object[] objects) {
-    }
+    public void onWalk(RoomUnit roomUnit, Room room, Object[] objects) {}
 
     @Override
     public boolean hasConfiguration() {
@@ -150,8 +214,8 @@ public class WiredExtraVariableLevelUpSystem extends InteractionWiredExtra {
 
     public boolean hasSubvariable(int subvariableType) {
         return subvariableType >= 0
-            && subvariableType < SUBVARIABLE_COUNT
-            && ((this.subvariableMask & (1 << subvariableType)) != 0);
+                && subvariableType < SUBVARIABLE_COUNT
+                && ((this.subvariableMask & (1 << subvariableType)) != 0);
     }
 
     public List<Integer> getSelectedSubvariables() {
@@ -176,7 +240,8 @@ public class WiredExtraVariableLevelUpSystem extends InteractionWiredExtra {
         this.stepSize = normalizeNonNegative(data.stepSize, DEFAULT_STEP_SIZE);
         this.maxLevel = normalizeMaxLevel(data.maxLevel);
         this.firstLevelXp = normalizeNonNegative(data.firstLevelXp, DEFAULT_FIRST_LEVEL_XP);
-        this.increaseFactor = normalizeNonNegative(data.increaseFactor, DEFAULT_INCREASE_FACTOR);
+        // 0 % growth is a valid (flat) curve.
+        this.increaseFactor = Math.max(0, data.increaseFactor);
         this.interpolationText = normalizeInterpolationText(data.interpolationText);
         this.subvariableMask = normalizeSubvariableMask(data.subvariables);
     }
@@ -192,6 +257,8 @@ public class WiredExtraVariableLevelUpSystem extends InteractionWiredExtra {
                 return (data != null) ? data : new JsonData();
             }
         } catch (Exception ignored) {
+            WiredCompatibilityDiagnostics.record(
+                    WiredCompatibilityDiagnostics.FailurePoint.EXTRA_LEVEL_UP_JSON, ignored);
         }
 
         JsonData fallback = new JsonData();
@@ -212,7 +279,7 @@ public class WiredExtraVariableLevelUpSystem extends InteractionWiredExtra {
     }
 
     private static int normalizeMaxLevel(int value) {
-        return Math.max(1, (value > 0) ? value : DEFAULT_MAX_LEVEL);
+        return Math.min(MAX_LEVEL, Math.max(1, (value > 0) ? value : DEFAULT_MAX_LEVEL));
     }
 
     private static String normalizeInterpolationText(String value) {
@@ -230,6 +297,7 @@ public class WiredExtraVariableLevelUpSystem extends InteractionWiredExtra {
 
     private static int normalizeSubvariableMask(List<Integer> subvariables) {
         if (subvariables == null) {
+            // A box saved before sub-variables were stored keeps the two it had.
             return (1 << SUB_CURRENT_LEVEL) | (1 << SUB_CURRENT_XP);
         }
 
@@ -254,10 +322,16 @@ public class WiredExtraVariableLevelUpSystem extends InteractionWiredExtra {
         String interpolationText = "";
         List<Integer> subvariables = null;
 
-        JsonData() {
-        }
+        JsonData() {}
 
-        JsonData(int mode, int stepSize, int maxLevel, int firstLevelXp, int increaseFactor, String interpolationText, List<Integer> subvariables) {
+        JsonData(
+                int mode,
+                int stepSize,
+                int maxLevel,
+                int firstLevelXp,
+                int increaseFactor,
+                String interpolationText,
+                List<Integer> subvariables) {
             this.mode = mode;
             this.stepSize = stepSize;
             this.maxLevel = maxLevel;

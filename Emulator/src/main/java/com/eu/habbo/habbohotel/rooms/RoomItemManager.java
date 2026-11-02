@@ -1,6 +1,6 @@
 package com.eu.habbo.habbohotel.rooms;
 
-import com.eu.habbo.Emulator;
+import com.eu.habbo.habbohotel.items.FurnitureDirectionsRuntime;
 import com.eu.habbo.habbohotel.items.FurnitureType;
 import com.eu.habbo.habbohotel.items.Item;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWired;
@@ -58,18 +58,33 @@ public class RoomItemManager {
         synchronized (this.index.items()) {
             this.index.items().clear();
         }
+        this.index.buildersClubIds().clear();
 
+        // Everything comes through this connection: a load holds it, so asking the pool for another
+        // per item can starve the pool when several rooms load at once.
+        Set<Integer> buildersClub = this.readBuildersClubItems(connection);
+        this.readOwnerNames(connection, !buildersClub.isEmpty());
+
+        Set<String> floorNames = new HashSet<>();
         try (PreparedStatement statement = connection.prepareStatement("SELECT * FROM items WHERE room_id = ?")) {
             statement.setInt(1, this.room.getId());
             try (ResultSet set = statement.executeQuery()) {
                 while (set.next()) {
-                    this.addHabboItem(
-                            Emulator.getGameEnvironment().getItemManager().loadHabboItem(set));
+                    HabboItem item =
+                            this.room.gameEnvironment().getItemManager().loadHabboItem(set);
+                    if (item != null) {
+                        this.ownership.add(item, buildersClub.contains(item.getId()), false);
+                        if (item.getBaseItem() != null && item.getBaseItem().getType() == FurnitureType.FLOOR) {
+                            floorNames.add(item.getBaseItem().getName());
+                        }
+                    }
                 }
             }
         } catch (SQLException e) {
             LOGGER.error("Caught SQL exception", e);
         }
+        // Read the furni directions in the background now, so wired and rotations find them cached.
+        floorNames.forEach(FurnitureDirectionsRuntime::prefetch);
 
         if (this.itemCount() > Room.MAXIMUM_FURNI) {
             LOGGER.error(
@@ -77,6 +92,48 @@ public class RoomItemManager {
                     this.room.getId(),
                     this.itemCount(),
                     Room.MAXIMUM_FURNI);
+        }
+    }
+
+    private Set<Integer> readBuildersClubItems(Connection connection) {
+        Set<Integer> ids = new HashSet<>();
+        try (PreparedStatement statement =
+                connection.prepareStatement("SELECT builders_club_items.item_id FROM builders_club_items "
+                        + "INNER JOIN items ON items.id = builders_club_items.item_id WHERE items.room_id = ?")) {
+            statement.setInt(1, this.room.getId());
+            try (ResultSet set = statement.executeQuery()) {
+                while (set.next()) {
+                    ids.add(set.getInt(1));
+                }
+            }
+        } catch (SQLException e) {
+            LOGGER.error("Caught SQL exception reading Builders Club items of room {}", this.room.getId(), e);
+        }
+        return ids;
+    }
+
+    /** The names of everyone owning items here, in one query instead of a profile load per owner. */
+    private void readOwnerNames(Connection connection, boolean hasBuildersClubItems) {
+        Int2ObjectMap<String> names = this.index.ownerNames();
+        try (PreparedStatement statement =
+                connection.prepareStatement("SELECT DISTINCT users.id, users.username FROM items "
+                        + "INNER JOIN users ON users.id = items.user_id WHERE items.room_id = ? "
+                        + "AND items.id NOT IN (SELECT item_id FROM builders_club_items)")) {
+            statement.setInt(1, this.room.getId());
+            try (ResultSet set = statement.executeQuery()) {
+                synchronized (names) {
+                    while (set.next()) {
+                        int userId = set.getInt(1);
+                        names.put(
+                                userId,
+                                hasBuildersClubItems && userId == BuildersClubRoomSupport.VIRTUAL_OWNER_ID
+                                        ? BuildersClubRoomSupport.DISPLAY_OWNER_NAME
+                                        : set.getString(2));
+                    }
+                }
+            }
+        } catch (SQLException e) {
+            LOGGER.error("Caught SQL exception reading item owner names of room {}", this.room.getId(), e);
         }
     }
 
@@ -90,14 +147,25 @@ public class RoomItemManager {
 
             try (ResultSet set = statement.executeQuery()) {
                 while (set.next()) {
+                    int itemId = 0;
+                    HabboItem item = null;
                     try {
-                        HabboItem item = this.getHabboItem(set.getInt("id"));
+                        itemId = set.getInt("id");
+                        item = this.getHabboItem(itemId);
 
-                        if (item instanceof InteractionWired) {
-                            ((InteractionWired) item).loadWiredData(set, this.room);
+                        if (item instanceof InteractionWired wired) {
+                            wired.loadWiredData(set, this.room);
                         }
-                    } catch (SQLException e) {
-                        LOGGER.error("Caught SQL exception", e);
+                    } catch (Exception exception) {
+                        if (item instanceof InteractionWired) {
+                            this.registry.quarantineWired(item);
+                        }
+                        LOGGER.error(
+                                "Quarantined malformed wired item room={} item={} type={} cause={}",
+                                this.room.getId(),
+                                itemId,
+                                item == null ? "unknown" : item.getClass().getSimpleName(),
+                                exception.getClass().getSimpleName());
                     }
                 }
             }
@@ -115,6 +183,22 @@ public class RoomItemManager {
      */
     public HabboItem getHabboItem(int id) {
         return this.index.get(id);
+    }
+
+    /**
+     * The database id of the furni the client knows by {@code wireId} here: a Builders Club wire id becomes the
+     * furni's database id (0 when no furni here holds it), any other id is returned unchanged.
+     * Use {@link BuildersClubItemIds#fromWire(Room, int)} from handlers.
+     */
+    public int itemIdFromWire(int wireId) {
+        return BuildersClubItemIds.isBandId(wireId)
+                ? this.index.buildersClubIds().itemOf(wireId)
+                : wireId;
+    }
+
+    /** Returns the current in-room incarnation for an item ID, or zero when absent. */
+    public long getItemIncarnation(int id) {
+        return this.index.itemIncarnation(id);
     }
 
     /**
@@ -273,8 +357,8 @@ public class RoomItemManager {
             return null;
         }
 
-        // If underpass is disabled for this room, just return the top item
-        if (!this.room.isAllowUnderpass()) {
+        // If underpass is disabled for this room and this item, just return the top item
+        if (!this.room.isAllowUnderpass() && !topItem.isAllowUnderpass()) {
             return topItem;
         }
 
@@ -449,6 +533,15 @@ public class RoomItemManager {
         this.ownership.remove(item);
     }
 
+    /**
+     * Removes an item from the room and reports whether this call is the one that did it.
+     *
+     * @see RoomItemOwnershipService#remove(HabboItem)
+     */
+    public boolean claimHabboItem(HabboItem item) {
+        return this.ownership.remove(item);
+    }
+
     // ==================== ITEM UPDATES ====================
 
     /**
@@ -514,6 +607,11 @@ public class RoomItemManager {
     /**
      * Ejects all furniture belonging to a user.
      */
+    /** Removes Place Furni's temporary copies in one batched removal (picker -1). */
+    public void removeTemporaryItems(java.util.Collection<HabboItem> items) {
+        this.ownership.removeTemporaryItems(items);
+    }
+
     public void ejectUserFurni(int userId) {
         this.ownership.ejectUserFurniture(userId);
     }
@@ -537,6 +635,20 @@ public class RoomItemManager {
      */
     public void ejectAll(Habbo habbo) {
         this.ownership.ejectAll(habbo);
+    }
+
+    /**
+     * Ejects all items from the room except the Builders Club furni, which only {@code :pickallbc} removes.
+     */
+    public void ejectAllExceptBuildersClub() {
+        this.ownership.ejectAllExceptBuildersClub();
+    }
+
+    /**
+     * Removes every Builders Club furni from the room.
+     */
+    public void removeBuildersClubItems(Habbo picker) {
+        this.ownership.removeBuildersClubItems(picker);
     }
 
     // ==================== LOCKED TILES ====================

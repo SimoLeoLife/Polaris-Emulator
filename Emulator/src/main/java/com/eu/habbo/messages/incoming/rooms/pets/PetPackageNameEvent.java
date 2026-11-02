@@ -2,6 +2,8 @@ package com.eu.habbo.messages.incoming.rooms.pets;
 
 import com.eu.habbo.Emulator;
 import com.eu.habbo.habbohotel.pets.Pet;
+import com.eu.habbo.habbohotel.pets.PetManager;
+import com.eu.habbo.habbohotel.rooms.BuildersClubItemIds;
 import com.eu.habbo.habbohotel.rooms.Room;
 import com.eu.habbo.habbohotel.rooms.RoomTile;
 import com.eu.habbo.habbohotel.users.HabboItem;
@@ -18,7 +20,7 @@ import org.apache.commons.lang3.StringUtils;
 public class PetPackageNameEvent extends MessageHandler {
     @Override
     public void handle() throws Exception {
-        int itemId = this.packet.readInt();
+        int itemId = BuildersClubItemIds.fromWire(this.currentRoom(), this.packet.readInt());
         String name = this.packet.readString();
 
         if (!RoomItemInputGuard.isPositiveId(itemId)) {
@@ -40,34 +42,46 @@ public class PetPackageNameEvent extends MessageHandler {
                             return;
                         }
 
+                        // Claim the box before a pet is created from it: a pickup or a room
+                        // eviction racing this used to leave the box alive in an inventory
+                        // while its row was already deleted, so it could be opened again.
+                        if (!room.claimItem(item)) {
+                            return;
+                        }
+
                         Pet pet = null;
+                        PetManager petManager = Emulator.getGameEnvironment().getPetManager();
 
                         if (item.getBaseItem().getName().equalsIgnoreCase("val11_present")) {
-                            pet = Emulator.getGameEnvironment().getPetManager().createPet(11, name, this.client);
+                            pet = petManager.createPet(11, name, this.client);
                         }
 
                         if (item.getBaseItem().getName().equalsIgnoreCase("gnome_box")) {
-                            pet = Emulator.getGameEnvironment()
-                                    .getPetManager()
-                                    .createGnome(name, room, this.client.getHabbo());
+                            pet = petManager.createGnome(name, room, this.client.getHabbo());
                         }
 
                         if (item.getBaseItem().getName().equalsIgnoreCase("leprechaun_box")) {
-                            pet = Emulator.getGameEnvironment()
-                                    .getPetManager()
-                                    .createLeprechaun(name, room, this.client.getHabbo());
+                            pet = petManager.createLeprechaun(name, room, this.client.getHabbo());
                         }
 
                         if (item.getBaseItem().getName().equalsIgnoreCase("velociraptor_egg")) {
-                            pet = Emulator.getGameEnvironment().getPetManager().createPet(34, name, this.client);
+                            pet = petManager.createPet(34, name, this.client);
                         }
 
                         if (item.getBaseItem().getName().equalsIgnoreCase("pterosaur_egg")) {
-                            pet = Emulator.getGameEnvironment().getPetManager().createPet(33, name, this.client);
+                            pet = petManager.createPet(33, name, this.client);
                         }
 
                         if (item.getBaseItem().getName().equalsIgnoreCase("petbox_epic")) {
-                            pet = Emulator.getGameEnvironment().getPetManager().createPet(32, name, this.client);
+                            pet = petManager.createPet(32, name, this.client);
+                        }
+
+                        if (item.getBaseItem().getName().equalsIgnoreCase("cowbox")) {
+                            pet = petManager.createPet(35, name, this.client);
+                        }
+
+                        if (item.getBaseItem().getName().equalsIgnoreCase("cowbox_gold")) {
+                            pet = petManager.createPet(35, 28, name, this.client);
                         }
 
                         if (pet != null) {
@@ -77,7 +91,6 @@ public class PetPackageNameEvent extends MessageHandler {
                             pet.getRoomUnit().setLocation(tile);
                             pet.getRoomUnit().setZ(item.getZ());
                             Emulator.getThreading().runPersistence(new QueryDeleteHabboItem(item.getId()));
-                            room.removeHabboItem(item);
                             room.sendComposer(new RemoveFloorItemComposer(item).compose());
                             room.updateTile(tile);
                             room.sendComposer(
@@ -85,6 +98,9 @@ public class PetPackageNameEvent extends MessageHandler {
                                             .compose());
                             item.setUserId(0);
                         } else {
+                            // No pet matched this box after all: give the claim back so the
+                            // furni stays in the room instead of vanishing until a reload.
+                            room.addHabboItem(item);
                             this.client.sendResponse(
                                     new AlertPurchaseFailedComposer(AlertPurchaseFailedComposer.SERVER_ERROR));
                         }

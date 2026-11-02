@@ -1,12 +1,14 @@
 package com.eu.habbo.habbohotel.items.interactions.wired.effects;
 
 import com.eu.habbo.Emulator;
+import com.eu.habbo.WiredCompatibilityDiagnostics;
 import com.eu.habbo.habbohotel.achievements.AchievementManager;
 import com.eu.habbo.habbohotel.gameclients.GameClient;
 import com.eu.habbo.habbohotel.items.Item;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredEffect;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredTrigger;
 import com.eu.habbo.habbohotel.items.interactions.wired.WiredNumericInputGuard;
+import com.eu.habbo.habbohotel.items.interactions.wired.WiredRewardPolicy;
 import com.eu.habbo.habbohotel.items.interactions.wired.WiredSettings;
 import com.eu.habbo.habbohotel.rooms.Room;
 import com.eu.habbo.habbohotel.rooms.RoomUnit;
@@ -16,14 +18,13 @@ import com.eu.habbo.habbohotel.wired.core.WiredContext;
 import com.eu.habbo.habbohotel.wired.core.WiredManager;
 import com.eu.habbo.habbohotel.wired.core.WiredSourceUtil;
 import com.eu.habbo.messages.ServerMessage;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
 
 public class WiredEffectGiveRespect extends InteractionWiredEffect {
-    public static final WiredEffectType type = WiredEffectType.SHOW_MESSAGE;
+    public static final WiredEffectType type = WiredEffectType.EFFECT_AMOUNT;
 
     private int respects = 0;
     private int userSource = WiredSourceUtil.SOURCE_TRIGGER;
@@ -44,8 +45,7 @@ public class WiredEffectGiveRespect extends InteractionWiredEffect {
         message.appendInt(this.getBaseItem().getSpriteId());
         message.appendInt(this.getId());
         message.appendString(this.respects + "");
-        message.appendInt(1);
-        message.appendInt(this.userSource);
+        message.appendInt(0);
         message.appendInt(0);
         message.appendInt(type.code);
         message.appendInt(this.getDelay());
@@ -68,14 +68,21 @@ public class WiredEffectGiveRespect extends InteractionWiredEffect {
 
     @Override
     public boolean saveData(WiredSettings settings, GameClient gameClient) {
-        int nextRespects = WiredNumericInputGuard.parsePositiveAmount(settings.getStringParam(), WiredNumericInputGuard.maxRespectAmount());
+        // Value out of nothing: the amount cap bounds one firing, not a room full of them.
+        if (!WiredRewardPolicy.canConfigure(gameClient)) {
+            return false;
+        }
+
+        int nextRespects = WiredNumericInputGuard.parsePositiveAmount(
+                settings.getStringParam(), WiredNumericInputGuard.maxRespectAmount());
         if (nextRespects <= 0) {
             return false;
         }
         this.respects = nextRespects;
 
         int[] params = settings.getIntParams();
-        this.userSource = (params.length > 0) ? params[0] : WiredSourceUtil.SOURCE_TRIGGER;
+        // Official: no int params; the user source is the official source slot.
+        this.userSource = settings.userSource(0, WiredSourceUtil.SOURCE_TRIGGER);
 
         this.setDelay(settings.getDelay());
 
@@ -94,9 +101,11 @@ public class WiredEffectGiveRespect extends InteractionWiredEffect {
         for (RoomUnit unit : WiredSourceUtil.resolveUsers(ctx, this.userSource)) {
             Habbo habbo = room.getHabbo(unit);
             if (habbo == null) continue;
-
             habbo.getHabboStats().respectPointsReceived += this.respects;
-            AchievementManager.progressAchievement(habbo, Emulator.getGameEnvironment().getAchievementManager().getAchievement("RespectEarned"), this.respects);
+            AchievementManager.progressAchievement(
+                    habbo,
+                    Emulator.getGameEnvironment().getAchievementManager().getAchievement("RespectEarned"),
+                    this.respects);
         }
     }
 
@@ -115,13 +124,14 @@ public class WiredEffectGiveRespect extends InteractionWiredEffect {
     public void loadWiredData(ResultSet set, Room room) throws SQLException {
         String wiredData = set.getString("wired_data");
 
-        if(wiredData.startsWith("{")) {
+        if (wiredData.startsWith("{")) {
             JsonData data = WiredManager.getGson().fromJson(wiredData, JsonData.class);
-            this.respects = data.amount;
+            // The cap is a property of the system, not of the moment a furni was saved:
+            // a value stored under a looser limit is brought back inside it here.
+            this.respects = WiredNumericInputGuard.clampAmount(data.amount, WiredNumericInputGuard.maxRespectAmount());
             this.setDelay(data.delay);
             this.userSource = data.userSource;
-        }
-        else {
+        } else {
             String[] data = wiredData.split("\t");
             this.respects = 0;
 
@@ -131,6 +141,11 @@ public class WiredEffectGiveRespect extends InteractionWiredEffect {
                 try {
                     this.respects = Integer.parseInt(data[1]);
                 } catch (Exception e) {
+                    WiredCompatibilityDiagnostics.record(
+                            WiredCompatibilityDiagnostics.FailurePoint.EFFECT_GIVE_RESPECT_LEGACY,
+                            this.getRoomId(),
+                            this.getId(),
+                            e);
                 }
             }
 

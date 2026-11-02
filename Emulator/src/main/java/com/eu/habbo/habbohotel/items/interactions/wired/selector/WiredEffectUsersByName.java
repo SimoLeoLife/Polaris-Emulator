@@ -3,6 +3,7 @@ package com.eu.habbo.habbohotel.items.interactions.wired.selector;
 import com.eu.habbo.habbohotel.gameclients.GameClient;
 import com.eu.habbo.habbohotel.items.Item;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredEffect;
+import com.eu.habbo.habbohotel.items.interactions.wired.WiredSaveRefusedException;
 import com.eu.habbo.habbohotel.items.interactions.wired.WiredSettings;
 import com.eu.habbo.habbohotel.rooms.Room;
 import com.eu.habbo.habbohotel.rooms.RoomUnit;
@@ -10,16 +11,21 @@ import com.eu.habbo.habbohotel.users.Habbo;
 import com.eu.habbo.habbohotel.wired.WiredEffectType;
 import com.eu.habbo.habbohotel.wired.core.WiredContext;
 import com.eu.habbo.habbohotel.wired.core.WiredManager;
+import com.eu.habbo.habbohotel.wired.protocol.WiredOfficialSelector;
 import com.eu.habbo.messages.ServerMessage;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.LinkedHashSet;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
-import java.util.stream.Collectors;
 
-public class WiredEffectUsersByName extends InteractionWiredEffect {
+public class WiredEffectUsersByName extends InteractionWiredEffect implements WiredOfficialSelector {
+    static final int MAX_NAMES = 20;
+    /** The longest name AIR keeps in the list. */
+    static final int MAX_NAME_LENGTH = 30;
+
+    static final int MAX_NAMES_TEXT_LENGTH = 1000;
     public static final WiredEffectType type = WiredEffectType.USERS_BY_NAME_SELECTOR;
 
     private String namesText = "";
@@ -42,28 +48,24 @@ public class WiredEffectUsersByName extends InteractionWiredEffect {
             return;
         }
 
+        // Every avatar by its name, as officially: users, bots and pets.
         Set<RoomUnit> result = new LinkedHashSet<>();
+        Set<RoomUnit> availableUsers = new LinkedHashSet<>();
 
-        for (Habbo habbo : room.getHabbos()) {
-            if (habbo == null || habbo.getHabboInfo() == null || habbo.getRoomUnit() == null) {
+        for (RoomUnit unit : room.getRoomUnits()) {
+            if (unit == null) {
                 continue;
             }
+            availableUsers.add(unit);
 
-            String username = habbo.getHabboInfo().getUsername();
-            if (username == null) {
-                continue;
-            }
-
-            if (this.usernames.contains(username.trim().toLowerCase(Locale.ROOT))) {
-                result.add(habbo.getRoomUnit());
+            // AIR compares the name as it is, ignoring case only.
+            String name = nameOf(room, unit);
+            if (name != null && this.usernames.contains(name.toLowerCase(Locale.ROOT))) {
+                result.add(unit);
             }
         }
-
-        Set<RoomUnit> availableUsers = room.getHabbos().stream()
-                .filter(habbo -> habbo != null && habbo.getRoomUnit() != null)
-                .map(Habbo::getRoomUnit)
-                .collect(Collectors.toCollection(LinkedHashSet::new));
-        result = this.applySelectorModifiers(result, availableUsers, ctx.targets().users(), this.filterExisting, this.invert);
+        result = this.applySelectorModifiers(
+                result, availableUsers, ctx.targets().users(), this.filterExisting, this.invert);
 
         ctx.targets().setUsers(result);
     }
@@ -72,12 +74,34 @@ public class WiredEffectUsersByName extends InteractionWiredEffect {
     public boolean saveData(WiredSettings settings, GameClient gameClient) {
         int[] params = settings.getIntParams();
 
-        this.namesText = this.normalizeNamesText(settings.getStringParam());
-        this.usernames = this.parseUsernames(this.namesText);
-        this.filterExisting = params.length > 0 && params[0] == 1;
-        this.invert = params.length > 1 && params[1] == 1;
+        String names = normalizeNamesText(settings.getStringParam());
+        refuseOversizedNames(settings.getStringParam(), names);
+        this.namesText = names;
+        this.usernames = parseUsernames(this.namesText);
+        this.filterExisting = settings.isSelectorFilter();
+        this.invert = settings.isSelectorInvert();
         this.setDelay(settings.getDelay());
         return true;
+    }
+
+    @Override
+    public boolean selectorFilter() {
+        return this.filterExisting;
+    }
+
+    @Override
+    public boolean selectorInvert() {
+        return this.invert;
+    }
+
+    @Override
+    public int[] officialFurniSources() {
+        return new int[0];
+    }
+
+    @Override
+    public int[] officialUserSources() {
+        return new int[0];
     }
 
     @Override
@@ -97,7 +121,8 @@ public class WiredEffectUsersByName extends InteractionWiredEffect {
 
     @Override
     public String getWiredData() {
-        return WiredManager.getGson().toJson(new JsonData(this.namesText, this.filterExisting, this.invert, this.getDelay()));
+        return WiredManager.getGson()
+                .toJson(new JsonData(this.namesText, this.filterExisting, this.invert, this.getDelay()));
     }
 
     @Override
@@ -115,15 +140,15 @@ public class WiredEffectUsersByName extends InteractionWiredEffect {
                 return;
             }
 
-            this.namesText = this.normalizeNamesText(data.namesText);
+            this.namesText = normalizeNamesText(data.namesText);
             this.filterExisting = data.filterExisting;
             this.invert = data.invert;
             this.setDelay(data.delay);
         } else {
-            this.namesText = this.normalizeNamesText(wiredData);
+            this.namesText = normalizeNamesText(wiredData);
         }
 
-        this.usernames = this.parseUsernames(this.namesText);
+        this.usernames = parseUsernames(this.namesText);
     }
 
     @Override
@@ -143,9 +168,7 @@ public class WiredEffectUsersByName extends InteractionWiredEffect {
         message.appendInt(this.getBaseItem().getSpriteId());
         message.appendInt(this.getId());
         message.appendString(this.namesText);
-        message.appendInt(2);
-        message.appendInt(this.filterExisting ? 1 : 0);
-        message.appendInt(this.invert ? 1 : 0);
+        message.appendInt(0);
         message.appendInt(0);
         message.appendInt(this.getType().code);
         message.appendInt(this.getDelay());
@@ -157,34 +180,76 @@ public class WiredEffectUsersByName extends InteractionWiredEffect {
         return false;
     }
 
-    private String normalizeNamesText(String value) {
-        if (value == null || value.trim().isEmpty()) {
-            return "";
+    private static String nameOf(Room room, RoomUnit unit) {
+        Habbo habbo = room.getHabbo(unit);
+        if (habbo != null && habbo.getHabboInfo() != null)
+            return habbo.getHabboInfo().getUsername();
+        var bot = room.getBot(unit);
+        if (bot != null) return bot.getName();
+        var pet = room.getPet(unit);
+        return pet != null ? pet.getName() : null;
+    }
+
+    /**
+     * The official editor takes at most 20 names and 1000 characters (UsersByName: TextAreaParam(140,-1,20,-1,1000)).
+     * Behaviour observed in plus-emulator/PlusEMU b8f78f2a, reimplemented.
+     */
+    static void refuseOversizedNames(String raw, String normalized) {
+        if (raw != null && raw.length() > MAX_NAMES_TEXT_LENGTH) {
+            throw new WiredSaveRefusedException(
+                    "wiredfurni.error.too_much_text", Map.of("limit", String.valueOf(MAX_NAMES_TEXT_LENGTH)));
         }
 
-        Set<String> normalizedLines = new LinkedHashSet<>();
+        if (normalized.isEmpty()) {
+            return;
+        }
 
-        for (String line : value.split("\\R")) {
-            String normalized = line.trim();
-            if (!normalized.isEmpty()) {
-                normalizedLines.add(normalized);
+        // AIR counts every TAB-separated name, an empty one between two tabs too; a long name is refused first.
+        String[] names = normalized.split("\t", -1);
+
+        for (String name : names) {
+            if (name.length() > MAX_NAME_LENGTH) {
+                throw new WiredSaveRefusedException(
+                        "wiredfurni.error.username_length",
+                        Map.of("max_username_length", String.valueOf(MAX_NAME_LENGTH)));
             }
         }
 
-        return normalizedLines.stream().collect(Collectors.joining("\n"));
+        if (names.length > MAX_NAMES) {
+            throw new WiredSaveRefusedException(
+                    "wiredfurni.error.usernames_count", Map.of("max_usernames", String.valueOf(MAX_NAMES)));
+        }
     }
 
-    private Set<String> parseUsernames(String value) {
+    /**
+     * AIR stores the names lower case, separated by TAB only, with no trimming and the trailing tabs cut. Line
+     * breaks (rows saved before, or a client that sends them) are read as tabs.
+     */
+    static String normalizeNamesText(String value) {
+        if (value == null) {
+            return "";
+        }
+
+        String names = value.replaceAll("\\r\\n|\\r|\\n", "\t").toLowerCase(Locale.ROOT);
+        int end = names.length();
+
+        while (end > 0 && names.charAt(end - 1) == '\t') {
+            end--;
+        }
+
+        return names.substring(0, end);
+    }
+
+    static Set<String> parseUsernames(String value) {
         Set<String> result = new LinkedHashSet<>();
 
-        if (value == null || value.trim().isEmpty()) {
+        if (value == null || value.isEmpty()) {
             return result;
         }
 
-        for (String line : value.split("\\R")) {
-            String normalized = line.trim();
-            if (!normalized.isEmpty()) {
-                result.add(normalized.toLowerCase(Locale.ROOT));
+        for (String name : value.split("\t")) {
+            if (!name.isEmpty()) {
+                result.add(name.toLowerCase(Locale.ROOT));
             }
         }
 

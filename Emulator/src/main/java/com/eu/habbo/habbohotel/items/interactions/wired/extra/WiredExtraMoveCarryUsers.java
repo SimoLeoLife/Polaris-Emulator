@@ -9,7 +9,6 @@ import com.eu.habbo.habbohotel.rooms.RoomUnit;
 import com.eu.habbo.habbohotel.wired.core.WiredManager;
 import com.eu.habbo.habbohotel.wired.core.WiredSourceUtil;
 import com.eu.habbo.messages.ServerMessage;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 
@@ -20,13 +19,15 @@ public class WiredExtraMoveCarryUsers extends InteractionWiredExtra {
     public static final int SOURCE_ALL_ROOM_USERS = 900;
 
     private int carryMode = MODE_DIRECTLY_ON_FURNI;
-    private int userSource = WiredSourceUtil.SOURCE_TRIGGER;
+    // Officially everyone on the furni or tile is carried; our user source narrows that.
+    private int userSource = SOURCE_ALL_ROOM_USERS;
 
     public WiredExtraMoveCarryUsers(ResultSet set, Item baseItem) throws SQLException {
         super(set, baseItem);
     }
 
-    public WiredExtraMoveCarryUsers(int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
+    public WiredExtraMoveCarryUsers(
+            int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
         super(id, userId, item, extradata, limitedStack, limitedSells);
     }
 
@@ -40,7 +41,7 @@ public class WiredExtraMoveCarryUsers extends InteractionWiredExtra {
         int[] params = settings.getIntParams();
 
         this.carryMode = this.normalizeCarryMode((params.length > 0) ? params[0] : MODE_DIRECTLY_ON_FURNI);
-        this.userSource = this.normalizeUserSource((params.length > 1) ? params[1] : WiredSourceUtil.SOURCE_TRIGGER);
+        this.userSource = this.normalizeUserSource((params.length > 1) ? params[1] : SOURCE_ALL_ROOM_USERS);
 
         return true;
     }
@@ -108,13 +109,11 @@ public class WiredExtraMoveCarryUsers extends InteractionWiredExtra {
     @Override
     public void onPickUp() {
         this.carryMode = MODE_DIRECTLY_ON_FURNI;
-        this.userSource = WiredSourceUtil.SOURCE_TRIGGER;
+        this.userSource = SOURCE_ALL_ROOM_USERS;
     }
 
     @Override
-    public void onWalk(RoomUnit roomUnit, Room room, Object[] objects) throws Exception {
-
-    }
+    public void onWalk(RoomUnit roomUnit, Room room, Object[] objects) throws Exception {}
 
     @Override
     public boolean hasConfiguration() {

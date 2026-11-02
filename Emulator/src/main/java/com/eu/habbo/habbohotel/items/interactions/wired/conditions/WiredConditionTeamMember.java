@@ -8,16 +8,17 @@ import com.eu.habbo.habbohotel.rooms.Room;
 import com.eu.habbo.habbohotel.rooms.RoomUnit;
 import com.eu.habbo.habbohotel.users.Habbo;
 import com.eu.habbo.habbohotel.wired.WiredConditionType;
-import com.eu.habbo.habbohotel.wired.core.WiredManager;
 import com.eu.habbo.habbohotel.wired.core.WiredContext;
+import com.eu.habbo.habbohotel.wired.core.WiredManager;
+import com.eu.habbo.habbohotel.wired.core.WiredQuantifier;
 import com.eu.habbo.habbohotel.wired.core.WiredSourceUtil;
+import com.eu.habbo.habbohotel.wired.protocol.WiredOfficialQuantifier;
 import com.eu.habbo.messages.ServerMessage;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.List;
 
-public class WiredConditionTeamMember extends InteractionWiredCondition {
+public class WiredConditionTeamMember extends InteractionWiredCondition implements WiredOfficialQuantifier {
     protected static final int QUANTIFIER_ALL = 0;
     protected static final int QUANTIFIER_ANY = 1;
 
@@ -31,7 +32,8 @@ public class WiredConditionTeamMember extends InteractionWiredCondition {
         super(set, baseItem);
     }
 
-    public WiredConditionTeamMember(int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
+    public WiredConditionTeamMember(
+            int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
         super(id, userId, item, extradata, limitedStack, limitedSells);
     }
 
@@ -39,7 +41,7 @@ public class WiredConditionTeamMember extends InteractionWiredCondition {
     public boolean evaluate(WiredContext ctx) {
         Room room = ctx.room();
         List<RoomUnit> targets = WiredSourceUtil.resolveUsers(ctx, this.userSource);
-        if (targets.isEmpty()) return false;
+        if (targets.isEmpty()) return WiredQuantifier.overEmpty(this.quantifier != QUANTIFIER_ANY);
 
         if (this.quantifier == QUANTIFIER_ANY) {
             return this.evaluateAnyTargetMatches(room, targets);
@@ -70,9 +72,10 @@ public class WiredConditionTeamMember extends InteractionWiredCondition {
 
     protected boolean matchesTeam(Room room, RoomUnit roomUnit) {
         Habbo habbo = room.getHabbo(roomUnit);
-        return habbo != null
-                && habbo.getHabboInfo().getGamePlayer() != null
-                && habbo.getHabboInfo().getGamePlayer().getTeamColor().equals(this.teamColor);
+        if (habbo == null || habbo.getHabboInfo().getGamePlayer() == null) return false;
+        GameTeamColors team = habbo.getHabboInfo().getGamePlayer().getTeamColor();
+        // Team 0 is "in any team", as officially.
+        return this.teamColor == GameTeamColors.NONE ? team != GameTeamColors.NONE : team.equals(this.teamColor);
     }
 
     @Deprecated
@@ -83,11 +86,7 @@ public class WiredConditionTeamMember extends InteractionWiredCondition {
 
     @Override
     public String getWiredData() {
-        return WiredManager.getGson().toJson(new JsonData(
-                this.teamColor,
-                this.userSource,
-                this.quantifier
-        ));
+        return WiredManager.getGson().toJson(new JsonData(this.teamColor, this.userSource, this.quantifier));
     }
 
     @Override
@@ -102,7 +101,8 @@ public class WiredConditionTeamMember extends InteractionWiredCondition {
                 this.quantifier = this.normalizeQuantifier(data.quantifier, QUANTIFIER_ANY);
             } else {
                 if (!wiredData.equals(""))
-                    this.teamColor = WiredConditionInputGuard.normalizeTeamColorType(Integer.parseInt(wiredData), GameTeamColors.RED);
+                    this.teamColor = WiredConditionInputGuard.normalizeTeamColorType(
+                            Integer.parseInt(wiredData), GameTeamColors.RED);
                 this.userSource = WiredSourceUtil.SOURCE_TRIGGER;
                 this.quantifier = QUANTIFIER_ANY;
             }
@@ -133,10 +133,8 @@ public class WiredConditionTeamMember extends InteractionWiredCondition {
         message.appendInt(this.getBaseItem().getSpriteId());
         message.appendInt(this.getId());
         message.appendString("");
-        message.appendInt(3);
+        message.appendInt(1);
         message.appendInt(this.teamColor.type);
-        message.appendInt(this.userSource);
-        message.appendInt(this.quantifier);
         message.appendInt(0);
         message.appendInt(this.getType().code);
         message.appendInt(0);
@@ -145,11 +143,15 @@ public class WiredConditionTeamMember extends InteractionWiredCondition {
 
     @Override
     public boolean saveData(WiredSettings settings) {
-        if(settings.getIntParams().length < 1) return false;
+        if (settings.getIntParams().length < 1) return false;
         int[] params = settings.getIntParams();
         this.teamColor = WiredConditionInputGuard.normalizeTeamColorType(params[0], GameTeamColors.RED);
-        this.userSource = (params.length > 1) ? WiredConditionInputGuard.normalizeUserSource(params[1]) : WiredSourceUtil.SOURCE_TRIGGER;
-        this.quantifier = (params.length > 2) ? this.normalizeQuantifier(params[2], QUANTIFIER_ALL) : QUANTIFIER_ANY;
+        // Official layout: [team (0 any team, 1-4)], the users in the official source slot, the
+        // quantifier (0 all, 1 any) in its slot.
+        this.userSource = settings.getUserSourceTypes().length > 0
+                ? WiredConditionInputGuard.normalizeUserSource(settings.getUserSourceTypes()[0])
+                : WiredSourceUtil.SOURCE_TRIGGER;
+        this.quantifier = this.normalizeQuantifier(settings.getQuantifierCode(), QUANTIFIER_ALL);
 
         return true;
     }
@@ -176,5 +178,10 @@ public class WiredConditionTeamMember extends InteractionWiredCondition {
             this.userSource = userSource;
             this.quantifier = quantifier;
         }
+    }
+
+    @Override
+    public int officialQuantifierCode() {
+        return this.getQuantifier();
     }
 }

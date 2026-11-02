@@ -5,7 +5,6 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -75,7 +74,12 @@ public final class FurniEditorRepository {
             if (!exists(connection, itemId)) {
                 return new DeleteResult(DeleteStatus.NOT_FOUND, 0);
             }
+            // Only a furni definition nobody owns can go. Furni parked in a wired chest are owned too:
+            // deleting their definition would leave them unreadable when they come back out.
             int usage = this.count(connection, "SELECT COUNT(*) FROM items WHERE item_id = ?", itemId);
+            if (usage == 0) {
+                usage = this.count(connection, "SELECT COUNT(*) FROM wired_chest_items WHERE item_id = ?", itemId);
+            }
             if (usage > 0) {
                 return new DeleteResult(DeleteStatus.IN_USE, usage);
             }
@@ -92,19 +96,6 @@ public final class FurniEditorRepository {
             }
             return new DeleteResult(DeleteStatus.DELETED, 0);
         }
-    }
-
-    public List<String> findInteractionTypes() throws SQLException {
-        List<String> interactions = new ArrayList<>();
-        try (Connection connection = this.dataSource.getConnection();
-                Statement statement = connection.createStatement();
-                ResultSet set = statement.executeQuery("SELECT DISTINCT interaction_type FROM items_base "
-                        + "WHERE interaction_type != '' ORDER BY interaction_type ASC")) {
-            while (set.next()) {
-                interactions.add(set.getString("interaction_type"));
-            }
-        }
-        return List.copyOf(interactions);
     }
 
     public SearchPage search(SearchRequest request) throws SQLException {

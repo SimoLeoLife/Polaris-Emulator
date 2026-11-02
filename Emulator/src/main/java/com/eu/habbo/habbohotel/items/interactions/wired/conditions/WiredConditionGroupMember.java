@@ -9,14 +9,15 @@ import com.eu.habbo.habbohotel.users.Habbo;
 import com.eu.habbo.habbohotel.wired.WiredConditionType;
 import com.eu.habbo.habbohotel.wired.core.WiredContext;
 import com.eu.habbo.habbohotel.wired.core.WiredManager;
+import com.eu.habbo.habbohotel.wired.core.WiredQuantifier;
 import com.eu.habbo.habbohotel.wired.core.WiredSourceUtil;
+import com.eu.habbo.habbohotel.wired.protocol.WiredOfficialQuantifier;
 import com.eu.habbo.messages.ServerMessage;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.List;
 
-public class WiredConditionGroupMember extends InteractionWiredCondition {
+public class WiredConditionGroupMember extends InteractionWiredCondition implements WiredOfficialQuantifier {
     private static final int GROUP_CURRENT_ROOM = 0;
     private static final int GROUP_SELECTED = 1;
     protected static final int QUANTIFIER_ALL = 0;
@@ -32,7 +33,8 @@ public class WiredConditionGroupMember extends InteractionWiredCondition {
         super(set, baseItem);
     }
 
-    public WiredConditionGroupMember(int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
+    public WiredConditionGroupMember(
+            int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
         super(id, userId, item, extradata, limitedStack, limitedSells);
     }
 
@@ -40,11 +42,10 @@ public class WiredConditionGroupMember extends InteractionWiredCondition {
     public boolean evaluate(WiredContext ctx) {
         Room room = ctx.room();
         int targetGroupId = this.resolveTargetGroupId(room);
-        if (targetGroupId == 0)
-            return false;
+        if (targetGroupId == 0) return false;
 
         List<RoomUnit> targets = WiredSourceUtil.resolveUsers(ctx, this.userSource);
-        if (targets.isEmpty()) return false;
+        if (targets.isEmpty()) return WiredQuantifier.overEmpty(this.quantifier != QUANTIFIER_ANY);
 
         if (this.quantifier == QUANTIFIER_ANY) {
             for (RoomUnit roomUnit : targets) {
@@ -75,12 +76,8 @@ public class WiredConditionGroupMember extends InteractionWiredCondition {
 
     @Override
     public String getWiredData() {
-        return WiredManager.getGson().toJson(new JsonData(
-                this.userSource,
-                this.groupType,
-                this.selectedGroupId,
-                this.quantifier
-        ));
+        return WiredManager.getGson()
+                .toJson(new JsonData(this.userSource, this.groupType, this.selectedGroupId, this.quantifier));
     }
 
     @Override
@@ -128,12 +125,13 @@ public class WiredConditionGroupMember extends InteractionWiredCondition {
         message.appendInt(0);
         message.appendInt(this.getBaseItem().getSpriteId());
         message.appendInt(this.getId());
-        message.appendString("");
-        message.appendInt(4);
-        message.appendInt(this.userSource);
-        message.appendInt(this.groupType);
-        message.appendInt(this.selectedGroupId);
-        message.appendInt(this.quantifier);
+        // Official layout: the group id in the string (empty: the room's group), no int params, the
+        // users in the official source slot, the quantifier in its slot.
+        message.appendString(
+                this.groupType == GROUP_SELECTED && this.selectedGroupId > 0
+                        ? String.valueOf(this.selectedGroupId)
+                        : "");
+        message.appendInt(0);
         message.appendInt(0);
         message.appendInt(this.getType().code);
         message.appendInt(0);
@@ -142,11 +140,21 @@ public class WiredConditionGroupMember extends InteractionWiredCondition {
 
     @Override
     public boolean saveData(WiredSettings settings) {
-        int[] params = settings.getIntParams();
-        this.userSource = (params.length > 0) ? this.normalizeUserSource(params[0]) : WiredSourceUtil.SOURCE_TRIGGER;
-        this.groupType = (params.length > 1) ? this.normalizeGroupType(params[1]) : GROUP_CURRENT_ROOM;
-        this.selectedGroupId = (params.length > 2) ? this.normalizeSelectedGroupId(params[2]) : 0;
-        this.quantifier = (params.length > 3) ? this.normalizeQuantifier(params[3]) : QUANTIFIER_ALL;
+        this.userSource = settings.getUserSourceTypes().length > 0
+                ? this.normalizeUserSource(settings.getUserSourceTypes()[0])
+                : WiredSourceUtil.SOURCE_TRIGGER;
+        int groupId = 0;
+        try {
+            String text = settings.getStringParam() == null
+                    ? ""
+                    : settings.getStringParam().trim();
+            groupId = text.isEmpty() ? 0 : Integer.parseInt(text);
+        } catch (NumberFormatException e) {
+            groupId = 0;
+        }
+        this.selectedGroupId = this.normalizeSelectedGroupId(groupId);
+        this.groupType = this.selectedGroupId > 0 ? GROUP_SELECTED : GROUP_CURRENT_ROOM;
+        this.quantifier = this.normalizeQuantifier(settings.getQuantifierCode());
         return true;
     }
 
@@ -201,5 +209,10 @@ public class WiredConditionGroupMember extends InteractionWiredCondition {
             this.selectedGroupId = selectedGroupId;
             this.quantifier = quantifier;
         }
+    }
+
+    @Override
+    public int officialQuantifierCode() {
+        return this.getQuantifier();
     }
 }

@@ -11,15 +11,15 @@ import com.eu.habbo.habbohotel.wired.core.WiredContext;
 import com.eu.habbo.habbohotel.wired.core.WiredEvent;
 import com.eu.habbo.habbohotel.wired.core.WiredManager;
 import com.eu.habbo.habbohotel.wired.core.WiredSourceUtil;
+import com.eu.habbo.habbohotel.wired.protocol.WiredOfficialSelector;
 import com.eu.habbo.messages.ServerMessage;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 
-public class WiredEffectUsersSignal extends InteractionWiredEffect {
+public class WiredEffectUsersSignal extends InteractionWiredEffect implements WiredOfficialSelector {
     public static final WiredEffectType type = WiredEffectType.USERS_SIGNAL_SELECTOR;
 
     private boolean filterExisting = false;
@@ -46,7 +46,8 @@ public class WiredEffectUsersSignal extends InteractionWiredEffect {
             List<RoomUnit> signalUsers = WiredSourceUtil.resolveUsers(ctx, WiredSourceUtil.SOURCE_SIGNAL);
             result.addAll(signalUsers);
 
-            result = this.applySelectorModifiers(result, room.getRoomUnits(), ctx.targets().users(), this.filterExisting, this.invert);
+            result = this.applySelectorModifiers(
+                    result, room.getRoomUnits(), ctx.targets().users(), this.filterExisting, this.invert);
         }
 
         ctx.targets().setUsers(result);
@@ -55,10 +56,30 @@ public class WiredEffectUsersSignal extends InteractionWiredEffect {
     @Override
     public boolean saveData(WiredSettings settings, GameClient gameClient) {
         int[] params = settings.getIntParams();
-        this.filterExisting = params.length > 0 && params[0] == 1;
-        this.invert = params.length > 1 && params[1] == 1;
+        this.filterExisting = settings.isSelectorFilter();
+        this.invert = settings.isSelectorInvert();
         this.setDelay(settings.getDelay());
         return true;
+    }
+
+    @Override
+    public boolean selectorFilter() {
+        return this.filterExisting;
+    }
+
+    @Override
+    public boolean selectorInvert() {
+        return this.invert;
+    }
+
+    @Override
+    public int[] officialFurniSources() {
+        return new int[0];
+    }
+
+    @Override
+    public int[] officialUserSources() {
+        return new int[0];
     }
 
     @Override
@@ -115,9 +136,7 @@ public class WiredEffectUsersSignal extends InteractionWiredEffect {
         message.appendInt(this.getBaseItem().getSpriteId());
         message.appendInt(this.getId());
         message.appendString("");
-        message.appendInt(2);
-        message.appendInt(this.filterExisting ? 1 : 0);
-        message.appendInt(this.invert ? 1 : 0);
+        message.appendInt(0);
         message.appendInt(0);
         message.appendInt(this.getType().code);
         message.appendInt(this.getDelay());

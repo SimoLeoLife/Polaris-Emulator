@@ -2,6 +2,7 @@ package com.eu.habbo;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -9,6 +10,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.eu.habbo.core.ConfigurationManager;
+import com.eu.habbo.core.DatabaseLogger;
 import com.eu.habbo.database.Database;
 import com.eu.habbo.database.PersistenceExecutor;
 import com.eu.habbo.habbohotel.GameEnvironment;
@@ -39,6 +41,7 @@ class RuntimeLifecycleTest {
         PersistenceExecutor persistence = mock(PersistenceExecutor.class);
         GameEnvironment environment = mock(GameEnvironment.class);
         PluginManager plugins = mock(PluginManager.class);
+        DatabaseLogger databaseLogger = mock(DatabaseLogger.class);
 
         when(database.getDataSource()).thenReturn(dataSource);
         when(dataSource.isClosed()).thenReturn(false);
@@ -48,6 +51,10 @@ class RuntimeLifecycleTest {
                 })
                 .when(threading)
                 .setCanAdd(false);
+        when(persistence.awaitIdle(anyLong(), any())).thenAnswer(invocation -> {
+            calls.add("persistence.await-idle");
+            return true;
+        });
         doAnswer(invocation -> {
                     Object event = invocation.getArgument(0);
                     if (event instanceof EmulatorStartShutdownEvent) {
@@ -96,6 +103,12 @@ class RuntimeLifecycleTest {
                 .when(persistence)
                 .shutDown();
         doAnswer(invocation -> {
+                    calls.add("logger.flush");
+                    return null;
+                })
+                .when(databaseLogger)
+                .save();
+        doAnswer(invocation -> {
                     calls.add("configuration.save");
                     return null;
                 })
@@ -110,6 +123,7 @@ class RuntimeLifecycleTest {
 
         runtime.installConfiguration(configuration);
         runtime.installDatabase(database);
+        runtime.installDatabaseLogger(databaseLogger);
         runtime.installThreading(threading);
         runtime.installPersistenceExecutor(persistence);
         runtime.installPluginManager(plugins);
@@ -122,9 +136,10 @@ class RuntimeLifecycleTest {
 
         assertEquals(
                 List.of(
-                        "threading.reject-new-work",
                         "plugins.before-shutdown",
+                        "threading.reject-new-work",
                         "rcon.stop",
+                        "persistence.await-idle",
                         "game.stop",
                         "sessions.dispose",
                         "hotel.dispose",
@@ -132,6 +147,9 @@ class RuntimeLifecycleTest {
                         "plugins.dispose",
                         "threading.shutdown",
                         "persistence.shutdown",
+                        // The batched chat, command and error logs are written out while
+                        // the database is still open.
+                        "logger.flush",
                         "configuration.save",
                         "database.dispose"),
                 calls);

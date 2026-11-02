@@ -1,6 +1,7 @@
 package com.eu.habbo.habbohotel.items.interactions.wired.conditions;
 
 import com.eu.habbo.Emulator;
+import com.eu.habbo.WiredPlatform;
 import com.eu.habbo.habbohotel.items.Item;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredCondition;
 import com.eu.habbo.habbohotel.items.interactions.wired.WiredSettings;
@@ -9,11 +10,10 @@ import com.eu.habbo.habbohotel.rooms.RoomTile;
 import com.eu.habbo.habbohotel.rooms.RoomUnit;
 import com.eu.habbo.habbohotel.users.HabboItem;
 import com.eu.habbo.habbohotel.wired.WiredConditionType;
-import com.eu.habbo.habbohotel.wired.core.WiredManager;
 import com.eu.habbo.habbohotel.wired.core.WiredContext;
+import com.eu.habbo.habbohotel.wired.core.WiredManager;
 import com.eu.habbo.habbohotel.wired.core.WiredSourceUtil;
 import com.eu.habbo.messages.ServerMessage;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.HashSet;
@@ -34,44 +34,63 @@ public class WiredConditionFurniHaveFurni extends InteractionWiredCondition {
         this.items = new LinkedHashSet<>();
     }
 
-    public WiredConditionFurniHaveFurni(int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
+    public WiredConditionFurniHaveFurni(
+            int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
         super(id, userId, item, extradata, limitedStack, limitedSells);
         this.items = new LinkedHashSet<>();
     }
 
     @Override
     public boolean evaluate(WiredContext ctx) {
+        if (ctx == null || ctx.room() == null) {
+            return false;
+        }
+
         Room room = ctx.room();
 
         this.refresh();
 
         List<HabboItem> targets = WiredSourceUtil.resolveItems(ctx, this.furniSource, this.items);
-        if(targets.isEmpty())
-            return true;
+        // Nothing to check has nothing on it, as in Habbo; the NOT box passes instead.
+        if (targets.isEmpty()) return false;
 
-        if (room.getLayout() == null)
-            return false;
+        if (room.getLayout() == null) return false;
 
-        if(this.all) {
+        if (this.all) {
             return targets.stream().allMatch(item -> {
                 if (item == null) return false;
                 RoomTile baseTile = room.getLayout().getTile(item.getX(), item.getY());
                 if (baseTile == null) return false;
                 double minZ = item.getZ() + Item.getCurrentHeight(item);
-                Set<RoomTile> occupiedTiles = room.getLayout().getTilesAt(baseTile, item.getBaseItem().getWidth(), item.getBaseItem().getLength(), item.getRotation());
+                Set<RoomTile> occupiedTiles = room.getLayout()
+                        .getTilesAt(
+                                baseTile,
+                                item.getBaseItem().getWidth(),
+                                item.getBaseItem().getLength(),
+                                item.getRotation());
                 if (occupiedTiles == null) return false;
-                return occupiedTiles.stream().anyMatch(tile -> tile != null && room.getItemsAt(tile).stream().anyMatch(matchedItem -> matchedItem != item && matchedItem.getZ() >= minZ));
+                return occupiedTiles.stream()
+                        .anyMatch(tile -> tile != null
+                                && room.getItemsAt(tile).stream()
+                                        .anyMatch(matchedItem -> matchedItem != item && matchedItem.getZ() >= minZ));
             });
-        }
-        else {
+        } else {
             return targets.stream().anyMatch(item -> {
                 if (item == null) return false;
                 RoomTile baseTile = room.getLayout().getTile(item.getX(), item.getY());
                 if (baseTile == null) return false;
                 double minZ = item.getZ() + Item.getCurrentHeight(item);
-                Set<RoomTile> occupiedTiles = room.getLayout().getTilesAt(baseTile, item.getBaseItem().getWidth(), item.getBaseItem().getLength(), item.getRotation());
+                Set<RoomTile> occupiedTiles = room.getLayout()
+                        .getTilesAt(
+                                baseTile,
+                                item.getBaseItem().getWidth(),
+                                item.getBaseItem().getLength(),
+                                item.getRotation());
                 if (occupiedTiles == null) return false;
-                return occupiedTiles.stream().anyMatch(tile -> tile != null && room.getItemsAt(tile).stream().anyMatch(matchedItem -> matchedItem != item && matchedItem.getZ() >= minZ));
+                return occupiedTiles.stream()
+                        .anyMatch(tile -> tile != null
+                                && room.getItemsAt(tile).stream()
+                                        .anyMatch(matchedItem -> matchedItem != item && matchedItem.getZ() >= minZ));
             });
         }
     }
@@ -85,11 +104,11 @@ public class WiredConditionFurniHaveFurni extends InteractionWiredCondition {
     @Override
     public String getWiredData() {
         this.refresh();
-        return WiredManager.getGson().toJson(new JsonData(
-                this.all,
-                this.items.stream().map(HabboItem::getId).collect(Collectors.toList()),
-                this.furniSource
-        ));
+        return WiredManager.getGson()
+                .toJson(new JsonData(
+                        this.all,
+                        this.items.stream().map(HabboItem::getId).collect(Collectors.toList()),
+                        this.furniSource));
     }
 
     @Override
@@ -116,7 +135,8 @@ public class WiredConditionFurniHaveFurni extends InteractionWiredCondition {
             this.all = data.all;
             this.furniSource = WiredFurniConditionInputGuard.normalizeFurniSource(data.furniSource);
 
-            for(int id : WiredFurniConditionInputGuard.sanitizeItemIds(data.itemIds, WiredManager.MAXIMUM_FURNI_SELECTION)) {
+            for (int id :
+                    WiredFurniConditionInputGuard.sanitizeItemIds(data.itemIds, WiredManager.MAXIMUM_FURNI_SELECTION)) {
                 HabboItem item = room.getHabboItem(id);
 
                 if (item != null) {
@@ -130,7 +150,8 @@ public class WiredConditionFurniHaveFurni extends InteractionWiredCondition {
                 this.all = (data[0].equals("1"));
 
                 if (data.length == 2) {
-                    for (int id : WiredFurniConditionInputGuard.parseLegacyItemIds(data[1], WiredManager.MAXIMUM_FURNI_SELECTION)) {
+                    for (int id : WiredFurniConditionInputGuard.parseLegacyItemIds(
+                            data[1], WiredManager.MAXIMUM_FURNI_SELECTION)) {
                         HabboItem item = room.getHabboItem(id);
 
                         if (item != null) {
@@ -141,7 +162,8 @@ public class WiredConditionFurniHaveFurni extends InteractionWiredCondition {
             }
             this.furniSource = this.items.isEmpty() ? WiredSourceUtil.SOURCE_TRIGGER : WiredSourceUtil.SOURCE_SELECTED;
         }
-        this.furniSource = WiredFurniConditionInputGuard.selectedOrNormalizedFurniSource(this.furniSource, !this.items.isEmpty());
+        this.furniSource =
+                WiredFurniConditionInputGuard.selectedOrNormalizedFurniSource(this.furniSource, !this.items.isEmpty());
     }
 
     @Override
@@ -164,15 +186,13 @@ public class WiredConditionFurniHaveFurni extends InteractionWiredCondition {
         message.appendInt(WiredManager.MAXIMUM_FURNI_SELECTION);
         message.appendInt(this.items.size());
 
-        for (HabboItem item : this.items)
-            message.appendInt(item.getId());
+        for (HabboItem item : this.items) message.appendInt(item.getId());
 
         message.appendInt(this.getBaseItem().getSpriteId());
         message.appendInt(this.getId());
         message.appendString("");
-        message.appendInt(2);
+        message.appendInt(1);
         message.appendInt(this.all ? 1 : 0);
-        message.appendInt(this.furniSource);
         message.appendInt(0);
         message.appendInt(this.getType().code);
         message.appendInt(0);
@@ -181,11 +201,14 @@ public class WiredConditionFurniHaveFurni extends InteractionWiredCondition {
 
     @Override
     public boolean saveData(WiredSettings settings) {
-        if(settings.getIntParams().length < 1) return false;
+        if (settings.getIntParams().length < 1) return false;
 
         int[] params = settings.getIntParams();
         this.all = params[0] == 1;
-        this.furniSource = (params.length > 1) ? WiredFurniConditionInputGuard.normalizeFurniSource(params[1]) : WiredSourceUtil.SOURCE_TRIGGER;
+        // Official layout: param 0 "all"; the furni in the official source slot.
+        this.furniSource = settings.getFurniSourceTypes().length > 0
+                ? WiredFurniConditionInputGuard.normalizeFurniSource(settings.getFurniSourceTypes()[0])
+                : WiredSourceUtil.SOURCE_TRIGGER;
 
         int count = settings.getFurniIds().length;
         if (count > Emulator.getConfig().getInt("hotel.wired.furni.selection.count")) return false;
@@ -202,8 +225,7 @@ public class WiredConditionFurniHaveFurni extends InteractionWiredCondition {
             for (int i = 0; i < count; i++) {
                 HabboItem item = room.getHabboItem(settings.getFurniIds()[i]);
 
-                if (item != null)
-                    this.items.add(item);
+                if (item != null) this.items.add(item);
             }
         }
         return true;
@@ -224,13 +246,17 @@ public class WiredConditionFurniHaveFurni extends InteractionWiredCondition {
     private void refresh() {
         Set<HabboItem> items = new HashSet<>();
 
-        Room room = Emulator.getGameEnvironment().getRoomManager().getRoom(this.getRoomId());
+        if (WiredPlatform.gameEnvironment() == null
+                || WiredPlatform.gameEnvironment().getRoomManager() == null) {
+            return;
+        }
+
+        Room room = WiredPlatform.gameEnvironment().getRoomManager().getRoom(this.getRoomId());
         if (room == null) {
             items.addAll(this.items);
         } else {
             for (HabboItem item : this.items) {
-                if (room.getHabboItem(item.getId()) == null)
-                    items.add(item);
+                if (room.getHabboItem(item.getId()) == null) items.add(item);
             }
         }
 

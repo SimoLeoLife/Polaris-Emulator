@@ -10,7 +10,6 @@ import com.eu.habbo.habbohotel.wired.WiredTriggerType;
 import com.eu.habbo.habbohotel.wired.core.WiredEvent;
 import com.eu.habbo.habbohotel.wired.core.WiredManager;
 import com.eu.habbo.messages.ServerMessage;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 
@@ -41,7 +40,8 @@ public class WiredTriggerUserGetsHandItem extends InteractionWiredTrigger {
         super(set, baseItem);
     }
 
-    public WiredTriggerUserGetsHandItem(int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
+    public WiredTriggerUserGetsHandItem(
+            int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
         super(id, userId, item, extradata, limitedStack, limitedSells);
     }
 
@@ -100,7 +100,7 @@ public class WiredTriggerUserGetsHandItem extends InteractionWiredTrigger {
         String wiredData = set.getString("wired_data");
 
         if (wiredData != null && wiredData.startsWith("{")) {
-            JsonData data = WiredManager.getGson().fromJson(wiredData, JsonData.class);
+            JsonData data = parsePayload(wiredData);
             if (data != null) {
                 this.handItemId = Math.max(ANY_HAND_ITEM, data.handItemId);
             }
@@ -115,6 +115,19 @@ public class WiredTriggerUserGetsHandItem extends InteractionWiredTrigger {
     @Override
     public boolean isTriggeredByRoomUnit() {
         return true;
+    }
+
+    /**
+     * A truncated document leaves Gson throwing EOFException, which is checked - so it escapes a
+     * RuntimeException catch and takes the whole furni load down. Anything unreadable is simply no
+     * configuration.
+     */
+    private static JsonData parsePayload(String wiredData) {
+        try {
+            return WiredManager.getGson().fromJson(wiredData, JsonData.class);
+        } catch (Exception exception) {
+            return null;
+        }
     }
 
     static class JsonData {

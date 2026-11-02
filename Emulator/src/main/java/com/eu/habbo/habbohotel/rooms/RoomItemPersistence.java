@@ -1,6 +1,8 @@
 package com.eu.habbo.habbohotel.rooms;
 
 import com.eu.habbo.habbohotel.items.interactions.InteractionGuildGate;
+import com.eu.habbo.habbohotel.items.interactions.InteractionWired;
+import com.eu.habbo.habbohotel.items.interactions.wired.chest.ChestRelease;
 import com.eu.habbo.habbohotel.users.HabboItem;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -13,7 +15,7 @@ final class RoomItemPersistence {
     private static final String DELETE_ITEM_SQL = "DELETE FROM items WHERE id = ?";
     private static final String UPDATE_ITEM_SQL = "UPDATE items SET user_id = ?, room_id = ?, wall_pos = ?, "
             + "x = ?, y = ?, z = ?, rot = ?, extra_data = ?, "
-            + "limited_data = ? WHERE id = ?";
+            + "limited_data = ?, wired_data = CASE WHEN ? = 1 THEN ? ELSE wired_data END WHERE id = ?";
 
     private final RoomDependencies.ConnectionProvider database;
 
@@ -26,10 +28,12 @@ final class RoomItemPersistence {
             return;
         }
 
-        List<HabboItem> deletedItems =
-                items.stream().filter(HabboItem::needsDelete).toList();
+        // Temporary furni (wired "place furni") have no rows.
+        List<HabboItem> deletedItems = items.stream()
+                .filter(item -> !item.isTemporary() && item.needsDelete())
+                .toList();
         List<HabboItem> updatedItems = items.stream()
-                .filter(item -> !item.needsDelete() && item.needsUpdate())
+                .filter(item -> !item.isTemporary() && !item.needsDelete() && item.needsUpdate())
                 .toList();
 
         try (Connection connection = this.database.openConnection()) {
@@ -42,6 +46,9 @@ final class RoomItemPersistence {
         if (items.isEmpty()) {
             return;
         }
+
+        // Wired chests give what they hold back to their owner before their rows go.
+        ChestRelease.releaseAll(items);
 
         try (PreparedStatement statement = connection.prepareStatement(DELETE_ITEM_SQL)) {
             for (HabboItem item : items) {
@@ -74,7 +81,9 @@ final class RoomItemPersistence {
                 statement.setInt(7, item.getRotation());
                 statement.setString(8, item instanceof InteractionGuildGate ? "" : item.getDatabaseExtraData());
                 statement.setString(9, item.getLimitedStack() + ":" + item.getLimitedSells());
-                statement.setInt(10, item.getId());
+                statement.setInt(10, item instanceof InteractionWired ? 1 : 0);
+                statement.setString(11, wiredData(item));
+                statement.setInt(12, item.getId());
                 statement.addBatch();
             }
 
@@ -89,5 +98,14 @@ final class RoomItemPersistence {
     private static double persistedHeight(double height) {
         double bounded = Math.max(-9999, Math.min(9999, height));
         return Math.round(bounded * Math.pow(10, 6)) / Math.pow(10, 6);
+    }
+
+    private static String wiredData(HabboItem item) {
+        if (!(item instanceof InteractionWired wired) || item.getRoomId() == 0) {
+            return "";
+        }
+
+        String data = wired.getWiredData();
+        return data == null ? "" : data;
     }
 }

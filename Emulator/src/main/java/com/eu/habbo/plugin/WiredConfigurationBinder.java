@@ -3,8 +3,13 @@ package com.eu.habbo.plugin;
 import com.eu.habbo.core.ConfigurationManager;
 import com.eu.habbo.core.config.ConfigurationBinder;
 import com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectSendSignal;
+import com.eu.habbo.habbohotel.wired.arrays.WiredArrayDefinition;
+import com.eu.habbo.habbohotel.wired.arrays.WiredArraySettings;
 import com.eu.habbo.habbohotel.wired.core.WiredEngine;
 import com.eu.habbo.habbohotel.wired.core.WiredManager;
+import com.eu.habbo.habbohotel.wired.core.WiredRoomStats;
+import com.eu.habbo.habbohotel.wired.core.WiredVariableFxLimit;
+import com.eu.habbo.habbohotel.wired.core.WiredVariableHolderLimit;
 
 final class WiredConfigurationBinder extends ConfigurationBinder {
 
@@ -31,26 +36,25 @@ final class WiredConfigurationBinder extends ConfigurationBinder {
         this.apply(
                 "wired.abuse.max.events.per.window",
                 () -> WiredEngine.MAX_EVENTS_PER_WINDOW =
-                        this.configuration.getInt("wired.abuse.max.events.per.window", 100));
+                        this.configuration.getInt("wired.abuse.max.events.per.window", 1000));
         this.apply(
                 "wired.abuse.rate.limit.window.ms",
                 () -> WiredEngine.RATE_LIMIT_WINDOW_MS =
-                        this.configuration.getInt("wired.abuse.rate.limit.window.ms", 10000));
+                        this.configuration.getInt("wired.abuse.rate.limit.window.ms", 1000));
         this.apply(
                 "wired.abuse.ban.duration.ms",
-                () -> WiredEngine.WIRED_BAN_DURATION_MS =
-                        this.configuration.getInt("wired.abuse.ban.duration.ms", 600000));
+                () -> WiredEngine.WIRED_BAN_DURATION_MS = this.configuration.getInt("wired.abuse.ban.duration.ms", 0));
         this.apply(
                 "wired.monitor.usage.window.ms",
                 () -> WiredEngine.MONITOR_USAGE_WINDOW_MS =
                         this.configuration.getInt("wired.monitor.usage.window.ms", 1000));
         this.apply(
                 "wired.monitor.usage.limit",
-                () -> WiredEngine.MONITOR_USAGE_LIMIT = this.configuration.getInt("wired.monitor.usage.limit", 50000));
+                () -> WiredEngine.MONITOR_USAGE_LIMIT = this.configuration.getInt("wired.monitor.usage.limit", 10000));
         this.apply(
                 "wired.monitor.delayed.events.limit",
                 () -> WiredEngine.MONITOR_DELAYED_EVENTS_LIMIT =
-                        this.configuration.getInt("wired.monitor.delayed.events.limit", 50000));
+                        this.configuration.getInt("wired.monitor.delayed.events.limit", 1000));
         this.apply(
                 "wired.monitor.overload.average.ms",
                 () -> WiredEngine.MONITOR_OVERLOAD_AVERAGE_MS =
@@ -75,6 +79,42 @@ final class WiredConfigurationBinder extends ConfigurationBinder {
                 "wired.monitor.heavy.delayed.percent",
                 () -> WiredEngine.MONITOR_HEAVY_DELAYED_PERCENT =
                         this.configuration.getInt("wired.monitor.heavy.delayed.percent", 60));
+        this.apply(
+                "wired.monitor.permanent.variables.limit",
+                () -> WiredRoomStats.configureLimits(
+                        this.configuration.getInt(
+                                "wired.monitor.permanent.furni.variables.limit",
+                                WiredRoomStats.DEFAULT_MAX_PERMANENT_FURNI_VARIABLES),
+                        this.configuration.getInt(
+                                "wired.monitor.permanent.user.variables.limit",
+                                WiredRoomStats.DEFAULT_MAX_PERMANENT_USER_VARIABLES),
+                        this.configuration.getInt(
+                                "wired.monitor.permanent.global.variables.limit",
+                                WiredRoomStats.DEFAULT_MAX_PERMANENT_GLOBAL_VARIABLES)));
+        this.apply(
+                "wired.variables.holder.max",
+                () -> WiredVariableHolderLimit.configure(this.configuration.getInt(
+                        "wired.variables.holder.max", WiredVariableHolderLimit.DEFAULT_MAX_VARIABLES_PER_HOLDER)));
+        this.apply(
+                "wired.variablefx.max.boxes",
+                () -> WiredVariableFxLimit.configure(this.configuration.getInt(
+                        "wired.variablefx.max.boxes", WiredVariableFxLimit.DEFAULT_MAX_BOXES)));
+        this.apply(
+                "hotel.wired.arrays",
+                () -> WiredArraySettings.configure(
+                        this.configuration.getInt(
+                                "hotel.wired.arrays.max_entries", WiredArrayDefinition.ABSOLUTE_MAX_ENTRIES),
+                        this.configuration.getInt(
+                                "hotel.wired.arrays.max_populated_cells_per_owner",
+                                WiredArrayDefinition.DEFAULT_MAX_POPULATED_CELLS),
+                        this.configuration.getInt(
+                                "hotel.wired.arrays.max_owners_per_execution",
+                                WiredArraySettings.DEFAULT_MAX_OWNERS_PER_EXECUTION),
+                        this.configuration.getInt(
+                                "hotel.wired.arrays.metrics_log_interval_ms",
+                                this.configuration.getInt(
+                                        "hotel.wired.variables.arrays.metrics_log_interval_ms",
+                                        Math.toIntExact(WiredArraySettings.DEFAULT_METRICS_LOG_INTERVAL_MS)))));
 
         if (WiredManager.getEngine() != null) {
             WiredManager.getEngine().clearAllDiagnostics();

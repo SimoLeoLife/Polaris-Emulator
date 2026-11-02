@@ -1,15 +1,25 @@
 package com.eu.habbo.habbohotel.rooms;
 
 import com.eu.habbo.Emulator;
+import com.eu.habbo.habbohotel.items.FurnitureType;
+import com.eu.habbo.habbohotel.items.interactions.InteractionBackgroundToner;
 import com.eu.habbo.habbohotel.items.interactions.InteractionBuildArea;
+import com.eu.habbo.habbohotel.items.interactions.InteractionCannon;
+import com.eu.habbo.habbohotel.items.interactions.InteractionPuzzleBox;
+import com.eu.habbo.habbohotel.items.interactions.InteractionRoller;
+import com.eu.habbo.habbohotel.items.interactions.InteractionRoomAds;
 import com.eu.habbo.habbohotel.items.interactions.InteractionStackHelper;
 import com.eu.habbo.habbohotel.items.interactions.InteractionStackWalkHelper;
 import com.eu.habbo.habbohotel.items.interactions.InteractionTileWalkMagic;
+import com.eu.habbo.habbohotel.items.interactions.InteractionWired;
+import com.eu.habbo.habbohotel.items.interactions.InteractionWiredExtra;
+import com.eu.habbo.habbohotel.items.interactions.StackHelperExtradata;
 import com.eu.habbo.habbohotel.items.interactions.wired.effects.WiredEffectSendSignal;
 import com.eu.habbo.habbohotel.items.interactions.wired.triggers.WiredTriggerReceiveSignal;
 import com.eu.habbo.habbohotel.permissions.Permission;
 import com.eu.habbo.habbohotel.users.Habbo;
 import com.eu.habbo.habbohotel.users.HabboItem;
+import com.eu.habbo.habbohotel.wired.core.WiredRoomStats;
 import com.eu.habbo.messages.outgoing.rooms.items.AddFloorItemComposer;
 import com.eu.habbo.messages.outgoing.rooms.items.AddWallItemComposer;
 import com.eu.habbo.plugin.Event;
@@ -42,7 +52,9 @@ final class RoomItemPlacementService {
     }
 
     FurnitureMovementError canPlaceFurnitureAt(HabboItem item, Habbo habbo, RoomTile tile, int rotation) {
-        if (this.facade.itemCount() >= Room.MAXIMUM_FURNI) {
+        // The room cap is for furni that would enter the room: moving or rotating one already here adds nothing, and a
+        // room that is full (or was loaded over the cap) must still be able to rearrange what it holds.
+        if (this.facade.getHabboItem(item.getId()) == null && this.facade.itemCount() >= Room.MAXIMUM_FURNI) {
             return FurnitureMovementError.MAX_ITEMS;
         }
         if (tile == null || tile.state == RoomTileState.INVALID) {
@@ -60,20 +72,7 @@ final class RoomItemPlacementService {
         if (habbo.getHabboStats().isRentingSpace()) {
             HabboItem rentSpace = this.facade.getHabboItem(habbo.getHabboStats().rentedItemId);
             if (rentSpace != null) {
-                boolean insideRental = RoomLayout.squareInSquare(
-                        RoomLayout.getRectangle(
-                                rentSpace.getX(),
-                                rentSpace.getY(),
-                                rentSpace.getBaseItem().getWidth(),
-                                rentSpace.getBaseItem().getLength(),
-                                rentSpace.getRotation()),
-                        RoomLayout.getRectangle(
-                                tile.x,
-                                tile.y,
-                                item.getBaseItem().getWidth(),
-                                item.getBaseItem().getLength(),
-                                rotation));
-                return insideRental ? FurnitureMovementError.NONE : FurnitureMovementError.NO_RIGHTS;
+                return tenantMoveInRental(rentSpace, item, habbo, tile, rotation, this.isInThisRoom(item));
             }
         }
 
@@ -81,13 +80,99 @@ final class RoomItemPlacementService {
             InteractionBuildArea buildArea = (InteractionBuildArea) area;
             if (buildArea.inSquare(tile)
                     && buildArea.isBuilder(habbo.getHabboInfo().getUsername())) {
+                if (!mayTenantMove(item, habbo)) {
+                    return FurnitureMovementError.NO_RIGHTS;
+                }
+                RoomTile origin = this.room.getLayout() == null
+                        ? null
+                        : this.room.getLayout().getTile(item.getX(), item.getY());
+                if (this.isInThisRoom(item) && (origin == null || !buildArea.inSquare(origin))) {
+                    return FurnitureMovementError.NO_RIGHTS;
+                }
                 return FurnitureMovementError.NONE;
             }
         }
         return FurnitureMovementError.NO_RIGHTS;
     }
 
+    /**
+     * What a tenant of a rented space may do with one furni.
+     *
+     * @param itemIsInRoom whether the furni already stands in this room, rather than coming
+     *     out of the tenant's inventory
+     */
+    static FurnitureMovementError tenantMoveInRental(
+            HabboItem rentSpace, HabboItem item, Habbo habbo, RoomTile tile, int rotation, boolean itemIsInRoom) {
+        if (!mayTenantMove(item, habbo)) {
+            return FurnitureMovementError.NO_RIGHTS;
+        }
+        if (!insideRental(rentSpace, item, tile.x, tile.y, rotation)) {
+            return FurnitureMovementError.NO_RIGHTS;
+        }
+        // Where it stands now counts too: otherwise the destination check alone let a
+        // tenant drag a furni in from the rest of the room.
+        if (itemIsInRoom && !insideRental(rentSpace, item, item.getX(), item.getY(), item.getRotation())) {
+            return FurnitureMovementError.NO_RIGHTS;
+        }
+        return FurnitureMovementError.NONE;
+    }
+
+    private boolean isInThisRoom(HabboItem item) {
+        return this.facade.getHabboItem(item.getId()) != null;
+    }
+
+    /**
+     * Whether someone with no rights in the room - a tenant of a rented space, a named
+     * builder of a build area - may move this particular furni.
+     *
+     * <p>Only the destination tile used to be checked, so anyone renting a space could
+     * drag someone else's furni, a rare included, across the room into their own square.
+     * A tenant moves their own furni, and not the kinds {@code RoomPlaceItemEvent}
+     * already refuses to let them place at all.
+     */
+    static boolean mayTenantMove(HabboItem item, Habbo habbo) {
+        if (item.getUserId() != habbo.getHabboInfo().getId()) {
+            return false;
+        }
+        return !isTenantRestrictedType(item);
+    }
+
+    /** The same kinds {@code RoomPlaceItemEvent} keeps out of a rental or build area. */
+    private static boolean isTenantRestrictedType(HabboItem item) {
+        return item instanceof InteractionRoller
+                || item instanceof InteractionStackHelper
+                || item instanceof InteractionStackWalkHelper
+                || item instanceof InteractionWired
+                || item instanceof InteractionBackgroundToner
+                || item instanceof InteractionRoomAds
+                || item instanceof InteractionCannon
+                || item instanceof InteractionPuzzleBox
+                || item.getBaseItem().getType() == FurnitureType.WALL;
+    }
+
+    private static boolean insideRental(HabboItem rentSpace, HabboItem item, int x, int y, int rotation) {
+        return RoomLayout.squareInSquare(
+                RoomLayout.getRectangle(
+                        rentSpace.getX(),
+                        rentSpace.getY(),
+                        rentSpace.getBaseItem().getWidth(),
+                        rentSpace.getBaseItem().getLength(),
+                        rentSpace.getRotation()),
+                RoomLayout.getRectangle(
+                        x, y, item.getBaseItem().getWidth(), item.getBaseItem().getLength(), rotation));
+    }
+
     FurnitureMovementError furnitureFitsAt(RoomTile tile, HabboItem item, int rotation, boolean checkForUnits) {
+        return this.furnitureFitsAt(tile, item, rotation, checkForUnits, null);
+    }
+
+    /**
+     * Like {@link #furnitureFitsAt(RoomTile, HabboItem, int, boolean)}, but the user placing or moving the furni by
+     * hand does not block their own tile: Habbo lets the room owner put a tile or a block where they stand. Other
+     * avatars and wired moves still block. Behaviour observed in plus-emulator/PlusEMU cc7865e3, reimplemented.
+     */
+    FurnitureMovementError furnitureFitsAt(
+            RoomTile tile, HabboItem item, int rotation, boolean checkForUnits, Habbo actor) {
         RoomLayout layout = this.room.getLayout();
         if (!layout.fitsOnMap(
                 tile, item.getBaseItem().getWidth(), item.getBaseItem().getLength(), rotation)) {
@@ -108,7 +193,7 @@ final class RoomItemPlacementService {
                             && !item.isWalkable()
                             && !item.getBaseItem().allowSit()
                             && !item.getBaseItem().allowLay()) {
-                if (checkForUnits && this.room.hasHabbosAt(occupiedTile.x, occupiedTile.y)) {
+                if (checkForUnits && hasOtherHabbosAt(this.room, occupiedTile.x, occupiedTile.y, actor)) {
                     return FurnitureMovementError.TILE_HAS_HABBOS;
                 }
                 if (checkForUnits && this.room.hasBotsAt(occupiedTile.x, occupiedTile.y)) {
@@ -135,6 +220,13 @@ final class RoomItemPlacementService {
     }
 
     FurnitureMovementError placeFloorFurniture(HabboItem item, RoomTile tile, int rotation, Habbo owner) {
+        // Habbo's own floor furni cap, before anything else is asked: a new wired box is refused at it like any
+        // other floor furni, whichever way it comes in (inventory, Builders Club, a shared setup, Place Furni).
+        // A room already over the cap keeps its furni.
+        if (!RoomFloorItemLimit.hasRoomFor(this.room.getFloorItems().size())) {
+            return FurnitureMovementError.MAX_ITEMS;
+        }
+
         RoomSpecialTypes specialTypes = this.room.getRoomSpecialTypes();
         if (specialTypes != null) {
             if (item instanceof WiredEffectSendSignal && specialTypes.isSignalSenderLimitReached()) {
@@ -142,6 +234,12 @@ final class RoomItemPlacementService {
             }
             if (item instanceof WiredTriggerReceiveSignal && specialTypes.isSignalReceiverLimitReached()) {
                 return FurnitureMovementError.MAX_SIGNAL_RECEIVERS;
+            }
+            // A variable box that arrives already permanent takes a permanent slot as it lands: with none free it
+            // stays where it came from, settings and all, rather than being placed and losing its permanence.
+            if (item instanceof InteractionWiredExtra extra
+                    && !WiredRoomStats.hasPermanentSlotFor(specialTypes.getExtras(), extra)) {
+                return FurnitureMovementError.MAX_PERMANENT_VARIABLES;
             }
         }
 
@@ -158,7 +256,7 @@ final class RoomItemPlacementService {
         RoomLayout layout = this.room.getLayout();
         Set<RoomTile> occupiedTiles = layout.getTilesAt(
                 tile, item.getBaseItem().getWidth(), item.getBaseItem().getLength(), rotation);
-        FurnitureMovementError fits = this.furnitureFitsAt(tile, item, rotation, true);
+        FurnitureMovementError fits = this.furnitureFitsAt(tile, item, rotation, true, owner);
         if (fits != FurnitureMovementError.NONE && !pluginHelper) {
             return fits;
         }
@@ -167,6 +265,8 @@ final class RoomItemPlacementService {
         for (RoomTile occupiedTile : occupiedTiles) {
             height = Math.max(height, occupiedTile.getStackHeight());
         }
+
+        height = RoomBuildHeight.apply(owner, layout, tile, height);
 
         if (Emulator.getPluginManager().isRegistered(FurnitureBuildheightEvent.class, true)) {
             FurnitureBuildheightEvent event =
@@ -180,6 +280,11 @@ final class RoomItemPlacementService {
         item.setX(tile.x);
         item.setY(tile.y);
         item.setRotation(rotation);
+        // Placing always applies the actor's build-underpass mode, so re-placing
+        // an item without the mode clears a previously set flag.
+        if (owner != null && owner.getRoomUnit() != null) {
+            item.setAllowUnderpass(owner.getRoomUnit().isBuildUnderpass());
+        }
         this.ensureOwnerName(item, owner);
         item.needsUpdate(true);
         this.facade.addHabboItem(item);
@@ -198,6 +303,9 @@ final class RoomItemPlacementService {
         if (RoomHanditemBlockSupport.isControllerItem(item)) {
             RoomHanditemBlockSupport.sendState(this.room);
         }
+        if (RoomChooserDisableSupport.isActiveController(item)) {
+            RoomHanditemBlockSupport.broadcastConfigurationItemStates(this.room);
+        }
 
         for (RoomTile occupiedTile : occupiedTiles) {
             this.room.updateHabbosAt(occupiedTile.x, occupiedTile.y);
@@ -214,6 +322,11 @@ final class RoomItemPlacementService {
             return FurnitureMovementError.NO_RIGHTS;
         }
 
+        // Habbo's own wall furni cap; a room already over it keeps its furni.
+        if (!RoomWallItemLimit.hasRoomFor(this.room.getWallItems().size())) {
+            return FurnitureMovementError.MAX_ITEMS;
+        }
+
         if (Emulator.getPluginManager().isRegistered(FurniturePlacedEvent.class, true)) {
             Event furniturePlacedEvent = new FurniturePlacedEvent(item, owner, null);
             Emulator.getPluginManager().fireEvent(furniturePlacedEvent);
@@ -224,10 +337,11 @@ final class RoomItemPlacementService {
 
         item.setWallPosition(wallPosition);
         this.ensureOwnerName(item, owner);
+        item.needsUpdate(true);
+        // Added before it is announced, so a Builders Club furni already has its band id.
+        this.facade.addHabboItem(item);
         this.room.sendComposer(
                 new AddWallItemComposer(item, this.facade.getFurniOwnerName(item.getUserId())).compose());
-        item.needsUpdate(true);
-        this.facade.addHabboItem(item);
         item.setRoomId(this.room.getId());
         item.onPlace(this.room);
         Emulator.getThreading().run(item);
@@ -250,14 +364,8 @@ final class RoomItemPlacementService {
             return Math.max(helper.getZ(), this.getMinimumTileHeight(occupiedTiles));
         }
 
-        double height = 0.0D;
-        try {
-            if (item.getExtradata() != null && !item.getExtradata().isEmpty()) {
-                height = Double.parseDouble(item.getExtradata()) / 100.0D;
-            }
-        } catch (NumberFormatException ignored) {
-            // Preserve the default height for malformed helper data.
-        }
+        // Malformed helper data keeps the default height.
+        double height = StackHelperExtradata.height(item.getExtradata());
         return Math.max(height, this.getMinimumTileHeight(occupiedTiles));
     }
 
@@ -292,5 +400,17 @@ final class RoomItemPlacementService {
                                     ? BuildersClubRoomSupport.DISPLAY_OWNER_NAME
                                     : owner.getHabboInfo().getUsername());
         }
+    }
+
+    /** Whether an avatar other than {@code actor} stands on the tile. */
+    static boolean hasOtherHabbosAt(Room room, int x, int y, Habbo actor) {
+        if (actor == null || actor.getRoomUnit() == null) {
+            return room.hasHabbosAt(x, y);
+        }
+        for (Habbo habbo : room.getHabbos()) {
+            if (habbo == null || habbo == actor || habbo.getRoomUnit() == null) continue;
+            if (habbo.getRoomUnit().getX() == x && habbo.getRoomUnit().getY() == y) return true;
+        }
+        return false;
     }
 }

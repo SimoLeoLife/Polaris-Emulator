@@ -9,11 +9,11 @@ import com.eu.habbo.habbohotel.rooms.RoomUnit;
 import com.eu.habbo.habbohotel.wired.core.WiredManager;
 import com.eu.habbo.habbohotel.wired.core.WiredSourceUtil;
 import com.eu.habbo.messages.ServerMessage;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 
-public class WiredExtraMovePhysics extends InteractionWiredExtra {
+public class WiredExtraMovePhysics extends InteractionWiredExtra
+        implements com.eu.habbo.habbohotel.wired.protocol.WiredOfficialSources {
     public static final int CODE = 61;
     public static final int SOURCE_ALL_ROOM = 900;
 
@@ -21,9 +21,11 @@ public class WiredExtraMovePhysics extends InteractionWiredExtra {
     private boolean moveThroughFurni = false;
     private boolean moveThroughUsers = false;
     private boolean blockByFurni = false;
-    private int moveThroughFurniSource = WiredSourceUtil.SOURCE_TRIGGER;
-    private int moveThroughUsersSource = WiredSourceUtil.SOURCE_TRIGGER;
-    private int blockByFurniSource = WiredSourceUtil.SOURCE_TRIGGER;
+    // Official sources: furni slot 0 moves through, furni slot 1 blocks, user slot 0 moves through;
+    // all of the room by default.
+    private int moveThroughFurniSource = SOURCE_ALL_ROOM;
+    private int moveThroughUsersSource = SOURCE_ALL_ROOM;
+    private int blockByFurniSource = SOURCE_ALL_ROOM;
 
     public WiredExtraMovePhysics(ResultSet set, Item baseItem) throws SQLException {
         super(set, baseItem);
@@ -46,23 +48,26 @@ public class WiredExtraMovePhysics extends InteractionWiredExtra {
         this.moveThroughFurni = readFlag(params, 1);
         this.moveThroughUsers = readFlag(params, 2);
         this.blockByFurni = readFlag(params, 3);
-        this.moveThroughFurniSource = normalizeSource(readInt(params, 4, WiredSourceUtil.SOURCE_TRIGGER));
-        this.blockByFurniSource = normalizeSource(readInt(params, 5, WiredSourceUtil.SOURCE_TRIGGER));
-        this.moveThroughUsersSource = normalizeSource(readInt(params, 6, WiredSourceUtil.SOURCE_TRIGGER));
+        int[] furni = settings.getFurniSourceTypes();
+        int[] users = settings.getUserSourceTypes();
+        this.moveThroughFurniSource = normalizeSource(furni.length > 0 ? furni[0] : SOURCE_ALL_ROOM);
+        this.blockByFurniSource = normalizeSource(furni.length > 1 ? furni[1] : SOURCE_ALL_ROOM);
+        this.moveThroughUsersSource = normalizeSource(users.length > 0 ? users[0] : SOURCE_ALL_ROOM);
 
         return true;
     }
 
     @Override
     public String getWiredData() {
-        return WiredManager.getGson().toJson(new JsonData(
-                this.keepAltitude,
-                this.moveThroughFurni,
-                this.moveThroughUsers,
-                this.blockByFurni,
-                this.moveThroughFurniSource,
-                this.blockByFurniSource,
-                this.moveThroughUsersSource));
+        return WiredManager.getGson()
+                .toJson(new JsonData(
+                        this.keepAltitude,
+                        this.moveThroughFurni,
+                        this.moveThroughUsers,
+                        this.blockByFurni,
+                        this.moveThroughFurniSource,
+                        this.blockByFurniSource,
+                        this.moveThroughUsersSource));
     }
 
     @Override
@@ -73,14 +78,13 @@ public class WiredExtraMovePhysics extends InteractionWiredExtra {
         message.appendInt(this.getBaseItem().getSpriteId());
         message.appendInt(this.getId());
         message.appendString("");
-        message.appendInt(7);
+        // Official layout: [keep altitude, through furni, through users, blocked by furni], the sources
+        // in the official slots.
+        message.appendInt(4);
         message.appendInt(this.keepAltitude ? 1 : 0);
         message.appendInt(this.moveThroughFurni ? 1 : 0);
         message.appendInt(this.moveThroughUsers ? 1 : 0);
         message.appendInt(this.blockByFurni ? 1 : 0);
-        message.appendInt(this.moveThroughFurniSource);
-        message.appendInt(this.blockByFurniSource);
-        message.appendInt(this.moveThroughUsersSource);
         message.appendInt(0);
         message.appendInt(CODE);
         message.appendInt(0);
@@ -128,15 +132,23 @@ public class WiredExtraMovePhysics extends InteractionWiredExtra {
         this.moveThroughFurni = false;
         this.moveThroughUsers = false;
         this.blockByFurni = false;
-        this.moveThroughFurniSource = WiredSourceUtil.SOURCE_TRIGGER;
-        this.moveThroughUsersSource = WiredSourceUtil.SOURCE_TRIGGER;
-        this.blockByFurniSource = WiredSourceUtil.SOURCE_TRIGGER;
+        this.moveThroughFurniSource = SOURCE_ALL_ROOM;
+        this.moveThroughUsersSource = SOURCE_ALL_ROOM;
+        this.blockByFurniSource = SOURCE_ALL_ROOM;
     }
 
     @Override
-    public void onWalk(RoomUnit roomUnit, Room room, Object[] objects) throws Exception {
-
+    public int[] officialFurniSources() {
+        return new int[] {this.moveThroughFurniSource, this.blockByFurniSource};
     }
+
+    @Override
+    public int[] officialUserSources() {
+        return new int[] {this.moveThroughUsersSource};
+    }
+
+    @Override
+    public void onWalk(RoomUnit roomUnit, Room room, Object[] objects) throws Exception {}
 
     @Override
     public boolean hasConfiguration() {
@@ -216,7 +228,14 @@ public class WiredExtraMovePhysics extends InteractionWiredExtra {
         int blockByFurniSource;
         int moveThroughUsersSource;
 
-        JsonData(boolean keepAltitude, boolean moveThroughFurni, boolean moveThroughUsers, boolean blockByFurni, int moveThroughFurniSource, int blockByFurniSource, int moveThroughUsersSource) {
+        JsonData(
+                boolean keepAltitude,
+                boolean moveThroughFurni,
+                boolean moveThroughUsers,
+                boolean blockByFurni,
+                int moveThroughFurniSource,
+                int blockByFurniSource,
+                int moveThroughUsersSource) {
             this.keepAltitude = keepAltitude;
             this.moveThroughFurni = moveThroughFurni;
             this.moveThroughUsers = moveThroughUsers;

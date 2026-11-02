@@ -1,29 +1,21 @@
 package com.eu.habbo.habbohotel.wired.core;
 
+import com.eu.habbo.WiredCompatibilityDiagnostics;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredEffect;
-import com.eu.habbo.habbohotel.items.interactions.InteractionWiredExtra;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredTrigger;
-import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraFilterFurni;
-import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraFilterFurniByVariable;
-import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraFilterUser;
-import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraFilterUsersByVariable;
 import com.eu.habbo.habbohotel.rooms.Room;
 import com.eu.habbo.habbohotel.rooms.RoomUnit;
 import com.eu.habbo.habbohotel.users.HabboItem;
-
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 
 public final class WiredTriggerSourceUtil {
-    private WiredTriggerSourceUtil() {
-    }
+    private WiredTriggerSourceUtil() {}
 
-    public static List<HabboItem> resolveItems(InteractionWiredTrigger trigger,
-                                               WiredEvent event,
-                                               int sourceType,
-                                               Collection<HabboItem> selectedItems) {
+    public static List<HabboItem> resolveItems(
+            InteractionWiredTrigger trigger, WiredEvent event, int sourceType, Collection<HabboItem> selectedItems) {
         switch (sourceType) {
             case WiredSourceUtil.SOURCE_TRIGGER:
                 return event.getSourceItem().map(Collections::singletonList).orElse(Collections.emptyList());
@@ -41,10 +33,8 @@ public final class WiredTriggerSourceUtil {
         }
     }
 
-    public static List<RoomUnit> resolveUsers(InteractionWiredTrigger trigger,
-                                              WiredEvent event,
-                                              int sourceType,
-                                              Collection<RoomUnit> selectedUsers) {
+    public static List<RoomUnit> resolveUsers(
+            InteractionWiredTrigger trigger, WiredEvent event, int sourceType, Collection<RoomUnit> selectedUsers) {
         switch (sourceType) {
             case WiredSourceUtil.SOURCE_TRIGGER:
                 return event.getActor().map(Collections::singletonList).orElse(Collections.emptyList());
@@ -125,17 +115,15 @@ public final class WiredTriggerSourceUtil {
         }
 
         WiredContext ctx = new WiredContext(event, trigger, DefaultWiredServices.getInstance(), new WiredState(100));
+        List<InteractionWiredEffect> selectors = getOrderedSelectorEffects(room, trigger);
 
-        for (InteractionWiredEffect effect : getOrderedSelectorEffects(room, trigger)) {
-            if (effect.requiresActor() && !ctx.hasActor()) {
-                continue;
-            }
-
-            try {
-                ctx.state().step();
-                effect.execute(ctx);
-            } catch (Exception ignored) {
-            }
+        // Ordinary selectors first, adding up from nothing; filters then narrow what they picked.
+        WiredTargets.Defaults defaults = ctx.targets().setDefaultsAside();
+        try {
+            runSelectors(ctx, room, selectors, false);
+            runSelectors(ctx, room, selectors, true);
+        } finally {
+            ctx.targets().restoreDefaults(defaults);
         }
 
         applySelectionFilterExtras(room, trigger, ctx);
@@ -143,12 +131,33 @@ public final class WiredTriggerSourceUtil {
         return ctx;
     }
 
+    private static void runSelectors(
+            WiredContext ctx, Room room, List<InteractionWiredEffect> selectors, boolean filters) {
+        for (InteractionWiredEffect effect : selectors) {
+            if (effect.usesExistingSelectorTargets() != filters || (effect.requiresActor() && !ctx.hasActor())) {
+                continue;
+            }
+
+            try {
+                ctx.state().step();
+                WiredExecutionScope.execute(effect, ctx);
+            } catch (Exception ignored) {
+                WiredCompatibilityDiagnostics.record(
+                        WiredCompatibilityDiagnostics.FailurePoint.TRIGGER_SOURCE_SELECTOR_EFFECT,
+                        room.getId(),
+                        effect.getId(),
+                        ignored);
+            }
+        }
+    }
+
     private static List<InteractionWiredEffect> getOrderedSelectorEffects(Room room, InteractionWiredTrigger trigger) {
         if (room == null || trigger == null || room.getRoomSpecialTypes() == null) {
             return Collections.emptyList();
         }
 
-        Collection<InteractionWiredEffect> effects = room.getRoomSpecialTypes().getEffects(trigger.getX(), trigger.getY());
+        Collection<InteractionWiredEffect> effects =
+                room.getRoomSpecialTypes().getEffects(trigger.getX(), trigger.getY());
         List<InteractionWiredEffect> selectorEffects = new ArrayList<>();
 
         for (InteractionWiredEffect effect : WiredExecutionOrderUtil.sort(effects)) {

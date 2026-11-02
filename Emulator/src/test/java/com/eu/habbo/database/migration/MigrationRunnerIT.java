@@ -30,6 +30,8 @@ import org.junit.jupiter.api.Test;
 /** Verifies the packaged migration chain against a real MariaDB. */
 class MigrationRunnerIT {
 
+    private static final String ITEMS_BASE_INTERACTION_REPAIR_VERSION = "20260822164532";
+
     /** Local builds may skip without Docker; CI must fail if its DB tests cannot run. */
     private static void requireDocker() {
         try {
@@ -67,6 +69,11 @@ class MigrationRunnerIT {
             assertTrue(tableExists(ds, "furnidata_edit_log"), "current furnidata audit schema must exist");
             assertTrue(tableExists(ds, "messenger_messages"), "dev messenger history schema must exist");
             assertTrue(tableExists(ds, "logs_economy"), "dev economy audit schema must exist");
+            assertTrue(tableExists(ds, "logs_soundboard"), "soundboard management audit schema must exist");
+            assertEquals(
+                    "InnoDB",
+                    tableEngine(ds, "logs_soundboard"),
+                    "soundboard management and audit must share one transactional engine");
 
             // Polaris-added column on a shared table.
             assertTrue(
@@ -75,6 +82,16 @@ class MigrationRunnerIT {
             assertTrue(
                     columnExists(ds, "users", "background_border_id"), "current profile background schema must exist");
             assertTrue(columnExists(ds, "users", "access_token_version"), "credential revocation state must exist");
+            assertTrue(
+                    columnExists(ds, "users_settings", "volume_soundboard"),
+                    "users_settings must persist the personal Soundboard volume");
+            assertEquals(80, intValue(ds, """
+                            SELECT COLUMN_DEFAULT
+                            FROM information_schema.COLUMNS
+                            WHERE TABLE_SCHEMA = DATABASE()
+                              AND TABLE_NAME = 'users_settings'
+                              AND COLUMN_NAME = 'volume_soundboard'
+                            """));
 
             // The engine conversion took effect.
             assertEquals(
@@ -91,6 +108,20 @@ class MigrationRunnerIT {
             assertEquals(
                     1,
                     intValue(ds, "SELECT rank_7 FROM permission_definitions WHERE permission_key = 'acc_supporttool'"));
+            assertEquals(1, intValue(ds, """
+                            SELECT COUNT(*)
+                            FROM permission_definitions
+                            WHERE permission_key = 'acc_soundboard_manage'
+                            """));
+            assertEquals(intValue(ds, """
+                            SELECT rank_7
+                            FROM permission_definitions
+                            WHERE permission_key = 'acc_housekeeping'
+                            """), intValue(ds, """
+                            SELECT rank_7
+                            FROM permission_definitions
+                            WHERE permission_key = 'acc_soundboard_manage'
+                            """));
             assertEquals(5, intValue(ds, "SELECT COUNT(*) FROM pet_breeding"));
             assertEquals(100, intValue(ds, """
                     SELECT COUNT(*) FROM pet_breeding_races
@@ -157,6 +188,156 @@ class MigrationRunnerIT {
             assertEquals(
                     "keep-me",
                     stringValue(ds, "SELECT value FROM emulator_settings WHERE `key` = 'fixture.operator.setting'"));
+        }
+    }
+
+    @Test
+    void adoptedHotelRepairsHistoricalItemsBaseMappingsOnlyOnce() throws Exception {
+        requireDocker();
+
+        try (HikariDataSource ds = TestDatabase.freshDatabase("mig_items_base_interactions")) {
+            installArcturusFixture(ds);
+            try (Connection connection = ds.getConnection();
+                    Statement statement = connection.createStatement()) {
+                statement.execute("""
+                        INSERT INTO items_base
+                            (public_name, item_name, interaction_type, customparams)
+                        VALUES
+                            ('Legacy internal-name mapping', 'wf_cnd_time_more_than', 'default', ''),
+                            ('wf_cnd_time_less_than', 'legacy_public_name_only', 'default', ''),
+                            ('Legacy stale non-default mapping', 'wf_act_give_reward', 'stale_interaction', ''),
+                            ('Legacy glowball', 'wf_glowball', 'default', ''),
+                            ('Legacy badge ownership', 'wf_cnd_wearing_badge', 'default', ''),
+                            ('Legacy missing badge ownership', 'wf_cnd_not_wearing_b', 'default', ''),
+                            ('Legacy log effect', 'wf_act_log', 'default', ''),
+                            ('Legacy time utilities', 'wf_xtra_var_time_util', 'default', ''),
+                            ('Legacy invisible stack tile', 'tile_stackmagic_test', 'default', 'visible')
+                        """);
+            }
+
+            MigrationRunner.migrate(ds);
+
+            assertEquals("wf_cnd_time_more_than", stringValue(ds, """
+                    SELECT interaction_type FROM items_base
+                    WHERE item_name = 'wf_cnd_time_more_than'
+                    """));
+            assertEquals("wf_cnd_time_less_than", stringValue(ds, """
+                    SELECT interaction_type FROM items_base
+                    WHERE public_name = 'wf_cnd_time_less_than'
+                    """));
+            assertEquals("wf_act_give_reward", stringValue(ds, """
+                    SELECT interaction_type FROM items_base
+                    WHERE item_name = 'wf_act_give_reward'
+                    """));
+            assertEquals("glowball", stringValue(ds, """
+                    SELECT interaction_type FROM items_base
+                    WHERE item_name = 'wf_glowball'
+                    """));
+            assertEquals("wf_cnd_habbo_owns_badge", stringValue(ds, """
+                    SELECT interaction_type FROM items_base
+                    WHERE item_name = 'wf_cnd_wearing_badge'
+                    """));
+            assertEquals("wf_cnd_not_habbo_owns_badge", stringValue(ds, """
+                    SELECT interaction_type FROM items_base
+                    WHERE item_name = 'wf_cnd_not_wearing_b'
+                    """));
+            assertEquals("wf_act_log", stringValue(ds, """
+                    SELECT interaction_type FROM items_base
+                    WHERE item_name = 'wf_act_log'
+                    """));
+            assertEquals("wf_xtra_var_time_util", stringValue(ds, """
+                    SELECT interaction_type FROM items_base
+                    WHERE item_name = 'wf_xtra_var_time_util'
+                    """));
+            assertEquals("is_invisible", stringValue(ds, """
+                    SELECT customparams FROM items_base
+                    WHERE item_name = 'tile_stackmagic_test'
+                    """));
+            assertEquals(1, intValue(ds, """
+                    SELECT COUNT(*) FROM flyway_schema_history
+                    WHERE version = '%s' AND success = 1
+                    """.formatted(ITEMS_BASE_INTERACTION_REPAIR_VERSION)));
+
+            try (Connection connection = ds.getConnection();
+                    Statement statement = connection.createStatement()) {
+                statement.execute("""
+                        UPDATE items_base SET interaction_type = 'operator_override'
+                        WHERE item_name = 'wf_cnd_time_more_than'
+                        """);
+                statement.execute("""
+                        UPDATE items_base SET customparams = 'operator_override'
+                        WHERE item_name = 'tile_stackmagic_test'
+                        """);
+            }
+
+            assertEquals(0, MigrationRunner.migrate(ds).migrationsExecuted);
+            assertEquals("operator_override", stringValue(ds, """
+                    SELECT interaction_type FROM items_base
+                    WHERE item_name = 'wf_cnd_time_more_than'
+                    """));
+            assertEquals("operator_override", stringValue(ds, """
+                    SELECT customparams FROM items_base
+                    WHERE item_name = 'tile_stackmagic_test'
+                    """));
+            assertEquals(1, intValue(ds, """
+                    SELECT COUNT(*) FROM flyway_schema_history
+                    WHERE version = '%s' AND success = 1
+                    """.formatted(ITEMS_BASE_INTERACTION_REPAIR_VERSION)));
+        }
+    }
+
+    @Test
+    void adoptedHotelRepairsItemsBaseWhenItsCollationDiffersFromTheDatabaseDefault() throws Exception {
+        requireDocker();
+
+        try (HikariDataSource ds = TestDatabase.freshDatabase("mig_items_base_collation")) {
+            installArcturusFixture(ds);
+            try (Connection connection = ds.getConnection();
+                    Statement statement = connection.createStatement()) {
+                // Hand-converted hotels leave items_base on a collation the database
+                // default does not share, which makes a bare column-to-column
+                // comparison inside a repair migration an illegal mix of collations.
+                statement.execute("ALTER TABLE items_base CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
+                statement.execute("""
+                        INSERT INTO items_base
+                            (public_name, item_name, interaction_type, customparams)
+                        VALUES
+                            ('Legacy internal-name mapping', 'wf_cnd_time_more_than', 'default', ''),
+                            ('wf_cnd_time_less_than', 'legacy_public_name_only', 'default', ''),
+                            ('Legacy stale non-default mapping', 'wf_act_give_reward', 'stale_interaction', ''),
+                            ('Legacy invisible stack tile', 'tile_stackmagic_test', 'default', 'visible')
+                        """);
+            }
+
+            MigrationRunner.migrate(ds);
+
+            assertEquals(
+                    "utf8mb4_unicode_ci",
+                    stringValue(ds, """
+                            SELECT TABLE_COLLATION FROM information_schema.TABLES
+                            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'items_base'
+                            """),
+                    "the migration must not silently rewrite the hotel's own table collation");
+            assertEquals("wf_cnd_time_more_than", stringValue(ds, """
+                    SELECT interaction_type FROM items_base
+                    WHERE item_name = 'wf_cnd_time_more_than'
+                    """));
+            assertEquals("wf_cnd_time_less_than", stringValue(ds, """
+                    SELECT interaction_type FROM items_base
+                    WHERE item_name = 'legacy_public_name_only'
+                    """));
+            assertEquals("wf_act_give_reward", stringValue(ds, """
+                    SELECT interaction_type FROM items_base
+                    WHERE item_name = 'wf_act_give_reward'
+                    """));
+            assertEquals("is_invisible", stringValue(ds, """
+                    SELECT customparams FROM items_base
+                    WHERE item_name = 'tile_stackmagic_test'
+                    """));
+            assertEquals(1, intValue(ds, """
+                    SELECT COUNT(*) FROM flyway_schema_history
+                    WHERE version = '%s' AND success = 1
+                    """.formatted(ITEMS_BASE_INTERACTION_REPAIR_VERSION)));
         }
     }
 
@@ -291,6 +472,110 @@ class MigrationRunnerIT {
     }
 
     @Test
+    void writeToLogsBoxesKeepTheirLevelUnderTheAirNumbers() throws Exception {
+        requireDocker();
+        try (HikariDataSource ds = TestDatabase.freshDatabase("mig_wired_log_levels")) {
+            String before = MigrationRunner.BASELINE_VERSION;
+            for (SchemaEvidence.Migration migration : SchemaEvidence.packaged(MigrationRunner.flyway(ds))) {
+                String version = migration.version();
+                if (version.compareTo("20261020130000") < 0 && version.compareTo(before) > 0) before = version;
+            }
+            Flyway.configure()
+                    .dataSource(ds)
+                    .locations(MigrationRunner.MIGRATION_LOCATION)
+                    .target(before)
+                    .placeholderReplacement(false)
+                    .load()
+                    .migrate();
+
+            try (Connection connection = ds.getConnection();
+                    Statement statement = connection.createStatement()) {
+                statement.execute("""
+                        INSERT INTO items_base (id, sprite_id, public_name, item_name, interaction_type)
+                        VALUES (1900000201, 1900000201, 'Log', 'wf_act_log', 'wf_act_log'),
+                               (1900000202, 1900000202, 'Neg log', 'wf_act_neg_log', 'wf_act_neg_log'),
+                               (1900000203, 1900000203, 'Other', 'wf_act_other', 'wf_act_show_message')
+                        """);
+                // Old numbers: 0 debug, 1 info, 2 warning, 3 error.
+                statement.execute("""
+                        INSERT INTO items (id, user_id, room_id, item_id, wired_data) VALUES
+                        (1900000301, 1, 0, 1900000201,
+                            '{"message":"a \\\\"logLevel\\\\":0 b","delay":0,"userSource":0,"logLevel":0}'),
+                        (1900000302, 1, 0, 1900000201, '{"message":"i","delay":2,"userSource":0,"logLevel":1}'),
+                        (1900000303, 1, 0, 1900000202, '{"message":"w","delay":0,"userSource":0,"logLevel":2}'),
+                        (1900000304, 1, 0, 1900000201, '{"message":"e","delay":0,"userSource":0,"logLevel":3}'),
+                        (1900000305, 1, 0, 1900000201, '{"message":"old","delay":0,"userSource":0}'),
+                        (1900000306, 1, 0, 1900000201, '0\tlegacy tab'),
+                        (1900000307, 1, 0, 1900000203, '{"logLevel":0}')
+                        """);
+            }
+
+            MigrationRunner.migrate(ds);
+
+            assertEquals(
+                    "{\"message\":\"a \\\"logLevel\\\":0 b\",\"delay\":0,\"userSource\":0,\"logLevel\":3}",
+                    stringValue(ds, "SELECT wired_data FROM items WHERE id = 1900000301"));
+            assertEquals(
+                    "{\"message\":\"i\",\"delay\":2,\"userSource\":0,\"logLevel\":0}",
+                    stringValue(ds, "SELECT wired_data FROM items WHERE id = 1900000302"));
+            assertEquals(
+                    "{\"message\":\"w\",\"delay\":0,\"userSource\":0,\"logLevel\":1}",
+                    stringValue(ds, "SELECT wired_data FROM items WHERE id = 1900000303"));
+            assertEquals(
+                    "{\"message\":\"e\",\"delay\":0,\"userSource\":0,\"logLevel\":2}",
+                    stringValue(ds, "SELECT wired_data FROM items WHERE id = 1900000304"));
+            assertEquals(
+                    "{\"message\":\"old\",\"delay\":0,\"userSource\":0}",
+                    stringValue(ds, "SELECT wired_data FROM items WHERE id = 1900000305"));
+            assertEquals("0\tlegacy tab", stringValue(ds, "SELECT wired_data FROM items WHERE id = 1900000306"));
+            assertEquals("{\"logLevel\":0}", stringValue(ds, "SELECT wired_data FROM items WHERE id = 1900000307"));
+        }
+    }
+
+    @Test
+    void soundboardMigrationPreservesPreexistingPermissionAssignments() throws Exception {
+        requireDocker();
+        try (HikariDataSource ds = TestDatabase.freshDatabase("mig_existing_soundboard_permission")) {
+            Flyway.configure()
+                    .dataSource(ds)
+                    .locations(MigrationRunner.MIGRATION_LOCATION)
+                    .target("20260721090000")
+                    .placeholderReplacement(false)
+                    .load()
+                    .migrate();
+
+            try (Connection connection = ds.getConnection();
+                    Statement statement = connection.createStatement()) {
+                statement.execute("""
+                        ALTER TABLE permissions
+                        ADD COLUMN acc_soundboard_manage ENUM('0','1') NOT NULL DEFAULT '0'
+                        """);
+                statement.execute("UPDATE permissions SET acc_soundboard_manage = '1' WHERE id = 1");
+                statement.execute("UPDATE permissions SET acc_soundboard_manage = '0' WHERE id = 7");
+                statement.execute("""
+                        INSERT INTO permission_definitions
+                            (permission_key, max_value, comment, rank_1, rank_7)
+                        VALUES
+                            ('acc_soundboard_manage', 1, 'operator-owned assignment', 1, 0)
+                        """);
+            }
+
+            MigrationRunner.migrate(ds);
+
+            assertEquals(1, intValue(ds, """
+                    SELECT rank_1 FROM permission_definitions
+                    WHERE permission_key = 'acc_soundboard_manage'
+                    """));
+            assertEquals(0, intValue(ds, """
+                    SELECT rank_7 FROM permission_definitions
+                    WHERE permission_key = 'acc_soundboard_manage'
+                    """));
+            assertEquals("1", stringValue(ds, "SELECT acc_soundboard_manage FROM permissions WHERE id = 1"));
+            assertEquals("0", stringValue(ds, "SELECT acc_soundboard_manage FROM permissions WHERE id = 7"));
+        }
+    }
+
+    @Test
     void runtimeValidationToleratesExtensionsAndRejectsCriticalDrift() throws Exception {
         requireDocker();
         try (HikariDataSource ds = TestDatabase.freshDatabase("mig_runtime_contract")) {
@@ -402,6 +687,183 @@ class MigrationRunnerIT {
         }
     }
 
+    @Test
+    void hotelWhoseSchemaIsAheadOfItsHistoryIsAdoptedAtTheMigrationsItAlreadyCarries() throws Exception {
+        requireDocker();
+
+        try (HikariDataSource ds = TestDatabase.freshDatabase("mig_schema_ahead")) {
+            // A hotel migrated by an earlier build, restored from a dump taken without the
+            // Flyway history: every object up to the habbicon catalog exists, nothing records it.
+            Flyway.configure()
+                    .dataSource(ds)
+                    .locations(MigrationRunner.MIGRATION_LOCATION)
+                    .target("20260916180000")
+                    .placeholderReplacement(false)
+                    .load()
+                    .migrate();
+            try (Connection c = ds.getConnection();
+                    Statement s = c.createStatement()) {
+                s.execute("DROP TABLE flyway_schema_history");
+            }
+
+            assertEquals(SchemaPreflight.State.RECOGNISED_EXISTING, SchemaPreflight.detect(ds));
+            String status = MigrationRunner.status(ds);
+            // The last migration up to the target that leaves tables or columns behind is the
+            // talent reward column; the habbicon catalog migration after it only writes rows, so
+            // it cannot be proven applied and runs again (it is written to be re-runnable), as
+            // does everything packaged after it.
+            List<String> pending = packagedVersionsAbove(ds, "20260911160100");
+            assertTrue(status.contains("Adoption: record baseline V20260911160100"), status);
+            assertTrue(status.contains("recorded as applied without running"), status);
+            assertTrue(status.contains("  = V20260802090000"), status);
+            assertTrue(status.contains("Pending migrations: " + pending.size() + "\n"), status);
+            assertTrue(status.contains("  - V20260916180000"), status);
+            for (String version : pending) {
+                assertTrue(status.contains("  - V" + version), status);
+            }
+
+            // Re-creating catalog_id_sequences and friends would fail; adoption must skip them.
+            MigrationRunner.migrate(ds);
+
+            assertEquals(SchemaPreflight.State.MANAGED, SchemaPreflight.detect(ds));
+            assertEquals(1, intValue(ds, """
+                    SELECT COUNT(*) FROM flyway_schema_history
+                    WHERE version = '20260911160100' AND type = 'BASELINE'
+                    """));
+            assertEquals(0, intValue(ds, """
+                    SELECT COUNT(*) FROM flyway_schema_history
+                    WHERE version = '20260802090000'
+                    """));
+            assertEquals(1, intValue(ds, """
+                    SELECT COUNT(*) FROM flyway_schema_history
+                    WHERE version = '20260916180000' AND success = 1
+                    """));
+            assertTrue(MigrationRunner.status(ds).contains("Pending migrations: 0"));
+            // The re-run habbicon catalog migration must not have doubled its page or offers.
+            assertEquals(1, intValue(ds, "SELECT COUNT(*) FROM catalog_pages WHERE caption_save = 'habbicons'"));
+            assertEquals(
+                    intValue(ds, "SELECT COUNT(*) FROM habbicons WHERE cost_credits > 0 OR cost_points > 0"),
+                    intValue(ds, "SELECT COUNT(*) FROM catalog_items WHERE habbicon_id > 0"));
+        }
+    }
+
+    @Test
+    void truncatedHistoryIsAdoptedInsteadOfReplayingTheBaseDatabase() throws Exception {
+        requireDocker();
+
+        try (HikariDataSource ds = TestDatabase.freshDatabase("mig_truncated_history")) {
+            MigrationRunner.migrate(ds);
+            int users = intValue(ds, "SELECT COUNT(*) FROM users");
+            // TRUNCATE keeps the table but drops every row; Flyway would otherwise treat the
+            // hotel as managed with nothing applied and re-run the base database over it.
+            try (Connection c = ds.getConnection();
+                    Statement s = c.createStatement()) {
+                s.execute("TRUNCATE TABLE flyway_schema_history");
+            }
+
+            assertEquals(SchemaPreflight.State.RECOGNISED_EXISTING, SchemaPreflight.detect(ds));
+            MigrationRunner.migrate(ds);
+
+            assertEquals(SchemaPreflight.State.MANAGED, SchemaPreflight.detect(ds));
+            assertEquals(1, intValue(ds, "SELECT COUNT(*) FROM flyway_schema_history WHERE type = 'BASELINE'"));
+            assertEquals(0, intValue(ds, "SELECT COUNT(*) FROM flyway_schema_history WHERE success = 0"));
+            assertEquals(users, intValue(ds, "SELECT COUNT(*) FROM users"));
+            assertTrue(MigrationRunner.status(ds).contains("Pending migrations: 0"));
+        }
+    }
+
+    @Test
+    void droppedTableIsRestoredWithoutReplayingTheMigrationsAfterIt() throws Exception {
+        requireDocker();
+
+        try (HikariDataSource ds = TestDatabase.freshDatabase("mig_dropped_table")) {
+            MigrationRunner.migrate(ds);
+            int sounds = intValue(ds, "SELECT COUNT(*) FROM soundboard_sounds");
+            try (Connection c = ds.getConnection();
+                    Statement s = c.createStatement()) {
+                s.execute("SET FOREIGN_KEY_CHECKS = 0");
+                s.execute("DROP TABLE soundboard_sounds");
+                s.execute("TRUNCATE TABLE flyway_schema_history");
+            }
+
+            String status = MigrationRunner.status(ds);
+            assertTrue(status.contains("Missing from the schema, run again to restore it: "), status);
+            // Replaying everything after the soundboard migration would stop on objects that exist
+            // (catalog_id_sequences); only the migrations that build or fill soundboard_sounds run.
+            MigrationRunner.migrate(ds);
+
+            assertEquals(0, intValue(ds, "SELECT COUNT(*) FROM flyway_schema_history WHERE success = 0"));
+            assertEquals(1, intValue(ds, """
+                    SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE()
+                    AND TABLE_NAME = 'soundboard_sounds' AND COLUMN_NAME = 'cooldown_seconds'
+                    """));
+            assertEquals(sounds, intValue(ds, "SELECT COUNT(*) FROM soundboard_sounds"));
+            assertEquals(1, intValue(ds, """
+                    SELECT COUNT(*) FROM flyway_schema_history
+                    WHERE version = '20260802090000' AND execution_time = 0
+                    """));
+            assertTrue(MigrationRunner.status(ds).contains("Pending migrations: 0"));
+        }
+    }
+
+    @Test
+    void emptyHistoryOnAnEmptyDatabaseRunsTheFullChain() throws Exception {
+        requireDocker();
+
+        try (HikariDataSource ds = TestDatabase.freshDatabase("mig_empty_history_only")) {
+            try (Connection c = ds.getConnection();
+                    Statement s = c.createStatement()) {
+                s.execute("CREATE TABLE flyway_schema_history (installed_rank INT NOT NULL PRIMARY KEY)");
+            }
+
+            assertEquals(SchemaPreflight.State.EMPTY, SchemaPreflight.detect(ds));
+        }
+    }
+
+    @Test
+    void managedHistoryBehindTheSchemaIsReconciledInsteadOfReplayed() throws Exception {
+        requireDocker();
+
+        try (HikariDataSource ds = TestDatabase.freshDatabase("mig_reconcile")) {
+            MigrationRunner.migrate(ds);
+            // Lose the history rows for everything after the catalog drafts, as a partial
+            // restore or a hand-edited history would.
+            try (Connection c = ds.getConnection();
+                    Statement s = c.createStatement()) {
+                s.execute("DELETE FROM flyway_schema_history WHERE version > '20260802090000'");
+            }
+            assertEquals(SchemaPreflight.State.MANAGED, SchemaPreflight.detect(ds));
+            assertTrue(intValue(ds, "SELECT COUNT(*) FROM flyway_schema_history") > 1);
+
+            // Pending migrations are a report, not a validation failure.
+            String status = MigrationRunner.status(ds);
+            assertTrue(status.contains("--migrations=reconcile"), status);
+            assertTrue(status.contains("  = V20260911160100"), status);
+
+            String report = MigrationRunner.reconcile(ds);
+            assertTrue(report.contains("Recorded as applied without running: V20260911150000"), report);
+            assertTrue(report.contains("Recorded as applied without running: V20260911160100"), report);
+
+            // Every reconciled row carries the packaged checksum, so validation passes. Only
+            // the data-only migrations after the last one that leaves objects behind stay
+            // pending and are replayed by a normal start.
+            List<String> trailing = packagedVersionsAbove(ds, lastEvidenceBearingVersion(ds));
+            status = MigrationRunner.status(ds);
+            assertTrue(status.contains("Pending migrations: " + trailing.size() + "\n"), status);
+            for (String version : trailing) {
+                assertTrue(status.contains("  - V" + version), status);
+            }
+            assertTrue(!status.contains("  - V20260916180000"), status);
+            assertEquals(0, intValue(ds, "SELECT COUNT(*) FROM flyway_schema_history WHERE success = 0"));
+            MigrationRunner.migrate(ds);
+            assertEquals(1, intValue(ds, """
+                    SELECT COUNT(*) FROM flyway_schema_history WHERE version = '20260916180000'
+                    """));
+            assertTrue(MigrationRunner.status(ds).contains("Pending migrations: 0"));
+            assertEquals(1, intValue(ds, "SELECT COUNT(*) FROM catalog_pages WHERE caption_save = 'habbicons'"));
+        }
+    }
+
     private static boolean tableExists(HikariDataSource ds, String table) throws Exception {
         try (Connection c = ds.getConnection();
                 var st = c.prepareStatement(
@@ -470,6 +932,24 @@ class MigrationRunnerIT {
             }
         }
         return count;
+    }
+
+    /** The packaged migration versions above {@code version}, in order; what stays pending past it. */
+    private static List<String> packagedVersionsAbove(HikariDataSource ds, String version) {
+        List<String> above = new ArrayList<>();
+        for (SchemaEvidence.Migration migration : SchemaEvidence.packaged(MigrationRunner.flyway(ds))) {
+            if (migration.version().compareTo(version) > 0) above.add(migration.version());
+        }
+        return above;
+    }
+
+    /** The last packaged migration that creates a table or column the schema can be checked for. */
+    private static String lastEvidenceBearingVersion(HikariDataSource ds) {
+        String last = MigrationRunner.BASELINE_VERSION;
+        for (SchemaEvidence.Migration migration : SchemaEvidence.packaged(MigrationRunner.flyway(ds))) {
+            if (migration.hasEvidence()) last = migration.version();
+        }
+        return last;
     }
 
     private static void installArcturusFixture(HikariDataSource ds) throws Exception {

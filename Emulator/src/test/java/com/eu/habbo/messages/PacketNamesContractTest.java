@@ -1,17 +1,25 @@
 package com.eu.habbo.messages;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
 import com.eu.habbo.messages.incoming.Incoming;
 import com.eu.habbo.messages.outgoing.Outgoing;
-import org.junit.jupiter.api.Test;
-
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
 import java.util.HashMap;
 import java.util.Map;
-
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import org.junit.jupiter.api.Test;
 
 class PacketNamesContractTest {
+    @Test
+    void theKeepAliveFrameHasAName() {
+        PacketNames names = new PacketNames();
+        names.initialize();
+
+        assertEquals("KeepAlive", names.getOutgoingName(PacketNames.KEEP_ALIVE_HEADER));
+    }
+
     @Test
     void incomingPacketNameIdsAreUnique() throws Exception {
         assertPublicFinalPacketIdsAreUnique(Incoming.class);
@@ -31,7 +39,9 @@ class PacketNamesContractTest {
             if (!Modifier.isPublic(modifiers)
                     || !Modifier.isStatic(modifiers)
                     || !Modifier.isFinal(modifiers)
-                    || field.getType() != int.class) {
+                    || field.getType() != int.class
+                    // Deprecated aliases keep an old name on an id for the plugin ABI.
+                    || field.isAnnotationPresent(Deprecated.class)) {
                 continue;
             }
 

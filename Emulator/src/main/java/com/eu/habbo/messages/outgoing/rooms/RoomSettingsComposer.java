@@ -32,8 +32,8 @@ public class RoomSettingsComposer extends MessageComposer {
             this.response.appendInt(0);
         }
 
-        //this.response.appendInt(this.room.getRights().size());
-        this.response.appendInt(this.room.getTradeMode()); //Trade Mode
+        // this.response.appendInt(this.room.getRights().size());
+        this.response.appendInt(this.room.getTradeMode()); // Trade Mode
         this.response.appendInt(this.room.isAllowPets() ? 1 : 0);
         this.response.appendInt(this.room.isAllowPetsEat() ? 1 : 0);
         this.response.appendInt(this.room.isAllowWalkthrough() ? 1 : 0);
@@ -47,12 +47,20 @@ public class RoomSettingsComposer extends MessageComposer {
         this.response.appendInt(this.room.getChatDistance());
         this.response.appendInt(this.room.getChatProtection());
 
-        this.response.appendBoolean(false); //IDK?
+        this.response.appendBoolean(false); // IDK?
 
         this.response.appendInt(this.room.getMuteOption());
         this.response.appendInt(this.room.getKickOption());
         this.response.appendInt(this.room.getBanOption());
         this.response.appendInt(this.room.isAllowUnderpass() ? 1 : 0);
+        this.response.appendInt(this.room.isMuteAllPets() ? 1 : 0);
+        this.response.appendInt(this.room.isLeaveOnDoorTileEnabled() ? 1 : 0);
+        this.response.appendInt(this.room.isIdleSleepEnabled() ? 1 : 0);
+        this.response.appendInt(this.room.getIdleSleepTimeoutSeconds());
+        this.response.appendInt(this.room.isIdleAutokickEnabled() ? 1 : 0);
+        this.response.appendInt(this.room.getIdleAutokickTimeoutSeconds());
+        // AIR hiddenByBc: the room is hidden because it holds Builders Club furni without a membership.
+        this.response.appendBoolean(this.room.isBuildersClubTrialLocked());
         return this.response;
     }
 

@@ -5,16 +5,9 @@ import com.eu.habbo.habbohotel.users.Habbo;
 import com.eu.habbo.habbohotel.users.HabboBadge;
 import com.eu.habbo.habbohotel.users.inventory.BadgesComponent;
 import com.eu.habbo.messages.outgoing.inventory.InventoryBadgesComposer;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import javax.imageio.ImageIO;
-import javax.imageio.ImageReader;
-import javax.imageio.stream.ImageInputStream;
 import java.awt.image.BufferedImage;
 import java.awt.image.IndexColorModel;
 import java.io.ByteArrayInputStream;
-import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -32,6 +25,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
+import javax.imageio.ImageIO;
+import javax.imageio.ImageReader;
+import javax.imageio.stream.ImageInputStream;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class CustomBadgeManager {
 
@@ -44,9 +42,10 @@ public class CustomBadgeManager {
 
     private static final int RANDOM_SUFFIX_LENGTH = 5;
     private static final char[] RANDOM_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789".toCharArray();
-    private static final Pattern BADGE_ID_PATTERN = Pattern.compile("^CUST[A-Z0-9]{" + RANDOM_SUFFIX_LENGTH + "}-\\d+$");
+    private static final Pattern BADGE_ID_PATTERN =
+            Pattern.compile("^CUST[A-Z0-9]{" + RANDOM_SUFFIX_LENGTH + "}-\\d+$");
 
-    private static final byte[] PNG_MAGIC = { (byte) 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A };
+    private static final byte[] PNG_MAGIC = {(byte) 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A};
 
     private static final int RATE_LIMIT_OPS = 5;
     private static final long RATE_LIMIT_WINDOW_MS = 60_000L;
@@ -55,7 +54,8 @@ public class CustomBadgeManager {
     private final Map<Integer, long[]> rateBuckets = new ConcurrentHashMap<>();
     private final Map<Integer, Object> userMutationLocks = new ConcurrentHashMap<>();
     private final Map<String, BadgeText> textCache = new ConcurrentHashMap<>();
-    private final java.util.concurrent.atomic.AtomicLong textCacheVersion = new java.util.concurrent.atomic.AtomicLong();
+    private final java.util.concurrent.atomic.AtomicLong textCacheVersion =
+            new java.util.concurrent.atomic.AtomicLong();
 
     private volatile CustomBadgeSettings settings;
 
@@ -66,6 +66,7 @@ public class CustomBadgeManager {
     public static final class BadgeText {
         public final String name;
         public final String description;
+
         public BadgeText(String name, String description) {
             this.name = name == null ? "" : name;
             this.description = description == null ? "" : description;
@@ -83,14 +84,13 @@ public class CustomBadgeManager {
     private void loadTextCache() {
         Map<String, BadgeText> next = new java.util.HashMap<>();
         try (Connection connection = Emulator.getDatabase().getDataSource().getConnection();
-             PreparedStatement statement = connection.prepareStatement(
-                     "SELECT `badge_id`, `badge_name`, `badge_description` FROM `user_custom_badge`")) {
+                PreparedStatement statement = connection.prepareStatement(
+                        "SELECT `badge_id`, `badge_name`, `badge_description` FROM `user_custom_badge`")) {
             try (ResultSet resultSet = statement.executeQuery()) {
                 while (resultSet.next()) {
-                    next.put(resultSet.getString("badge_id"),
-                            new BadgeText(
-                                    resultSet.getString("badge_name"),
-                                    resultSet.getString("badge_description")));
+                    next.put(
+                            resultSet.getString("badge_id"),
+                            new BadgeText(resultSet.getString("badge_name"), resultSet.getString("badge_description")));
                 }
             }
         } catch (SQLException e) {
@@ -105,8 +105,8 @@ public class CustomBadgeManager {
 
     public void reload() {
         try (Connection connection = Emulator.getDatabase().getDataSource().getConnection();
-             PreparedStatement statement = connection.prepareStatement(
-                     "SELECT `badge_path`, `badge_url`, `price_badge`, `currency_type` FROM `users_custom_badge_settings` ORDER BY `id` ASC LIMIT 1")) {
+                PreparedStatement statement = connection.prepareStatement(
+                        "SELECT `badge_path`, `badge_url`, `price_badge`, `currency_type` FROM `users_custom_badge_settings` ORDER BY `id` ASC LIMIT 1")) {
 
             try (ResultSet resultSet = statement.executeQuery()) {
                 if (resultSet.next()) {
@@ -117,10 +117,9 @@ public class CustomBadgeManager {
                             resultSet.getInt("currency_type"));
                 } else {
                     this.settings = new CustomBadgeSettings(
-                            "/var/www/gamedata/c_images/album1584",
-                            "/gamedata/c_images/album1584",
-                            0, -1);
-                    LOGGER.warn("CustomBadgeManager -> No row found in users_custom_badge_settings, falling back to defaults.");
+                            "/var/www/gamedata/c_images/album1584", "/gamedata/c_images/album1584", 0, -1);
+                    LOGGER.warn(
+                            "CustomBadgeManager -> No row found in users_custom_badge_settings, falling back to defaults.");
                 }
             }
         } catch (SQLException e) {
@@ -137,8 +136,8 @@ public class CustomBadgeManager {
     public List<CustomBadge> listForUser(int userId) {
         List<CustomBadge> result = new ArrayList<>();
         try (Connection connection = Emulator.getDatabase().getDataSource().getConnection();
-             PreparedStatement statement = connection.prepareStatement(
-                     "SELECT * FROM `user_custom_badge` WHERE `user_id` = ? ORDER BY `date_created` ASC")) {
+                PreparedStatement statement = connection.prepareStatement(
+                        "SELECT * FROM `user_custom_badge` WHERE `user_id` = ? ORDER BY `date_created` ASC")) {
             statement.setInt(1, userId);
             try (ResultSet resultSet = statement.executeQuery()) {
                 while (resultSet.next()) {
@@ -154,8 +153,8 @@ public class CustomBadgeManager {
     public CustomBadge getByBadgeId(String badgeId) {
         if (badgeId == null || badgeId.isEmpty()) return null;
         try (Connection connection = Emulator.getDatabase().getDataSource().getConnection();
-             PreparedStatement statement = connection.prepareStatement(
-                     "SELECT * FROM `user_custom_badge` WHERE `badge_id` = ? LIMIT 1")) {
+                PreparedStatement statement =
+                        connection.prepareStatement("SELECT * FROM `user_custom_badge` WHERE `badge_id` = ? LIMIT 1")) {
             statement.setString(1, badgeId);
             try (ResultSet resultSet = statement.executeQuery()) {
                 if (resultSet.next()) {
@@ -170,8 +169,8 @@ public class CustomBadgeManager {
 
     public int countForUser(int userId) {
         try (Connection connection = Emulator.getDatabase().getDataSource().getConnection();
-             PreparedStatement statement = connection.prepareStatement(
-                     "SELECT COUNT(*) FROM `user_custom_badge` WHERE `user_id` = ?")) {
+                PreparedStatement statement =
+                        connection.prepareStatement("SELECT COUNT(*) FROM `user_custom_badge` WHERE `user_id` = ?")) {
             statement.setInt(1, userId);
             try (ResultSet resultSet = statement.executeQuery()) {
                 if (resultSet.next()) {
@@ -184,7 +183,8 @@ public class CustomBadgeManager {
         return 0;
     }
 
-    public CustomBadge create(int userId, String name, String description, byte[] pngBytes) throws CustomBadgeException {
+    public CustomBadge create(int userId, String name, String description, byte[] pngBytes)
+            throws CustomBadgeException {
         enforceRateLimit(userId);
 
         Object userLock = this.userMutationLocks.computeIfAbsent(userId, ignored -> new Object());
@@ -193,7 +193,8 @@ public class CustomBadgeManager {
         }
     }
 
-    private CustomBadge createForUser(int userId, String name, String description, byte[] pngBytes) throws CustomBadgeException {
+    private CustomBadge createForUser(int userId, String name, String description, byte[] pngBytes)
+            throws CustomBadgeException {
         if (this.countForUser(userId) >= MAX_PER_USER) {
             throw new CustomBadgeException("limit_reached", "Maximum of " + MAX_PER_USER + " custom badges reached.");
         }
@@ -216,9 +217,9 @@ public class CustomBadgeManager {
         String safeDesc = sanitize(description, 255);
 
         try (Connection connection = Emulator.getDatabase().getDataSource().getConnection();
-             PreparedStatement statement = connection.prepareStatement(
-                     "INSERT INTO `user_custom_badge` (`user_id`, `badge_id`, `badge_name`, `badge_description`, `date_created`, `date_edit`) VALUES (?, ?, ?, ?, ?, ?)",
-                     Statement.RETURN_GENERATED_KEYS)) {
+                PreparedStatement statement = connection.prepareStatement(
+                        "INSERT INTO `user_custom_badge` (`user_id`, `badge_id`, `badge_name`, `badge_description`, `date_created`, `date_edit`) VALUES (?, ?, ?, ?, ?, ?)",
+                        Statement.RETURN_GENERATED_KEYS)) {
             statement.setInt(1, userId);
             statement.setString(2, badgeId);
             statement.setString(3, safeName);
@@ -245,7 +246,8 @@ public class CustomBadgeManager {
         }
     }
 
-    public CustomBadge update(int userId, String oldBadgeId, String name, String description, byte[] pngBytes) throws CustomBadgeException {
+    public CustomBadge update(int userId, String oldBadgeId, String name, String description, byte[] pngBytes)
+            throws CustomBadgeException {
         enforceRateLimit(userId);
 
         CustomBadge existing = getByBadgeId(oldBadgeId);
@@ -261,8 +263,8 @@ public class CustomBadgeManager {
         writeBadgeFile(newBadgeId, image);
 
         try (Connection connection = Emulator.getDatabase().getDataSource().getConnection();
-             PreparedStatement statement = connection.prepareStatement(
-                     "UPDATE `user_custom_badge` SET `badge_id` = ?, `badge_name` = ?, `badge_description` = ?, `date_edit` = ? WHERE `id` = ?")) {
+                PreparedStatement statement = connection.prepareStatement(
+                        "UPDATE `user_custom_badge` SET `badge_id` = ?, `badge_name` = ?, `badge_description` = ?, `date_edit` = ? WHERE `id` = ?")) {
             statement.setString(1, newBadgeId);
             statement.setString(2, sanitize(name, 64));
             statement.setString(3, sanitize(description, 255));
@@ -282,7 +284,8 @@ public class CustomBadgeManager {
         this.textCacheVersion.incrementAndGet();
         renameBadgeInInventory(userId, oldBadgeId, newBadgeId);
         deleteBadgeFileQuietly(oldBadgeId);
-        return new CustomBadge(existing.getId(), userId, newBadgeId, safeName, safeDesc, existing.getDateCreated(), now);
+        return new CustomBadge(
+                existing.getId(), userId, newBadgeId, safeName, safeDesc, existing.getDateCreated(), now);
     }
 
     public void delete(int userId, String badgeId) throws CustomBadgeException {
@@ -294,8 +297,8 @@ public class CustomBadgeManager {
         }
 
         try (Connection connection = Emulator.getDatabase().getDataSource().getConnection();
-             PreparedStatement statement = connection.prepareStatement(
-                     "DELETE FROM `user_custom_badge` WHERE `id` = ?")) {
+                PreparedStatement statement =
+                        connection.prepareStatement("DELETE FROM `user_custom_badge` WHERE `id` = ?")) {
             statement.setInt(1, existing.getId());
             statement.executeUpdate();
         } catch (SQLException e) {
@@ -344,20 +347,19 @@ public class CustomBadgeManager {
 
         Habbo habbo = Emulator.getGameServer().getGameClientManager().getHabbo(userId);
         if (habbo == null) {
-            throw new CustomBadgeException("must_be_online",
-                    "You must be online in the hotel to create a paid badge.");
+            throw new CustomBadgeException("must_be_online", "You must be online in the hotel to create a paid badge.");
         }
 
         int currencyType = current.getCurrencyType();
         if (currencyType == -1) {
             if (!habbo.tryTakeCredits(price)) {
-                throw new CustomBadgeException("insufficient_funds",
-                        "You don't have enough credits (need " + price + ").");
+                throw new CustomBadgeException(
+                        "insufficient_funds", "You don't have enough credits (need " + price + ").");
             }
         } else {
             if (!habbo.tryTakePoints(currencyType, price)) {
-                throw new CustomBadgeException("insufficient_funds",
-                        "You don't have enough of that currency (need " + price + ").");
+                throw new CustomBadgeException(
+                        "insufficient_funds", "You don't have enough of that currency (need " + price + ").");
             }
         }
     }
@@ -373,8 +375,8 @@ public class CustomBadgeManager {
         }
 
         try (Connection connection = Emulator.getDatabase().getDataSource().getConnection();
-             PreparedStatement statement = connection.prepareStatement(
-                     "INSERT INTO `users_badges` (`user_id`, `slot_id`, `badge_code`) VALUES (?, 0, ?)")) {
+                PreparedStatement statement = connection.prepareStatement(
+                        "INSERT INTO `users_badges` (`user_id`, `slot_id`, `badge_code`) VALUES (?, 0, ?)")) {
             statement.setInt(1, userId);
             statement.setString(2, badgeId);
             statement.executeUpdate();
@@ -385,14 +387,16 @@ public class CustomBadgeManager {
 
     private void renameBadgeInInventory(int userId, String oldBadgeId, String newBadgeId) {
         try (Connection connection = Emulator.getDatabase().getDataSource().getConnection();
-             PreparedStatement statement = connection.prepareStatement(
-                     "UPDATE `users_badges` SET `badge_code` = ? WHERE `user_id` = ? AND `badge_code` = ?")) {
+                PreparedStatement statement = connection.prepareStatement(
+                        "UPDATE `users_badges` SET `badge_code` = ? WHERE `user_id` = ? AND `badge_code` = ?")) {
             statement.setString(1, newBadgeId);
             statement.setInt(2, userId);
             statement.setString(3, oldBadgeId);
             statement.executeUpdate();
         } catch (SQLException e) {
-            LOGGER.error("CustomBadgeManager -> Failed to rename badge in users_badges " + oldBadgeId + " -> " + newBadgeId, e);
+            LOGGER.error(
+                    "CustomBadgeManager -> Failed to rename badge in users_badges " + oldBadgeId + " -> " + newBadgeId,
+                    e);
         }
 
         Habbo online = Emulator.getGameServer().getGameClientManager().getHabbo(userId);
@@ -447,8 +451,8 @@ public class CustomBadgeManager {
                 int w = reader.getWidth(0);
                 int h = reader.getHeight(0);
                 if (w != BADGE_WIDTH || h != BADGE_HEIGHT) {
-                    throw new CustomBadgeException("wrong_dimensions",
-                            "Badge image must be " + BADGE_WIDTH + "x" + BADGE_HEIGHT + " pixels.");
+                    throw new CustomBadgeException(
+                            "wrong_dimensions", "Badge image must be " + BADGE_WIDTH + "x" + BADGE_HEIGHT + " pixels.");
                 }
             } finally {
                 reader.dispose();
@@ -463,9 +467,7 @@ public class CustomBadgeManager {
         } catch (IOException e) {
             throw new CustomBadgeException("invalid_image", "Badge image could not be decoded.");
         }
-        if (image == null
-                || image.getWidth() != BADGE_WIDTH
-                || image.getHeight() != BADGE_HEIGHT) {
+        if (image == null || image.getWidth() != BADGE_WIDTH || image.getHeight() != BADGE_HEIGHT) {
             throw new CustomBadgeException("invalid_image", "Badge image could not be decoded.");
         }
         return image;
@@ -478,11 +480,13 @@ public class CustomBadgeManager {
             long oldest = Long.MAX_VALUE;
             int oldestIdx = 0;
             for (int i = 0; i < bucket.length; i++) {
-                if (bucket[i] < oldest) { oldest = bucket[i]; oldestIdx = i; }
+                if (bucket[i] < oldest) {
+                    oldest = bucket[i];
+                    oldestIdx = i;
+                }
             }
             if (oldest > now - RATE_LIMIT_WINDOW_MS) {
-                throw new CustomBadgeException("rate_limited",
-                        "Too many badge operations. Try again in a moment.");
+                throw new CustomBadgeException("rate_limited", "Too many badge operations. Try again in a moment.");
             }
             bucket[oldestIdx] = now;
         }
@@ -506,7 +510,9 @@ public class CustomBadgeManager {
 
     private void writeBadgeFile(String badgeId, BufferedImage source) throws CustomBadgeException {
         CustomBadgeSettings current = this.settings;
-        if (current == null || current.getBadgePath() == null || current.getBadgePath().isEmpty()) {
+        if (current == null
+                || current.getBadgePath() == null
+                || current.getBadgePath().isEmpty()) {
             throw new CustomBadgeException("not_configured", "Custom badge storage path is not configured.");
         }
         try {
@@ -519,11 +525,9 @@ public class CustomBadgeManager {
                 throw new IOException("No GIF ImageWriter available.");
             }
 
-            LOGGER.info("CustomBadgeManager -> wrote badge {} ({} bytes) to {}",
-                    badgeId, Files.size(target), target);
+            LOGGER.info("CustomBadgeManager -> wrote badge {} ({} bytes) to {}", badgeId, Files.size(target), target);
         } catch (IOException e) {
-            LOGGER.error("CustomBadgeManager -> Failed to write badge " + badgeId
-                    + " to " + current.getBadgePath(), e);
+            LOGGER.error("CustomBadgeManager -> Failed to write badge " + badgeId + " to " + current.getBadgePath(), e);
             throw new CustomBadgeException("write_failed", "Could not save the badge file.");
         }
     }
@@ -574,10 +578,21 @@ public class CustomBadgeManager {
 
     private void deleteBadgeFileQuietly(String badgeId) {
         CustomBadgeSettings current = this.settings;
-        if (current == null || current.getBadgePath() == null) return;
-        File file = new File(current.getBadgePath(), badgeId + ".gif");
-        if (file.exists() && !file.delete()) {
-            LOGGER.warn("CustomBadgeManager -> Could not delete stale badge file: {}", file.getAbsolutePath());
+        if (current == null
+                || current.getBadgePath() == null
+                || current.getBadgePath().isEmpty()) return;
+        // Only ids this manager generates name files on disk; anything else
+        // (including a traversal attempt) has no file to delete.
+        if (!isCustomBadgeId(badgeId)) return;
+
+        Path dir = Paths.get(current.getBadgePath()).toAbsolutePath().normalize();
+        Path file = dir.resolve(badgeId + ".gif").normalize();
+        if (!file.startsWith(dir)) return;
+
+        try {
+            Files.deleteIfExists(file);
+        } catch (IOException e) {
+            LOGGER.warn("CustomBadgeManager -> Could not delete stale badge file: {}", file, e);
         }
     }
 

@@ -6,15 +6,15 @@ import com.eu.habbo.habbohotel.rooms.RoomUnit;
 import com.eu.habbo.habbohotel.users.Habbo;
 import com.eu.habbo.habbohotel.wired.core.WiredContext;
 import com.eu.habbo.habbohotel.wired.core.WiredSourceUtil;
-import java.util.HashSet;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.HashSet;
 import java.util.List;
 
 /**
  * Negation of {@link WiredConditionHabboOwnsFurni}: passes when the triggering user does NOT own furni of
- * the selected type(s). Reuses the same HAS_ALTITUDE picker dialog and inventory check.
+ * the selected type(s). Inherits FURNI_PROPERTY from its parent, so it gets the same picker without the
+ * counter-only gate that the altitude dialog imposed.
  */
 public class WiredConditionHabboNotOwnsFurni extends WiredConditionHabboOwnsFurni {
 
@@ -22,7 +22,8 @@ public class WiredConditionHabboNotOwnsFurni extends WiredConditionHabboOwnsFurn
         super(set, baseItem);
     }
 
-    public WiredConditionHabboNotOwnsFurni(int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
+    public WiredConditionHabboNotOwnsFurni(
+            int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
         super(id, userId, item, extradata, limitedStack, limitedSells);
     }
 

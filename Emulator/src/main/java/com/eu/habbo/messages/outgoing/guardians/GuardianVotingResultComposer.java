@@ -2,12 +2,10 @@ package com.eu.habbo.messages.outgoing.guardians;
 
 import com.eu.habbo.habbohotel.guides.GuardianTicket;
 import com.eu.habbo.habbohotel.guides.GuardianVote;
-import com.eu.habbo.habbohotel.users.Habbo;
 import com.eu.habbo.messages.ServerMessage;
 import com.eu.habbo.messages.outgoing.MessageComposer;
 import com.eu.habbo.messages.outgoing.Outgoing;
-
-import java.util.Map;
+import java.util.List;
 
 public class GuardianVotingResultComposer extends MessageComposer {
     private final GuardianTicket ticket;
@@ -21,16 +19,18 @@ public class GuardianVotingResultComposer extends MessageComposer {
     @Override
     protected ServerMessage composeInternal() {
         this.response.init(Outgoing.GuardianVotingResultComposer);
-        this.response.appendInt(this.ticket.getVerdict().getType()); //Final Verdict
-        this.response.appendInt(this.vote.type.getType()); //Your vote
+        // winningVoteCode / ownVoteCode are vote codes (0 ok, 1 bad, 2 very bad, -1 forwarded);
+        // only the trailing status list below uses the raw GuardianVoteType ordinal.
+        this.response.appendInt(this.ticket.getVerdict().getVoteCode()); // Final Verdict
+        this.response.appendInt(this.vote.type.getVoteCode()); // Your vote
 
-        this.response.appendInt(this.ticket.getVotes().size() - 1); //Other votes count.
+        // The other guardians' votes, in the order the voting status listed them.
+        List<GuardianVote> others = this.ticket.getSortedVotes(this.vote.getGuardian());
 
-        for (Map.Entry<Habbo, GuardianVote> set : this.ticket.getVotes().entrySet()) {
-            if (set.getValue().equals(this.vote))
-                continue;
+        this.response.appendInt(others.size());
 
-            this.response.appendInt(set.getValue().type.getType());
+        for (GuardianVote other : others) {
+            this.response.appendInt(other.type.getType());
         }
         return this.response;
     }

@@ -8,6 +8,7 @@ import com.eu.habbo.habbohotel.items.interactions.wired.WiredSettings;
 import com.eu.habbo.habbohotel.rooms.Room;
 import com.eu.habbo.habbohotel.rooms.RoomUnit;
 import com.eu.habbo.habbohotel.users.Habbo;
+import com.eu.habbo.habbohotel.users.RoomLookOverride;
 import com.eu.habbo.habbohotel.users.clothingvalidation.ClothingValidationManager;
 import com.eu.habbo.habbohotel.wired.WiredEffectType;
 import com.eu.habbo.habbohotel.wired.core.WiredContext;
@@ -16,7 +17,6 @@ import com.eu.habbo.habbohotel.wired.core.WiredSourceUtil;
 import com.eu.habbo.messages.ServerMessage;
 import com.eu.habbo.messages.outgoing.rooms.users.RoomUserDataComposer;
 import com.eu.habbo.messages.outgoing.users.UpdateUserLookComposer;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
@@ -30,7 +30,7 @@ import java.util.List;
  * Persisted on the user's next data save (matching the mimic path).
  */
 public class WiredEffectGiveLook extends InteractionWiredEffect {
-    public static final WiredEffectType type = WiredEffectType.SHOW_MESSAGE;
+    public static final WiredEffectType type = WiredEffectType.EFFECT_TEXT;
 
     private static final int MAX_LOOK_LENGTH = 256;
 
@@ -53,8 +53,7 @@ public class WiredEffectGiveLook extends InteractionWiredEffect {
         message.appendInt(this.getBaseItem().getSpriteId());
         message.appendInt(this.getId());
         message.appendString(this.figure);
-        message.appendInt(1);
-        message.appendInt(this.userSource);
+        message.appendInt(0);
         message.appendInt(0);
         message.appendInt(type.code);
         message.appendInt(this.getDelay());
@@ -85,7 +84,8 @@ public class WiredEffectGiveLook extends InteractionWiredEffect {
         this.figure = trimmed.length() <= MAX_LOOK_LENGTH ? trimmed : trimmed.substring(0, MAX_LOOK_LENGTH);
 
         int[] params = settings.getIntParams();
-        this.userSource = (params.length > 0) ? params[0] : WiredSourceUtil.SOURCE_TRIGGER;
+        // Official: no int params; the user source is the official source slot.
+        this.userSource = settings.userSource(0, WiredSourceUtil.SOURCE_TRIGGER);
 
         this.setDelay(settings.getDelay());
 
@@ -106,10 +106,14 @@ public class WiredEffectGiveLook extends InteractionWiredEffect {
             if (habbo == null || habbo.getHabboInfo() == null) continue;
 
             String gender = habbo.getHabboInfo().getGender().name();
-            String validated = ClothingValidationManager.validateLook(this.figure, gender);
+            // Validated against the target's own club membership and wardrobe: the plain check stripped the
+            // club parts of a member, and handed back the raw string when the figure data was not loaded.
+            String validated = ClothingValidationManager.validateLook(habbo, this.figure, gender);
             if (validated == null || validated.isEmpty()) continue;
 
-            habbo.getHabboInfo().setLook(validated);
+            // The look lasts while the user stays in the room: it used to be saved with the profile, so a
+            // trap room replaced the outfit of everyone who walked in for good.
+            RoomLookOverride.apply(habbo, validated);
             if (habbo.getClient() != null) {
                 habbo.getClient().sendResponse(new UpdateUserLookComposer(habbo));
             }

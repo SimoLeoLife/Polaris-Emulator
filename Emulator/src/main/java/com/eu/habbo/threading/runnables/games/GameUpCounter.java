@@ -8,13 +8,18 @@ import com.eu.habbo.habbohotel.wired.core.WiredManager;
 public class GameUpCounter implements Runnable {
     private final InteractionGameUpCounter timer;
 
+    private int chain;
+
     public GameUpCounter(InteractionGameUpCounter timer) {
         this.timer = timer;
+        this.chain = timer.getTimerChain();
     }
 
     @Override
     public void run() {
-        timer.setThreadActive(false);
+        if (!timer.releaseTimerThread(this.chain)) {
+            return;
+        }
 
         if (timer.getRoomId() == 0) {
             timer.setRunning(false);
@@ -27,18 +32,18 @@ public class GameUpCounter implements Runnable {
             return;
         }
 
-        int tickDelayMs = (int) timer.getNextTickDelayMs();
-        timer.advanceCounterInMs(tickDelayMs);
-        if (timer.getCurrentTimeInMs() % 1000 == 0) {
-            WiredManager.triggerClockCounter(room, timer);
-        }
+        long tickDelayMs = timer.getNextTickDelayMs();
+        timer.advanceCounterMs(tickDelayMs);
+        // Every tick, whole or half second: a trigger set to X.5 seconds used to wait forever.
+        WiredManager.triggerClockCounter(room, timer);
 
-        if (timer.getCurrentTimeInMs() < timer.getMaximumTimeInMs()) {
+        if (timer.getCurrentTimeMs() < timer.getMaximumTimeMs()) {
             if (timer.tryActivateTimerThread()) {
+                this.chain = timer.getTimerChain();
                 Emulator.getThreading().run(this, timer.getNextTickDelayMs());
             }
         } else {
-            timer.setCurrentTimeInMs(timer.getMaximumTimeInMs());
+            timer.setCurrentTimeMs(timer.getMaximumTimeMs());
             timer.endGame(room);
             WiredManager.triggerGameEnds(room);
         }

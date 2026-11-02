@@ -1,5 +1,6 @@
 package com.eu.habbo.habbohotel.items.interactions.wired.conditions;
 
+import com.eu.habbo.habbohotel.games.Game;
 import com.eu.habbo.habbohotel.games.GameTeam;
 import com.eu.habbo.habbohotel.games.GameTeamColors;
 import com.eu.habbo.habbohotel.items.Item;
@@ -10,13 +11,13 @@ import com.eu.habbo.habbohotel.wired.WiredConditionType;
 import com.eu.habbo.habbohotel.wired.core.WiredContext;
 import com.eu.habbo.habbohotel.wired.core.WiredManager;
 import com.eu.habbo.habbohotel.wired.core.WiredSourceUtil;
+import com.eu.habbo.habbohotel.wired.protocol.WiredOfficialQuantifier;
 import com.eu.habbo.messages.ServerMessage;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.List;
 
-public class WiredConditionTeamHasRank extends WiredConditionTeamGameBase {
+public class WiredConditionTeamHasRank extends WiredConditionTeamGameBase implements WiredOfficialQuantifier {
     public static final WiredConditionType type = WiredConditionType.TEAM_HAS_RANK;
 
     private int teamType = GameTeamColors.RED.type;
@@ -28,13 +29,24 @@ public class WiredConditionTeamHasRank extends WiredConditionTeamGameBase {
         super(set, baseItem);
     }
 
-    public WiredConditionTeamHasRank(int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
+    public WiredConditionTeamHasRank(
+            int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
         super(id, userId, item, extradata, limitedStack, limitedSells);
     }
 
     @Override
     public boolean evaluate(WiredContext ctx) {
         Room room = ctx.room();
+
+        // A named team: its place in the room's game, whoever set the stack off or nobody. Only
+        // "the triggering user's team" is about users.
+        if (this.teamType != TEAM_TRIGGERER) {
+            Game game = this.resolveActiveRoomGame(room);
+            GameTeam team = (game != null) ? game.getTeam(this.resolveConfiguredTeamColor(this.teamType)) : null;
+
+            return team != null && this.getTeamRank(game, team) == this.placement;
+        }
+
         List<RoomUnit> users = this.resolveUsers(ctx, this.userSource);
 
         return this.matchesQuantifier(users, this.quantifier, roomUnit -> this.matchesUser(ctx, room, roomUnit));
@@ -48,12 +60,8 @@ public class WiredConditionTeamHasRank extends WiredConditionTeamGameBase {
 
     @Override
     public String getWiredData() {
-        return WiredManager.getGson().toJson(new JsonData(
-                this.teamType,
-                this.placement,
-                this.userSource,
-                this.quantifier
-        ));
+        return WiredManager.getGson()
+                .toJson(new JsonData(this.teamType, this.placement, this.userSource, this.quantifier));
     }
 
     @Override
@@ -100,11 +108,12 @@ public class WiredConditionTeamHasRank extends WiredConditionTeamGameBase {
         message.appendInt(this.getBaseItem().getSpriteId());
         message.appendInt(this.getId());
         message.appendString("");
-        message.appendInt(4);
+        // Official layout: [team (0 the triggerer's team, 1-4), placement (0 first .. 3 fourth)]; ours follow:
+        // the users whose team counts for team 0. The quantifier goes in its own slot.
+        message.appendInt(3);
         message.appendInt(this.teamType);
-        message.appendInt(this.placement);
+        message.appendInt(this.placement - 1);
         message.appendInt(this.userSource);
-        message.appendInt(this.quantifier);
         message.appendInt(0);
         message.appendInt(this.getType().code);
         message.appendInt(0);
@@ -117,9 +126,9 @@ public class WiredConditionTeamHasRank extends WiredConditionTeamGameBase {
         this.resetSettings();
 
         if (params.length > 0) this.teamType = this.normalizeRankTeamType(params[0]);
-        if (params.length > 1) this.placement = this.normalizePlacement(params[1]);
+        if (params.length > 1) this.placement = this.normalizePlacement(params[1] + 1);
         if (params.length > 2) this.userSource = this.normalizeUserSource(params[2]);
-        if (params.length > 3) this.quantifier = this.normalizeQuantifier(params[3]);
+        this.quantifier = this.normalizeQuantifier(settings.getQuantifierCode());
 
         return true;
     }
@@ -143,7 +152,8 @@ public class WiredConditionTeamHasRank extends WiredConditionTeamGameBase {
         return this.getTeamRank(context.game, team) == this.placement;
     }
 
-    private GameTeamColors resolveRequiredTeamColor(WiredContext ctx, Room room, com.eu.habbo.habbohotel.games.Game game) {
+    private GameTeamColors resolveRequiredTeamColor(
+            WiredContext ctx, Room room, com.eu.habbo.habbohotel.games.Game game) {
         if (this.teamType == TEAM_TRIGGERER) {
             RoomUnit actor = ctx.actor().orElse(null);
             UserGameContext triggererContext = this.resolveUserGameContext(room, actor);
@@ -177,5 +187,10 @@ public class WiredConditionTeamHasRank extends WiredConditionTeamGameBase {
             this.userSource = userSource;
             this.quantifier = quantifier;
         }
+    }
+
+    @Override
+    public int officialQuantifierCode() {
+        return this.quantifier;
     }
 }

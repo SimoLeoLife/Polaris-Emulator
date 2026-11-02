@@ -9,16 +9,15 @@ import com.eu.habbo.habbohotel.rooms.RoomUnit;
 import com.eu.habbo.habbohotel.wired.WiredEffectType;
 import com.eu.habbo.habbohotel.wired.core.WiredContext;
 import com.eu.habbo.habbohotel.wired.core.WiredManager;
+import com.eu.habbo.habbohotel.wired.protocol.WiredOfficialSelector;
 import com.eu.habbo.messages.ServerMessage;
 import com.eu.habbo.messages.incoming.wired.WiredSaveException;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
 
-
-public class WiredEffectUsersArea extends InteractionWiredEffect {
+public class WiredEffectUsersArea extends InteractionWiredEffect implements WiredOfficialSelector {
 
     public static final WiredEffectType type = WiredEffectType.USERS_AREA_SELECTOR;
 
@@ -55,25 +54,44 @@ public class WiredEffectUsersArea extends InteractionWiredEffect {
             }
         }
 
-        ctx.targets().setUsers(this.applySelectorModifiers(usersInArea, room.getRoomUnits(), ctx.targets().users(), filterExisting, invert));
+        ctx.targets()
+                .setUsers(this.applySelectorModifiers(
+                        usersInArea, room.getRoomUnits(), ctx.targets().users(), filterExisting, invert));
     }
 
     @Override
     public boolean saveData(WiredSettings settings, GameClient gameClient) throws WiredSaveException {
         int[] params = settings.getIntParams();
-        if (params == null || params.length < 4) {
-            throw new WiredSaveException("wf_slc_users_area requires at least 4 int params: rootX, rootY, width, height");
-        }
-
-        this.rootX = params[0];
-        this.rootY = params[1];
-        this.areaWidth = params[2];
-        this.areaHeight = params[3];
-        this.filterExisting = params.length >= 5 && params[4] == 1;
-        this.invert = params.length >= 6 && params[5] == 1;
+        // AIR clamps each value to 0..64 and fills a value the save left out, instead of refusing it.
+        this.rootX = WiredSelectorPayloadGuard.areaValue(params, 0);
+        this.rootY = WiredSelectorPayloadGuard.areaValue(params, 1);
+        this.areaWidth = WiredSelectorPayloadGuard.areaValue(params, 2);
+        this.areaHeight = WiredSelectorPayloadGuard.areaValue(params, 3);
+        this.filterExisting = settings.isSelectorFilter();
+        this.invert = settings.isSelectorInvert();
         this.setDelay(settings.getDelay());
 
         return true;
+    }
+
+    @Override
+    public boolean selectorFilter() {
+        return this.filterExisting;
+    }
+
+    @Override
+    public boolean selectorInvert() {
+        return this.invert;
+    }
+
+    @Override
+    public int[] officialFurniSources() {
+        return new int[0];
+    }
+
+    @Override
+    public int[] officialUserSources() {
+        return new int[0];
     }
 
     @Override
@@ -93,15 +111,20 @@ public class WiredEffectUsersArea extends InteractionWiredEffect {
 
     @Override
     public String getWiredData() {
-        return WiredManager.getGson().toJson(new JsonData(rootX, rootY, areaWidth, areaHeight, filterExisting, invert, getDelay()));
+        return WiredManager.getGson()
+                .toJson(new JsonData(rootX, rootY, areaWidth, areaHeight, filterExisting, invert, getDelay()));
     }
 
     @Override
     public void loadWiredData(ResultSet set, Room room) throws SQLException {
+        this.onPickUp();
+
         String wiredData = set.getString("wired_data");
 
         if (wiredData != null && wiredData.startsWith("{")) {
             JsonData data = WiredSelectorPayloadGuard.fromJson(wiredData, JsonData.class);
+            if (data == null) return;
+
             this.rootX = data.rootX;
             this.rootY = data.rootY;
             this.areaWidth = data.width;
@@ -133,13 +156,11 @@ public class WiredEffectUsersArea extends InteractionWiredEffect {
         message.appendInt(this.getId());
         message.appendString("");
 
-        message.appendInt(6);
+        message.appendInt(4);
         message.appendInt(this.rootX);
         message.appendInt(this.rootY);
         message.appendInt(this.areaWidth);
         message.appendInt(this.areaHeight);
-        message.appendInt(this.filterExisting ? 1 : 0);
-        message.appendInt(this.invert ? 1 : 0);
 
         message.appendInt(0);
         message.appendInt(this.getType().code);

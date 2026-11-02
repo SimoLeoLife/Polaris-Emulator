@@ -1,6 +1,7 @@
 package com.eu.habbo.messages.incoming.earnings;
 
 import com.eu.habbo.habbohotel.earnings.EarningsCenterManager;
+import com.eu.habbo.habbohotel.earnings.EarningsClaimResult;
 import com.eu.habbo.messages.incoming.MessageHandler;
 import com.eu.habbo.messages.outgoing.earnings.EarningsClaimResultComposer;
 
@@ -19,6 +20,9 @@ public class ClaimEarningsRewardEvent extends MessageHandler {
     public void handle() {
         String categoryKey = this.packet.readString();
         EarningsCenterManager manager = new EarningsCenterManager();
-        this.client.sendResponse(new EarningsClaimResultComposer(manager.claim(this.client.getHabbo(), categoryKey)));
+        EarningsClaimResult result = manager.claim(this.client.getHabbo(), categoryKey);
+        // No IncomeRewardNotification here: AIR EarningsController reads it as "a new reward arrived"
+        // (notification.earning.new + the purse indicator), which a claim is not.
+        this.client.sendResponse(new EarningsClaimResultComposer(result));
     }
 }

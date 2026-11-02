@@ -7,17 +7,18 @@ import com.eu.habbo.habbohotel.games.wired.WiredGame;
 import com.eu.habbo.habbohotel.items.Item;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredEffect;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredTrigger;
+import com.eu.habbo.habbohotel.items.interactions.wired.WiredInputGuard;
 import com.eu.habbo.habbohotel.items.interactions.wired.WiredSettings;
 import com.eu.habbo.habbohotel.rooms.Room;
 import com.eu.habbo.habbohotel.rooms.RoomUnit;
 import com.eu.habbo.habbohotel.users.Habbo;
 import com.eu.habbo.habbohotel.wired.WiredEffectType;
-import com.eu.habbo.habbohotel.wired.core.WiredManager;
 import com.eu.habbo.habbohotel.wired.core.WiredContext;
+import com.eu.habbo.habbohotel.wired.core.WiredManager;
 import com.eu.habbo.habbohotel.wired.core.WiredSourceUtil;
 import com.eu.habbo.messages.ServerMessage;
 import com.eu.habbo.messages.incoming.wired.WiredSaveException;
-
+import com.eu.habbo.messages.outgoing.guides.GuideSessionPartnerIsPlayingComposer;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
@@ -53,6 +54,9 @@ public class WiredEffectLeaveTeam extends InteractionWiredEffect {
                 if (game != null) {
                     game.removeHabbo(habbo);
                 }
+            } else if (habbo.getClient() != null) {
+                // AIR tells the user they are not playing even when they were in no team.
+                habbo.getClient().sendResponse(new GuideSessionPartnerIsPlayingComposer(false));
             }
         }
     }
@@ -72,13 +76,13 @@ public class WiredEffectLeaveTeam extends InteractionWiredEffect {
     public void loadWiredData(ResultSet set, Room room) throws SQLException {
         String wiredData = set.getString("wired_data");
 
-        if(wiredData.startsWith("{")) {
-            JsonData data = WiredManager.getGson().fromJson(wiredData, JsonData.class);
-            this.setDelay(data.delay);
+        JsonData data = WiredUtilityPayloadGuard.fromJson(wiredData, JsonData.class);
+        if (data != null) {
+            this.setDelay(WiredUtilityPayloadGuard.delay(data.delay));
             this.userSource = data.userSource;
-        }
-        else {
-            this.setDelay(Integer.parseInt(wiredData));
+        } else {
+            // A legacy row is the bare delay; anything else keeps the furni loading with no delay.
+            this.setDelay(WiredUtilityPayloadGuard.parseDelay(wiredData));
             this.userSource = WiredSourceUtil.SOURCE_TRIGGER;
         }
     }
@@ -102,8 +106,7 @@ public class WiredEffectLeaveTeam extends InteractionWiredEffect {
         message.appendInt(this.getBaseItem().getSpriteId());
         message.appendInt(this.getId());
         message.appendString("");
-        message.appendInt(1);
-        message.appendInt(this.userSource);
+        message.appendInt(0);
         message.appendInt(0);
         message.appendInt(this.getType().code);
         message.appendInt(this.getDelay());
@@ -127,11 +130,12 @@ public class WiredEffectLeaveTeam extends InteractionWiredEffect {
     @Override
     public boolean saveData(WiredSettings settings, GameClient gameClient) throws WiredSaveException {
         int[] params = settings.getIntParams();
-        this.userSource = (params.length > 0) ? params[0] : WiredSourceUtil.SOURCE_TRIGGER;
+        // Official: no int params; the user source is the official source slot.
+        this.userSource = settings.userSource(0, WiredSourceUtil.SOURCE_TRIGGER);
 
         int delay = settings.getDelay();
 
-        if(delay > Emulator.getConfig().getInt("hotel.wired.max_delay", 20))
+        if (delay > Emulator.getConfig().getInt("hotel.wired.max_delay", WiredInputGuard.DEFAULT_MAX_DELAY))
             throw new WiredSaveException("Delay too long");
 
         this.setDelay(delay);

@@ -4,6 +4,7 @@ import com.eu.habbo.Emulator;
 import com.eu.habbo.habbohotel.gameclients.GameClient;
 import com.eu.habbo.habbohotel.items.Item;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredExtra;
+import com.eu.habbo.habbohotel.items.interactions.wired.WiredSaveRefusedException;
 import com.eu.habbo.habbohotel.items.interactions.wired.WiredSettings;
 import com.eu.habbo.habbohotel.rooms.Room;
 import com.eu.habbo.habbohotel.rooms.RoomUnit;
@@ -11,7 +12,6 @@ import com.eu.habbo.habbohotel.users.HabboItem;
 import com.eu.habbo.habbohotel.wired.core.WiredManager;
 import com.eu.habbo.habbohotel.wired.core.WiredSourceUtil;
 import com.eu.habbo.messages.ServerMessage;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.HashSet;
@@ -30,7 +30,7 @@ public class WiredExtraOrEval extends InteractionWiredExtra {
     public static final int MODE_EXACTLY = 5;
     public static final int MODE_MORE_THAN = 6;
     public static final int MIN_COMPARE_VALUE = 0;
-    public static final int MAX_COMPARE_VALUE = 100;
+    public static final int MAX_COMPARE_VALUE = 1000;
 
     private final Set<HabboItem> items;
     private int evaluationMode = MODE_ALL;
@@ -55,10 +55,18 @@ public class WiredExtraOrEval extends InteractionWiredExtra {
     @Override
     public boolean saveData(WiredSettings settings, GameClient gameClient) {
         int[] params = settings.getIntParams();
+        refuseNonConditionPicks(settings);
 
-        this.evaluationMode = normalizeEvaluationMode((params.length > 0) ? params[0] : MODE_ALL);
-        this.furniSource = normalizeFurniSource((params.length > 1) ? params[1] : WiredSourceUtil.SOURCE_TRIGGER);
-        this.compareValue = normalizeCompareValue((params.length > 2) ? params[2] : this.compareValue);
+        int mode = (params.length > 0) ? params[0] : MODE_ALL;
+        this.evaluationMode = mode == -1
+                ? MODE_LESS_THAN + Math.clamp((params.length > 1) ? params[1] : 1, 0, 2)
+                : normalizeEvaluationMode(mode);
+        this.furniSource = normalizeFurniSource(
+                settings.getFurniSourceTypes().length > 0
+                        ? settings.getFurniSourceTypes()[0]
+                        : WiredSourceUtil.SOURCE_TRIGGER);
+        this.compareValue =
+                normalizeCompareValue(this.evaluationMode, (params.length > 2) ? params[2] : this.compareValue);
         this.items.clear();
 
         if (this.furniSource != WiredSourceUtil.SOURCE_SELECTED) {
@@ -87,12 +95,12 @@ public class WiredExtraOrEval extends InteractionWiredExtra {
 
     @Override
     public String getWiredData() {
-        return WiredManager.getGson().toJson(new JsonData(
-                this.evaluationMode,
-                this.furniSource,
-                this.compareValue,
-                this.items.stream().map(HabboItem::getId).collect(Collectors.toList())
-        ));
+        return WiredManager.getGson()
+                .toJson(new JsonData(
+                        this.evaluationMode,
+                        this.furniSource,
+                        this.compareValue,
+                        this.items.stream().map(HabboItem::getId).collect(Collectors.toList())));
     }
 
     @Override
@@ -110,9 +118,12 @@ public class WiredExtraOrEval extends InteractionWiredExtra {
         message.appendInt(this.getBaseItem().getSpriteId());
         message.appendInt(this.getId());
         message.appendString("");
+        // Official layout: [mode (-1 counted, 0 all, 1 any, 2 not all, 3 none), counted mode (0 less,
+        // 1 exactly, 2 more), count]; the picked conditions' source is ours, in the furni slot.
+        boolean counted = this.evaluationMode >= MODE_LESS_THAN;
         message.appendInt(3);
-        message.appendInt(this.evaluationMode);
-        message.appendInt(this.furniSource);
+        message.appendInt(counted ? -1 : this.evaluationMode);
+        message.appendInt(counted ? this.evaluationMode - MODE_LESS_THAN : 0);
         message.appendInt(this.compareValue);
         message.appendInt(0);
         message.appendInt(CODE);
@@ -135,7 +146,7 @@ public class WiredExtraOrEval extends InteractionWiredExtra {
             if (data != null) {
                 this.evaluationMode = normalizeEvaluationMode(data.evaluationMode);
                 this.furniSource = normalizeFurniSource(data.furniSource);
-                this.compareValue = normalizeCompareValue(data.compareValue);
+                this.compareValue = normalizeCompareValue(this.evaluationMode, data.compareValue);
 
                 if (data.itemIds != null) {
                     for (Integer itemId : data.itemIds) {
@@ -163,7 +174,7 @@ public class WiredExtraOrEval extends InteractionWiredExtra {
             }
 
             if (legacyData.length > 2) {
-                this.compareValue = normalizeCompareValue(Integer.parseInt(legacyData[2]));
+                this.compareValue = normalizeCompareValue(this.evaluationMode, Integer.parseInt(legacyData[2]));
             }
         } catch (NumberFormatException ignored) {
             this.evaluationMode = MODE_ALL;
@@ -181,9 +192,7 @@ public class WiredExtraOrEval extends InteractionWiredExtra {
     }
 
     @Override
-    public void onWalk(RoomUnit roomUnit, Room room, Object[] objects) throws Exception {
-
-    }
+    public void onWalk(RoomUnit roomUnit, Room room, Object[] objects) throws Exception {}
 
     @Override
     public boolean hasConfiguration() {
@@ -202,6 +211,18 @@ public class WiredExtraOrEval extends InteractionWiredExtra {
         return this.compareValue;
     }
 
+    /**
+     * The ids of the picked conditions the mode applies to; empty when it applies to every condition of the stack
+     * (nothing picked, or another furni source).
+     */
+    public Set<Integer> getEvaluatedConditionIds() {
+        if (this.furniSource != WiredSourceUtil.SOURCE_SELECTED || this.items.isEmpty()) return Set.of();
+
+        Set<Integer> ids = new HashSet<>();
+        for (HabboItem item : this.items) ids.add(item.getId());
+        return ids;
+    }
+
     private void refresh(Room room) {
         Set<HabboItem> remove = new HashSet<>();
 
@@ -218,7 +239,8 @@ public class WiredExtraOrEval extends InteractionWiredExtra {
         }
     }
 
-    public static boolean matchesMode(int evaluationMode, int matchedRequirements, int totalRequirements, int compareValue) {
+    public static boolean matchesMode(
+            int evaluationMode, int matchedRequirements, int totalRequirements, int compareValue) {
         if (totalRequirements <= 0) {
             return true;
         }
@@ -231,11 +253,11 @@ public class WiredExtraOrEval extends InteractionWiredExtra {
             case MODE_NONE:
                 return matchedRequirements == 0;
             case MODE_LESS_THAN:
-                return matchedRequirements < normalizeCompareValue(compareValue);
+                return matchedRequirements < normalizeCompareValue(MODE_LESS_THAN, compareValue);
             case MODE_EXACTLY:
-                return matchedRequirements == normalizeCompareValue(compareValue);
+                return matchedRequirements == normalizeCompareValue(MODE_EXACTLY, compareValue);
             case MODE_MORE_THAN:
-                return matchedRequirements > normalizeCompareValue(compareValue);
+                return matchedRequirements > normalizeCompareValue(MODE_MORE_THAN, compareValue);
             case MODE_ALL:
             default:
                 return matchedRequirements >= totalRequirements;
@@ -257,8 +279,11 @@ public class WiredExtraOrEval extends InteractionWiredExtra {
         }
     }
 
-    private static int normalizeCompareValue(int value) {
-        return Math.max(MIN_COMPARE_VALUE, Math.min(MAX_COMPARE_VALUE, value));
+    private static int normalizeCompareValue(int evaluationMode, int value) {
+        // No count is below zero, so "less than 0" could never be true; the floor is 1 there. The
+        // other counting modes keep 0 as a real value: "exactly none" and "more than none".
+        int floor = (evaluationMode == MODE_LESS_THAN) ? 1 : MIN_COMPARE_VALUE;
+        return Math.max(floor, Math.min(MAX_COMPARE_VALUE, value));
     }
 
     private static int normalizeFurniSource(int value) {
@@ -270,6 +295,22 @@ public class WiredExtraOrEval extends InteractionWiredExtra {
                 return value;
             default:
                 return WiredSourceUtil.SOURCE_TRIGGER;
+        }
+    }
+
+    /** Official: only conditions and add-ons can be picked; any other picked furni refuses the save. */
+    private void refuseNonConditionPicks(WiredSettings settings) {
+        int[] sources = settings.getFurniSourceTypes();
+        int source = normalizeFurniSource(sources.length > 0 ? sources[0] : WiredSourceUtil.SOURCE_TRIGGER);
+        if (source != WiredSourceUtil.SOURCE_SELECTED || settings.getFurniIds().length == 0) return;
+
+        Room room = settings.getRoom();
+        if (room == null) return;
+
+        for (int itemId : settings.getFurniIds()) {
+            if (!isSelectableConditionOrExtra(room.getHabboItem(itemId))) {
+                throw new WiredSaveRefusedException("wiredfurni.error.condition_evaluation_furni");
+            }
         }
     }
 

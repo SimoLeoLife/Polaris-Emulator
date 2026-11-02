@@ -9,13 +9,18 @@ public class GameTimer implements Runnable {
 
     private final InteractionGameTimer timer;
 
+    private int chain;
+
     public GameTimer(InteractionGameTimer timer) {
         this.timer = timer;
+        this.chain = timer.getTimerChain();
     }
 
     @Override
     public void run() {
-        timer.setThreadActive(false);
+        if (!timer.releaseTimerThread(this.chain)) {
+            return;
+        }
 
         if (timer.getRoomId() == 0) {
             timer.setRunning(false);
@@ -33,6 +38,7 @@ public class GameTimer implements Runnable {
 
         if (timer.getTimeNow() > 0) {
             if (timer.tryActivateTimerThread()) {
+                this.chain = timer.getTimerChain();
                 Emulator.getThreading().run(this, 1000);
             }
         } else {

@@ -3,20 +3,21 @@ package com.eu.habbo.habbohotel.items.interactions.wired.effects;
 import com.eu.habbo.Emulator;
 import com.eu.habbo.habbohotel.gameclients.GameClient;
 import com.eu.habbo.habbohotel.games.Game;
+import com.eu.habbo.habbohotel.games.GameState;
 import com.eu.habbo.habbohotel.items.Item;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredEffect;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredTrigger;
+import com.eu.habbo.habbohotel.items.interactions.wired.WiredInputGuard;
 import com.eu.habbo.habbohotel.items.interactions.wired.WiredSettings;
 import com.eu.habbo.habbohotel.rooms.Room;
 import com.eu.habbo.habbohotel.rooms.RoomUnit;
 import com.eu.habbo.habbohotel.users.Habbo;
 import com.eu.habbo.habbohotel.wired.WiredEffectType;
-import com.eu.habbo.habbohotel.wired.core.WiredManager;
 import com.eu.habbo.habbohotel.wired.core.WiredContext;
+import com.eu.habbo.habbohotel.wired.core.WiredManager;
 import com.eu.habbo.habbohotel.wired.core.WiredSourceUtil;
 import com.eu.habbo.messages.ServerMessage;
 import com.eu.habbo.messages.incoming.wired.WiredSaveException;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
@@ -30,6 +31,10 @@ public class WiredEffectGiveScore extends InteractionWiredEffect {
     private int score;
     private int operation = OPERATION_ADD;
     private int userSource = WiredSourceUtil.SOURCE_TRIGGER;
+    /** Official "times in game": how often this box scores for one player per round (0: unlimited). */
+    private int timesPerGame = WiredScorePerGame.UNLIMITED;
+
+    private final WiredScorePerGame scored = new WiredScorePerGame();
 
     public WiredEffectGiveScore(ResultSet set, Item baseItem) throws SQLException {
         super(set, baseItem);
@@ -49,10 +54,11 @@ public class WiredEffectGiveScore extends InteractionWiredEffect {
 
             Game game = room.getGame(habbo.getHabboInfo().getCurrentGame());
 
-            if (game == null)
-                continue;
+            // Habbo gives no score while no game is running (also between a game's end and the next start).
+            if (game == null || game.getState() != GameState.RUNNING) continue;
 
-            if (habbo.getHabboInfo().getGamePlayer() != null) {
+            if (habbo.getHabboInfo().getGamePlayer() != null
+                    && this.scored.tryCount(game, habbo.getHabboInfo().getId(), this.timesPerGame)) {
                 habbo.getHabboInfo().getGamePlayer().addScore(this.getAppliedAmount(), true);
             }
         }
@@ -66,21 +72,23 @@ public class WiredEffectGiveScore extends InteractionWiredEffect {
 
     @Override
     public String getWiredData() {
-        return WiredManager.getGson().toJson(new JsonData(this.score, this.operation, this.getDelay(), this.userSource));
+        JsonData data = new JsonData(this.score, this.operation, this.getDelay(), this.userSource);
+        data.timesPerGame = this.timesPerGame;
+        return WiredManager.getGson().toJson(data);
     }
 
     @Override
     public void loadWiredData(ResultSet set, Room room) throws SQLException {
         String wiredData = set.getString("wired_data");
 
-        if(wiredData.startsWith("{")) {
+        if (wiredData.startsWith("{")) {
             JsonData data = WiredManager.getGson().fromJson(wiredData, JsonData.class);
             this.score = data.score;
             this.operation = this.normalizeOperation(data.operation);
             this.setDelay(data.delay);
             this.userSource = data.userSource;
-        }
-        else {
+            this.timesPerGame = WiredScorePerGame.normalize(data.timesPerGame);
+        } else {
             String[] data = wiredData.split(";");
 
             if (data.length == 3) {
@@ -100,6 +108,7 @@ public class WiredEffectGiveScore extends InteractionWiredEffect {
         this.operation = OPERATION_ADD;
         this.setDelay(0);
         this.userSource = WiredSourceUtil.SOURCE_TRIGGER;
+        this.timesPerGame = WiredScorePerGame.UNLIMITED;
     }
 
     @Override
@@ -115,10 +124,10 @@ public class WiredEffectGiveScore extends InteractionWiredEffect {
         message.appendInt(this.getBaseItem().getSpriteId());
         message.appendInt(this.getId());
         message.appendString("");
-        message.appendInt(3);
-        message.appendInt(this.score);
-        message.appendInt(this.operation);
-        message.appendInt(this.userSource);
+        // Official layout: [points (negative to take them), times in game (0: unlimited)].
+        message.appendInt(2);
+        message.appendInt(this.getAppliedAmount());
+        message.appendInt(this.timesPerGame);
         message.appendInt(0);
         message.appendInt(this.getType().code);
         message.appendInt(this.getDelay());
@@ -141,19 +150,23 @@ public class WiredEffectGiveScore extends InteractionWiredEffect {
 
     @Override
     public boolean saveData(WiredSettings settings, GameClient gameClient) throws WiredSaveException {
-        if(settings.getIntParams().length < 3) throw new WiredSaveException("Invalid data");
+        // Official layout: [points (negative to take them), times in game (0: unlimited)]; the user
+        // source is the official source slot.
+        if (settings.getIntParams().length < 1) throw new WiredSaveException("Invalid data");
 
-        int score = settings.getIntParams()[0];
+        int signed = settings.getIntParams()[0];
+        int score = Math.abs(signed);
 
-        if(score < 1 || score > 100)
-            throw new WiredSaveException("Score is invalid");
+        if (score < 1 || score > 1000) throw new WiredSaveException("Score is invalid");
 
-        int operation = this.normalizeOperation(settings.getIntParams()[1]);
+        int operation = (signed < 0) ? OPERATION_REMOVE : OPERATION_ADD;
+        this.timesPerGame = WiredScorePerGame.normalize(
+                settings.getIntParams().length > 1 ? settings.getIntParams()[1] : WiredScorePerGame.UNLIMITED);
 
-        this.userSource = settings.getIntParams()[2];
+        this.userSource = settings.userSource(0, WiredSourceUtil.SOURCE_TRIGGER);
         int delay = settings.getDelay();
 
-        if(delay > Emulator.getConfig().getInt("hotel.wired.max_delay", 20))
+        if (delay > Emulator.getConfig().getInt("hotel.wired.max_delay", WiredInputGuard.DEFAULT_MAX_DELAY))
             throw new WiredSaveException("Delay too long");
 
         this.score = score;
@@ -181,6 +194,7 @@ public class WiredEffectGiveScore extends InteractionWiredEffect {
         int operation;
         int delay;
         int userSource;
+        int timesPerGame;
 
         public JsonData(int score, int operation, int delay, int userSource) {
             this.score = score;

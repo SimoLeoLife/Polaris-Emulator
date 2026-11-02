@@ -4,6 +4,7 @@ import com.eu.habbo.Emulator;
 import com.eu.habbo.habbohotel.gameclients.GameClient;
 import com.eu.habbo.messages.incoming.Incoming;
 import com.eu.habbo.messages.incoming.MessageHandler;
+import com.eu.habbo.messages.incoming.UnsupportedIncoming;
 import com.eu.habbo.messages.incoming.achievements.RequestAchievementConfigurationEvent;
 import com.eu.habbo.messages.incoming.achievements.RequestAchievementsEvent;
 import com.eu.habbo.messages.incoming.ambassadors.AmbassadorAlertCommandEvent;
@@ -12,6 +13,7 @@ import com.eu.habbo.messages.incoming.camera.CameraPublishToWebEvent;
 import com.eu.habbo.messages.incoming.camera.CameraPurchaseEvent;
 import com.eu.habbo.messages.incoming.camera.CameraRoomPictureEvent;
 import com.eu.habbo.messages.incoming.camera.CameraRoomThumbnailEvent;
+import com.eu.habbo.messages.incoming.camera.PhotoCompetitionEvent;
 import com.eu.habbo.messages.incoming.camera.RequestCameraConfigurationEvent;
 import com.eu.habbo.messages.incoming.catalog.BuildersClubPlaceRoomItemEvent;
 import com.eu.habbo.messages.incoming.catalog.BuildersClubPlaceWallItemEvent;
@@ -19,22 +21,28 @@ import com.eu.habbo.messages.incoming.catalog.BuildersClubQueryFurniCountEvent;
 import com.eu.habbo.messages.incoming.catalog.CatalogBuyClubDiscountEvent;
 import com.eu.habbo.messages.incoming.catalog.CatalogBuyItemAsGiftEvent;
 import com.eu.habbo.messages.incoming.catalog.CatalogBuyItemEvent;
+import com.eu.habbo.messages.incoming.catalog.CatalogProductMetadataEvent;
 import com.eu.habbo.messages.incoming.catalog.CatalogRequestClubDiscountEvent;
+import com.eu.habbo.messages.incoming.catalog.CatalogRuntimeConfigurationEvent;
 import com.eu.habbo.messages.incoming.catalog.CatalogSearchedItemEvent;
 import com.eu.habbo.messages.incoming.catalog.CatalogSelectClubGiftEvent;
 import com.eu.habbo.messages.incoming.catalog.CheckPetNameEvent;
+import com.eu.habbo.messages.incoming.catalog.GetSeasonalCalendarDailyOfferEvent;
 import com.eu.habbo.messages.incoming.catalog.JukeBoxRequestTrackCodeEvent;
 import com.eu.habbo.messages.incoming.catalog.JukeBoxRequestTrackDataEvent;
+import com.eu.habbo.messages.incoming.catalog.MarkCatalogNewAdditionsPageOpenedEvent;
 import com.eu.habbo.messages.incoming.catalog.PurchaseTargetOfferEvent;
 import com.eu.habbo.messages.incoming.catalog.RedeemVoucherEvent;
 import com.eu.habbo.messages.incoming.catalog.RequestCatalogModeEvent;
 import com.eu.habbo.messages.incoming.catalog.RequestCatalogPageEvent;
 import com.eu.habbo.messages.incoming.catalog.RequestClubDataEvent;
+import com.eu.habbo.messages.incoming.catalog.RequestClubExtendConfirmEvent;
 import com.eu.habbo.messages.incoming.catalog.RequestClubGiftsEvent;
 import com.eu.habbo.messages.incoming.catalog.RequestDiscountEvent;
 import com.eu.habbo.messages.incoming.catalog.RequestGiftConfigurationEvent;
 import com.eu.habbo.messages.incoming.catalog.RequestMarketplaceConfigEvent;
 import com.eu.habbo.messages.incoming.catalog.RequestPetBreedsEvent;
+import com.eu.habbo.messages.incoming.catalog.RequestTargetOfferEvent;
 import com.eu.habbo.messages.incoming.catalog.TargetOfferStateEvent;
 import com.eu.habbo.messages.incoming.catalog.catalogadmin.CatalogAdminCreateOfferEvent;
 import com.eu.habbo.messages.incoming.catalog.catalogadmin.CatalogAdminCreatePageEvent;
@@ -45,27 +53,74 @@ import com.eu.habbo.messages.incoming.catalog.catalogadmin.CatalogAdminLoadPageE
 import com.eu.habbo.messages.incoming.catalog.catalogadmin.CatalogAdminMoveOfferEvent;
 import com.eu.habbo.messages.incoming.catalog.catalogadmin.CatalogAdminMovePageEvent;
 import com.eu.habbo.messages.incoming.catalog.catalogadmin.CatalogAdminPublishEvent;
+import com.eu.habbo.messages.incoming.catalog.catalogadmin.CatalogAdminReorderOffersEvent;
 import com.eu.habbo.messages.incoming.catalog.catalogadmin.CatalogAdminSaveOfferEvent;
 import com.eu.habbo.messages.incoming.catalog.catalogadmin.CatalogAdminSavePageEvent;
 import com.eu.habbo.messages.incoming.catalog.catalogadmin.CatalogAdminSavePageIconEvent;
 import com.eu.habbo.messages.incoming.catalog.catalogadmin.CatalogAdminSavePageImagesEvent;
+import com.eu.habbo.messages.incoming.catalog.catalogadmin.CatalogAdminSetPageEnabledEvent;
+import com.eu.habbo.messages.incoming.catalog.catalogadmin.CatalogAdminSetPageVisibleEvent;
+import com.eu.habbo.messages.incoming.catalog.catalogadmin.studio.CatalogStudioDocumentApplyEvent;
+import com.eu.habbo.messages.incoming.catalog.catalogadmin.studio.CatalogStudioDocumentDryRunEvent;
+import com.eu.habbo.messages.incoming.catalog.catalogadmin.studio.CatalogStudioExportEvent;
+import com.eu.habbo.messages.incoming.catalog.catalogadmin.studio.CatalogStudioLoadHistoryEvent;
+import com.eu.habbo.messages.incoming.catalog.catalogadmin.studio.CatalogStudioOpenSessionEvent;
+import com.eu.habbo.messages.incoming.catalog.catalogadmin.studio.CatalogStudioUndoEvent;
+import com.eu.habbo.messages.incoming.catalog.catalogadmin.studio.CatalogStudioValidateEvent;
 import com.eu.habbo.messages.incoming.catalog.marketplace.BuyItemEvent;
+import com.eu.habbo.messages.incoming.catalog.marketplace.BuyMarketplaceTokensEvent;
+import com.eu.habbo.messages.incoming.catalog.marketplace.CancelAllOwnItemsEvent;
+import com.eu.habbo.messages.incoming.catalog.marketplace.ClearOwnHistoryEvent;
 import com.eu.habbo.messages.incoming.catalog.marketplace.RequestCreditsEvent;
 import com.eu.habbo.messages.incoming.catalog.marketplace.RequestItemInfoEvent;
 import com.eu.habbo.messages.incoming.catalog.marketplace.RequestOffersEvent;
 import com.eu.habbo.messages.incoming.catalog.marketplace.RequestOwnItemsEvent;
 import com.eu.habbo.messages.incoming.catalog.marketplace.RequestSellItemEvent;
 import com.eu.habbo.messages.incoming.catalog.marketplace.SellItemEvent;
+import com.eu.habbo.messages.incoming.catalog.marketplace.SellMultipleItemsEvent;
 import com.eu.habbo.messages.incoming.catalog.marketplace.TakeBackItemEvent;
 import com.eu.habbo.messages.incoming.catalog.recycler.OpenRecycleBoxEvent;
 import com.eu.habbo.messages.incoming.catalog.recycler.RecycleEvent;
 import com.eu.habbo.messages.incoming.catalog.recycler.ReloadRecyclerEvent;
 import com.eu.habbo.messages.incoming.catalog.recycler.RequestRecyclerLogicEvent;
+import com.eu.habbo.messages.incoming.catalog.specialitems.ClaimFreeProductEvent;
+import com.eu.habbo.messages.incoming.catalog.specialitems.RequestHasClaimedProductEvent;
+import com.eu.habbo.messages.incoming.collectibles.ClaimCollectibleRewardsEvent;
+import com.eu.habbo.messages.incoming.collectibles.ClaimCollectionBonusEvent;
+import com.eu.habbo.messages.incoming.collectibles.ClaimCollectionRewardEvent;
+import com.eu.habbo.messages.incoming.collectibles.GetCollectibleCollectionsEvent;
+import com.eu.habbo.messages.incoming.collectibles.GetCollectibleRewardClaimsEvent;
+import com.eu.habbo.messages.incoming.collectibles.GetCollectibleShopEvent;
+import com.eu.habbo.messages.incoming.collectibles.GetCollectibleTransferFeeEvent;
+import com.eu.habbo.messages.incoming.collectibles.GetCollectibleWalletsEvent;
+import com.eu.habbo.messages.incoming.collectibles.GetCollectiblesInventoryEvent;
+import com.eu.habbo.messages.incoming.collectibles.GetMintTokenOffersEvent;
+import com.eu.habbo.messages.incoming.collectibles.GetMintTokensEvent;
+import com.eu.habbo.messages.incoming.collectibles.GetMintableItemsEvent;
+import com.eu.habbo.messages.incoming.collectibles.GetMintingEnabledEvent;
+import com.eu.habbo.messages.incoming.collectibles.GetSelectedNftWardrobeOutfitEvent;
+import com.eu.habbo.messages.incoming.collectibles.GetUserNftWardrobeEvent;
+import com.eu.habbo.messages.incoming.collectibles.MintCollectibleEvent;
+import com.eu.habbo.messages.incoming.collectibles.OpenCollectibleRewardBoxEvent;
+import com.eu.habbo.messages.incoming.collectibles.PurchaseCollectibleEvent;
+import com.eu.habbo.messages.incoming.collectibles.PurchaseMintTokensEvent;
+import com.eu.habbo.messages.incoming.collectibles.SaveUserNftWardrobeEvent;
+import com.eu.habbo.messages.incoming.collectibles.SelectCollectibleWalletEvent;
+import com.eu.habbo.messages.incoming.collectibles.TransferCollectiblesEvent;
+import com.eu.habbo.messages.incoming.communitygoals.CommunityGoalVoteEvent;
+import com.eu.habbo.messages.incoming.communitygoals.GetCommunityGoalEarnedPrizesEvent;
+import com.eu.habbo.messages.incoming.communitygoals.GetCommunityGoalHallOfFameEvent;
+import com.eu.habbo.messages.incoming.communitygoals.HotelViewConcurrentUsersButtonEvent;
+import com.eu.habbo.messages.incoming.communitygoals.HotelViewRequestCommunityGoalEvent;
+import com.eu.habbo.messages.incoming.communitygoals.HotelViewRequestConcurrentUsersEvent;
+import com.eu.habbo.messages.incoming.communitygoals.RedeemCommunityGoalPrizeEvent;
 import com.eu.habbo.messages.incoming.crafting.CraftingAddRecipeEvent;
 import com.eu.habbo.messages.incoming.crafting.CraftingCraftItemEvent;
 import com.eu.habbo.messages.incoming.crafting.CraftingCraftSecretEvent;
 import com.eu.habbo.messages.incoming.crafting.RequestCraftingRecipesAvailableEvent;
 import com.eu.habbo.messages.incoming.crafting.RequestCraftingRecipesEvent;
+import com.eu.habbo.messages.incoming.discord.GetDiscordPreferencesEvent;
+import com.eu.habbo.messages.incoming.discord.UpdateDiscordPreferencesEvent;
 import com.eu.habbo.messages.incoming.earnings.ClaimAllEarningsRewardsEvent;
 import com.eu.habbo.messages.incoming.earnings.ClaimEarningsRewardEvent;
 import com.eu.habbo.messages.incoming.earnings.RequestEarningsCenterEvent;
@@ -77,13 +132,16 @@ import com.eu.habbo.messages.incoming.floorplaneditor.FloorPlanEditorSaveEvent;
 import com.eu.habbo.messages.incoming.friends.AcceptFriendRequestEvent;
 import com.eu.habbo.messages.incoming.friends.AddFriendCategoryEvent;
 import com.eu.habbo.messages.incoming.friends.ChangeRelationEvent;
+import com.eu.habbo.messages.incoming.friends.ConsoleTypingEvent;
 import com.eu.habbo.messages.incoming.friends.DeclineFriendRequestEvent;
 import com.eu.habbo.messages.incoming.friends.FindNewFriendsEvent;
 import com.eu.habbo.messages.incoming.friends.FriendPrivateMessageEvent;
 import com.eu.habbo.messages.incoming.friends.FriendRequestEvent;
 import com.eu.habbo.messages.incoming.friends.InviteFriendsEvent;
+import com.eu.habbo.messages.incoming.friends.MarkConsoleReadEvent;
 import com.eu.habbo.messages.incoming.friends.MarkMessengerReadEvent;
 import com.eu.habbo.messages.incoming.friends.MoveFriendToCategoryEvent;
+import com.eu.habbo.messages.incoming.friends.RefreshFriendListEvent;
 import com.eu.habbo.messages.incoming.friends.RemoveFriendCategoryEvent;
 import com.eu.habbo.messages.incoming.friends.RemoveFriendEvent;
 import com.eu.habbo.messages.incoming.friends.RenameFriendCategoryEvent;
@@ -92,6 +150,7 @@ import com.eu.habbo.messages.incoming.friends.RequestFriendsEvent;
 import com.eu.habbo.messages.incoming.friends.RequestInitFriendsEvent;
 import com.eu.habbo.messages.incoming.friends.RequestMessengerConversationsEvent;
 import com.eu.habbo.messages.incoming.friends.RequestMessengerHistoryEvent;
+import com.eu.habbo.messages.incoming.friends.RequestOfflineMessagesEvent;
 import com.eu.habbo.messages.incoming.friends.SearchUserEvent;
 import com.eu.habbo.messages.incoming.friends.SendMessengerMessageEvent;
 import com.eu.habbo.messages.incoming.friends.StalkFriendEvent;
@@ -104,6 +163,7 @@ import com.eu.habbo.messages.incoming.furnieditor.FurniEditorRevertFurnidataEven
 import com.eu.habbo.messages.incoming.furnieditor.FurniEditorSearchEvent;
 import com.eu.habbo.messages.incoming.furnieditor.FurniEditorUpdateEvent;
 import com.eu.habbo.messages.incoming.furnieditor.FurniEditorUpdateFurnidataEvent;
+import com.eu.habbo.messages.incoming.gamecenter.GameCenterCheckDirectoryStatusEvent;
 import com.eu.habbo.messages.incoming.gamecenter.GameCenterEvent;
 import com.eu.habbo.messages.incoming.gamecenter.GameCenterJoinGameEvent;
 import com.eu.habbo.messages.incoming.gamecenter.GameCenterLeaveGameEvent;
@@ -111,6 +171,8 @@ import com.eu.habbo.messages.incoming.gamecenter.GameCenterLoadGameEvent;
 import com.eu.habbo.messages.incoming.gamecenter.GameCenterRequestAccountStatusEvent;
 import com.eu.habbo.messages.incoming.gamecenter.GameCenterRequestGameStatusEvent;
 import com.eu.habbo.messages.incoming.gamecenter.GameCenterRequestGamesEvent;
+import com.eu.habbo.messages.incoming.gamecenter.GetSnowWarGameTokensOfferEvent;
+import com.eu.habbo.messages.incoming.gamecenter.PurchaseSnowWarGameTokensOfferEvent;
 import com.eu.habbo.messages.incoming.guardians.GuardianAcceptRequestEvent;
 import com.eu.habbo.messages.incoming.guardians.GuardianNoUpdatesWantedEvent;
 import com.eu.habbo.messages.incoming.guardians.GuardianVoteEvent;
@@ -126,6 +188,7 @@ import com.eu.habbo.messages.incoming.guides.GuideVisitUserEvent;
 import com.eu.habbo.messages.incoming.guides.RequestGuideAssistanceEvent;
 import com.eu.habbo.messages.incoming.guides.RequestGuideToolEvent;
 import com.eu.habbo.messages.incoming.guilds.GetHabboGuildBadgesMessageEvent;
+import com.eu.habbo.messages.incoming.guilds.GuildAcceptAllMembershipsEvent;
 import com.eu.habbo.messages.incoming.guilds.GuildAcceptMembershipEvent;
 import com.eu.habbo.messages.incoming.guilds.GuildChangeBadgeEvent;
 import com.eu.habbo.messages.incoming.guilds.GuildChangeColorsEvent;
@@ -139,6 +202,7 @@ import com.eu.habbo.messages.incoming.guilds.GuildRemoveFavoriteEvent;
 import com.eu.habbo.messages.incoming.guilds.GuildRemoveMemberEvent;
 import com.eu.habbo.messages.incoming.guilds.GuildSetAdminEvent;
 import com.eu.habbo.messages.incoming.guilds.GuildSetFavoriteEvent;
+import com.eu.habbo.messages.incoming.guilds.GuildUnblockMemberEvent;
 import com.eu.habbo.messages.incoming.guilds.RequestGuildBuyEvent;
 import com.eu.habbo.messages.incoming.guilds.RequestGuildBuyRoomsEvent;
 import com.eu.habbo.messages.incoming.guilds.RequestGuildFurniWidgetEvent;
@@ -148,6 +212,7 @@ import com.eu.habbo.messages.incoming.guilds.RequestGuildManageEvent;
 import com.eu.habbo.messages.incoming.guilds.RequestGuildMembersEvent;
 import com.eu.habbo.messages.incoming.guilds.RequestGuildPartsEvent;
 import com.eu.habbo.messages.incoming.guilds.RequestOwnGuildsEvent;
+import com.eu.habbo.messages.incoming.guilds.forums.GetUnreadForumsCountEvent;
 import com.eu.habbo.messages.incoming.guilds.forums.GuildForumDataEvent;
 import com.eu.habbo.messages.incoming.guilds.forums.GuildForumListEvent;
 import com.eu.habbo.messages.incoming.guilds.forums.GuildForumMarkAsReadEvent;
@@ -158,17 +223,31 @@ import com.eu.habbo.messages.incoming.guilds.forums.GuildForumThreadUpdateEvent;
 import com.eu.habbo.messages.incoming.guilds.forums.GuildForumThreadsEvent;
 import com.eu.habbo.messages.incoming.guilds.forums.GuildForumThreadsMessagesEvent;
 import com.eu.habbo.messages.incoming.guilds.forums.GuildForumUpdateSettingsEvent;
+import com.eu.habbo.messages.incoming.habbicons.HabbiconRequestEvent;
+import com.eu.habbo.messages.incoming.habbicons.TriggerHabbiconEvent;
+import com.eu.habbo.messages.incoming.habboway.GetQuizQuestionsEvent;
+import com.eu.habbo.messages.incoming.habboway.PostQuizAnswersEvent;
 import com.eu.habbo.messages.incoming.handshake.CompleteDiffieHandshakeEvent;
+import com.eu.habbo.messages.incoming.handshake.DisconnectEvent;
 import com.eu.habbo.messages.incoming.handshake.InitDiffieHandshakeEvent;
 import com.eu.habbo.messages.incoming.handshake.MachineIDEvent;
 import com.eu.habbo.messages.incoming.handshake.PingEvent;
 import com.eu.habbo.messages.incoming.handshake.ReleaseVersionEvent;
 import com.eu.habbo.messages.incoming.handshake.SecureLoginEvent;
+import com.eu.habbo.messages.incoming.helper.AppealReportEvent;
+import com.eu.habbo.messages.incoming.helper.GetMyReportsStatusEvent;
 import com.eu.habbo.messages.incoming.helper.MySanctionStatusEvent;
 import com.eu.habbo.messages.incoming.helper.RequestTalentTrackEvent;
+import com.eu.habbo.messages.incoming.hotelview.GetIsBadgeRequestFulfilledEvent;
+import com.eu.habbo.messages.incoming.hotelview.HotelViewClaimBadgeEvent;
 import com.eu.habbo.messages.incoming.hotelview.HotelViewClaimBadgeRewardEvent;
 import com.eu.habbo.messages.incoming.hotelview.HotelViewDataEvent;
 import com.eu.habbo.messages.incoming.hotelview.HotelViewEvent;
+import com.eu.habbo.messages.incoming.hotelview.HotelViewLandingRequestEvent;
+import com.eu.habbo.messages.incoming.hotelview.HotelViewLandingResetVotesEvent;
+import com.eu.habbo.messages.incoming.hotelview.HotelViewLandingSaveEvent;
+import com.eu.habbo.messages.incoming.hotelview.HotelViewLandingSaveSceneEvent;
+import com.eu.habbo.messages.incoming.hotelview.HotelViewLandingVoteEvent;
 import com.eu.habbo.messages.incoming.hotelview.HotelViewRequestBadgeRewardEvent;
 import com.eu.habbo.messages.incoming.hotelview.HotelViewRequestBonusRareEvent;
 import com.eu.habbo.messages.incoming.hotelview.HotelViewRequestLTDAvailabilityEvent;
@@ -182,6 +261,8 @@ import com.eu.habbo.messages.incoming.inventory.RequestInventoryItemsDelete;
 import com.eu.habbo.messages.incoming.inventory.RequestInventoryItemsEvent;
 import com.eu.habbo.messages.incoming.inventory.RequestInventoryPetDelete;
 import com.eu.habbo.messages.incoming.inventory.RequestInventoryPetsEvent;
+import com.eu.habbo.messages.incoming.inventory.UnseenResetCategoryEvent;
+import com.eu.habbo.messages.incoming.inventory.UnseenResetItemsEvent;
 import com.eu.habbo.messages.incoming.inventory.nickicons.PurchaseNickIconEvent;
 import com.eu.habbo.messages.incoming.inventory.nickicons.RequestUserNickIconsEvent;
 import com.eu.habbo.messages.incoming.inventory.nickicons.SetActiveNickIconEvent;
@@ -194,13 +275,17 @@ import com.eu.habbo.messages.incoming.inventory.prefixes.SetDisplayOrderEvent;
 import com.eu.habbo.messages.incoming.mentions.DeleteMentionEvent;
 import com.eu.habbo.messages.incoming.mentions.MarkMentionsReadEvent;
 import com.eu.habbo.messages.incoming.mentions.RequestMentionsEvent;
+import com.eu.habbo.messages.incoming.mentions.RequestMentionsPageEvent;
+import com.eu.habbo.messages.incoming.modtool.DeletePendingCallsForHelpEvent;
 import com.eu.habbo.messages.incoming.modtool.ModToolAlertEvent;
 import com.eu.habbo.messages.incoming.modtool.ModToolChangeRoomSettingsEvent;
 import com.eu.habbo.messages.incoming.modtool.ModToolCloseTicketEvent;
+import com.eu.habbo.messages.incoming.modtool.ModToolDefaultSanctionEvent;
 import com.eu.habbo.messages.incoming.modtool.ModToolIssueChangeTopicEvent;
 import com.eu.habbo.messages.incoming.modtool.ModToolIssueDefaultSanctionEvent;
 import com.eu.habbo.messages.incoming.modtool.ModToolKickEvent;
 import com.eu.habbo.messages.incoming.modtool.ModToolPickTicketEvent;
+import com.eu.habbo.messages.incoming.modtool.ModToolPreferencesEvent;
 import com.eu.habbo.messages.incoming.modtool.ModToolReleaseTicketEvent;
 import com.eu.habbo.messages.incoming.modtool.ModToolRequestIssueChatlogEvent;
 import com.eu.habbo.messages.incoming.modtool.ModToolRequestRoomChatlogEvent;
@@ -224,6 +309,7 @@ import com.eu.habbo.messages.incoming.modtool.ReportThreadEvent;
 import com.eu.habbo.messages.incoming.modtool.RequestReportRoomEvent;
 import com.eu.habbo.messages.incoming.modtool.RequestReportUserBullyingEvent;
 import com.eu.habbo.messages.incoming.navigator.AddSavedSearchEvent;
+import com.eu.habbo.messages.incoming.navigator.ConvertGlobalRoomIdEvent;
 import com.eu.habbo.messages.incoming.navigator.DeleteSavedSearchEvent;
 import com.eu.habbo.messages.incoming.navigator.GetCategoriesWithUserCountEvent;
 import com.eu.habbo.messages.incoming.navigator.NavigatorCategoryListModeEvent;
@@ -239,9 +325,10 @@ import com.eu.habbo.messages.incoming.navigator.RequestNavigatorSettingsEvent;
 import com.eu.habbo.messages.incoming.navigator.RequestNewNavigatorDataEvent;
 import com.eu.habbo.messages.incoming.navigator.RequestNewNavigatorRoomsEvent;
 import com.eu.habbo.messages.incoming.navigator.RequestPopularRoomsEvent;
-import com.eu.habbo.messages.incoming.navigator.RequestPromotedRoomsEvent;
+import com.eu.habbo.messages.incoming.navigator.RequestPublicRoomsEvent;
 import com.eu.habbo.messages.incoming.navigator.RequestRoomCategoriesEvent;
 import com.eu.habbo.messages.incoming.navigator.RequestTagsEvent;
+import com.eu.habbo.messages.incoming.navigator.RoomNetworkOpenConnectionEvent;
 import com.eu.habbo.messages.incoming.navigator.SaveWindowSettingsEvent;
 import com.eu.habbo.messages.incoming.navigator.SearchRoomsByTagEvent;
 import com.eu.habbo.messages.incoming.navigator.SearchRoomsEvent;
@@ -251,9 +338,32 @@ import com.eu.habbo.messages.incoming.navigator.SearchRoomsInGroupEvent;
 import com.eu.habbo.messages.incoming.navigator.SearchRoomsMyFavouriteEvent;
 import com.eu.habbo.messages.incoming.navigator.SearchRoomsVisitedEvent;
 import com.eu.habbo.messages.incoming.navigator.SearchRoomsWithRightsEvent;
+import com.eu.habbo.messages.incoming.notifications.ActivateNotificationsEvent;
 import com.eu.habbo.messages.incoming.polls.AnswerPollEvent;
 import com.eu.habbo.messages.incoming.polls.CancelPollEvent;
 import com.eu.habbo.messages.incoming.polls.GetPollDataEvent;
+import com.eu.habbo.messages.incoming.quests.AcceptQuestEvent;
+import com.eu.habbo.messages.incoming.quests.ActivateQuestEvent;
+import com.eu.habbo.messages.incoming.quests.CancelDailyQuestEvent;
+import com.eu.habbo.messages.incoming.quests.ClaimDailyTaskEvent;
+import com.eu.habbo.messages.incoming.quests.ClaimRewardTrackPrizeEvent;
+import com.eu.habbo.messages.incoming.quests.GetDailyQuestEvent;
+import com.eu.habbo.messages.incoming.quests.GetDailyTasksEvent;
+import com.eu.habbo.messages.incoming.quests.GetQuestsEvent;
+import com.eu.habbo.messages.incoming.quests.GetRewardTracksEvent;
+import com.eu.habbo.messages.incoming.quests.GetSeasonalQuestsOnlyEvent;
+import com.eu.habbo.messages.incoming.quests.OpenQuestTrackerEvent;
+import com.eu.habbo.messages.incoming.quests.PurchaseRewardTrackPremiumEvent;
+import com.eu.habbo.messages.incoming.quests.RejectQuestEvent;
+import com.eu.habbo.messages.incoming.quests.StartCampaignEvent;
+import com.eu.habbo.messages.incoming.quests.admin.DeleteRewardTrackEntityEvent;
+import com.eu.habbo.messages.incoming.quests.admin.GetRewardTrackAdminDataEvent;
+import com.eu.habbo.messages.incoming.quests.admin.SaveRewardTrackEvent;
+import com.eu.habbo.messages.incoming.quests.admin.SaveRewardTrackPrizeEvent;
+import com.eu.habbo.messages.incoming.quests.admin.SaveRewardTrackTaskEvent;
+import com.eu.habbo.messages.incoming.quests.admin.SaveRewardTrackTextsEvent;
+import com.eu.habbo.messages.incoming.quests.admin.SearchRewardTrackFurniEvent;
+import com.eu.habbo.messages.incoming.rooms.ChangeQueueEvent;
 import com.eu.habbo.messages.incoming.rooms.HandleDoorbellEvent;
 import com.eu.habbo.messages.incoming.rooms.RequestRoomDataEvent;
 import com.eu.habbo.messages.incoming.rooms.RequestRoomHeightmapEvent;
@@ -266,6 +376,8 @@ import com.eu.habbo.messages.incoming.rooms.RoomFavoriteEvent;
 import com.eu.habbo.messages.incoming.rooms.RoomMuteEvent;
 import com.eu.habbo.messages.incoming.rooms.RoomPlacePaintEvent;
 import com.eu.habbo.messages.incoming.rooms.RoomRemoveAllRightsEvent;
+import com.eu.habbo.messages.incoming.rooms.RoomRemoveBackgroundEvent;
+import com.eu.habbo.messages.incoming.rooms.RoomRemovePaintEvent;
 import com.eu.habbo.messages.incoming.rooms.RoomRemoveRightsEvent;
 import com.eu.habbo.messages.incoming.rooms.RoomRequestBannedUsersEvent;
 import com.eu.habbo.messages.incoming.rooms.RoomSettingsSaveEvent;
@@ -274,17 +386,25 @@ import com.eu.habbo.messages.incoming.rooms.RoomUnFavoriteEvent;
 import com.eu.habbo.messages.incoming.rooms.RoomVoteEvent;
 import com.eu.habbo.messages.incoming.rooms.RoomWordFilterModifyEvent;
 import com.eu.habbo.messages.incoming.rooms.SetHomeRoomEvent;
+import com.eu.habbo.messages.incoming.rooms.UpdateRoomCategoryAndTradeSettingsEvent;
 import com.eu.habbo.messages.incoming.rooms.bots.BotPickupEvent;
 import com.eu.habbo.messages.incoming.rooms.bots.BotPlaceEvent;
 import com.eu.habbo.messages.incoming.rooms.bots.BotSaveSettingsEvent;
 import com.eu.habbo.messages.incoming.rooms.bots.BotSettingsEvent;
+import com.eu.habbo.messages.incoming.rooms.competition.CompetitionRoomsSearchEvent;
+import com.eu.habbo.messages.incoming.rooms.competition.ForwardToACompetitionRoomEvent;
+import com.eu.habbo.messages.incoming.rooms.competition.ForwardToASubmittableRoomEvent;
+import com.eu.habbo.messages.incoming.rooms.competition.ForwardToRandomCompetitionRoomEvent;
+import com.eu.habbo.messages.incoming.rooms.competition.GetIsUserPartOfCompetitionEvent;
+import com.eu.habbo.messages.incoming.rooms.competition.RoomCompetitionInitEvent;
+import com.eu.habbo.messages.incoming.rooms.competition.SubmitRoomToCompetitionEvent;
+import com.eu.habbo.messages.incoming.rooms.competition.VoteForRoomEvent;
 import com.eu.habbo.messages.incoming.rooms.items.AdvertisingSaveEvent;
-import com.eu.habbo.messages.incoming.rooms.items.ChestDepositEvent;
-import com.eu.habbo.messages.incoming.rooms.items.ChestDepositFurniEvent;
-import com.eu.habbo.messages.incoming.rooms.items.ChestDepositInventoryItemEvent;
+import com.eu.habbo.messages.incoming.rooms.items.ChestCloseEvent;
 import com.eu.habbo.messages.incoming.rooms.items.ChestOpenEvent;
 import com.eu.habbo.messages.incoming.rooms.items.ChestRequestLogEvent;
 import com.eu.habbo.messages.incoming.rooms.items.ChestSaveNotificationsEvent;
+import com.eu.habbo.messages.incoming.rooms.items.ChestSaveOptionsEvent;
 import com.eu.habbo.messages.incoming.rooms.items.ChestSaveSettingsEvent;
 import com.eu.habbo.messages.incoming.rooms.items.ChestStartDepositEvent;
 import com.eu.habbo.messages.incoming.rooms.items.ChestUpgradeCapacityEvent;
@@ -300,17 +420,23 @@ import com.eu.habbo.messages.incoming.rooms.items.MoodLightSaveSettingsEvent;
 import com.eu.habbo.messages.incoming.rooms.items.MoodLightSettingsEvent;
 import com.eu.habbo.messages.incoming.rooms.items.MoodLightTurnOnEvent;
 import com.eu.habbo.messages.incoming.rooms.items.MoveWallItemEvent;
+import com.eu.habbo.messages.incoming.rooms.items.MysteryBoxWaitingCanceledEvent;
+import com.eu.habbo.messages.incoming.rooms.items.OpenMysteryTrophyEvent;
 import com.eu.habbo.messages.incoming.rooms.items.PostItDeleteEvent;
 import com.eu.habbo.messages.incoming.rooms.items.PostItPlaceEvent;
 import com.eu.habbo.messages.incoming.rooms.items.PostItRequestDataEvent;
 import com.eu.habbo.messages.incoming.rooms.items.PostItSaveDataEvent;
 import com.eu.habbo.messages.incoming.rooms.items.RedeemClothingEvent;
+import com.eu.habbo.messages.incoming.rooms.items.RedeemEmeraldFurniEvent;
 import com.eu.habbo.messages.incoming.rooms.items.RedeemItemEvent;
 import com.eu.habbo.messages.incoming.rooms.items.RoomPickupChooserEvent;
 import com.eu.habbo.messages.incoming.rooms.items.RoomPickupItemEvent;
 import com.eu.habbo.messages.incoming.rooms.items.RoomPlaceItemEvent;
 import com.eu.habbo.messages.incoming.rooms.items.RotateMoveItemEvent;
 import com.eu.habbo.messages.incoming.rooms.items.SavePostItStickyPoleEvent;
+import com.eu.habbo.messages.incoming.rooms.items.SetBuildHeightEvent;
+import com.eu.habbo.messages.incoming.rooms.items.SetBuildUnderpassEvent;
+import com.eu.habbo.messages.incoming.rooms.items.SetStackHelperAdjacentHeightEvent;
 import com.eu.habbo.messages.incoming.rooms.items.SetStackHelperHeightEvent;
 import com.eu.habbo.messages.incoming.rooms.items.ToggleFloorItemEvent;
 import com.eu.habbo.messages.incoming.rooms.items.ToggleWallItemEvent;
@@ -319,12 +445,22 @@ import com.eu.habbo.messages.incoming.rooms.items.TriggerDiceEvent;
 import com.eu.habbo.messages.incoming.rooms.items.TriggerOneWayGateEvent;
 import com.eu.habbo.messages.incoming.rooms.items.UpdateFurniturePositionEvent;
 import com.eu.habbo.messages.incoming.rooms.items.UseRandomStateItemEvent;
+import com.eu.habbo.messages.incoming.rooms.items.WiredChestLockEvent;
+import com.eu.habbo.messages.incoming.rooms.items.WiredChestRoomLogsEvent;
+import com.eu.habbo.messages.incoming.rooms.items.WiredChestTransactionDetailsEvent;
+import com.eu.habbo.messages.incoming.rooms.items.WiredTradeAcceptEvent;
+import com.eu.habbo.messages.incoming.rooms.items.WiredTradeCancelEvent;
+import com.eu.habbo.messages.incoming.rooms.items.WiredTradeOfferItemsEvent;
 import com.eu.habbo.messages.incoming.rooms.items.jukebox.JukeBoxAddSoundTrackEvent;
 import com.eu.habbo.messages.incoming.rooms.items.jukebox.JukeBoxEventOne;
 import com.eu.habbo.messages.incoming.rooms.items.jukebox.JukeBoxEventTwo;
 import com.eu.habbo.messages.incoming.rooms.items.jukebox.JukeBoxRemoveSoundTrackEvent;
 import com.eu.habbo.messages.incoming.rooms.items.jukebox.JukeBoxRequestPlayListEvent;
 import com.eu.habbo.messages.incoming.rooms.items.lovelock.LoveLockStartConfirmEvent;
+import com.eu.habbo.messages.incoming.rooms.items.rentable.ExtendRentOrBuyoutFurniEvent;
+import com.eu.habbo.messages.incoming.rooms.items.rentable.ExtendRentOrBuyoutStripItemEvent;
+import com.eu.habbo.messages.incoming.rooms.items.rentable.GetRentOrBuyoutOfferEvent;
+import com.eu.habbo.messages.incoming.rooms.items.rentablespace.GetRentableSpaceStatusEvent;
 import com.eu.habbo.messages.incoming.rooms.items.rentablespace.RentSpaceCancelEvent;
 import com.eu.habbo.messages.incoming.rooms.items.rentablespace.RentSpaceEvent;
 import com.eu.habbo.messages.incoming.rooms.items.youtube.YoutubeRequestPlaylistChange;
@@ -340,17 +476,23 @@ import com.eu.habbo.messages.incoming.rooms.pets.PetPickupEvent;
 import com.eu.habbo.messages.incoming.rooms.pets.PetPlaceEvent;
 import com.eu.habbo.messages.incoming.rooms.pets.PetRideEvent;
 import com.eu.habbo.messages.incoming.rooms.pets.PetRideSettingsEvent;
+import com.eu.habbo.messages.incoming.rooms.pets.PetSupplementEvent;
 import com.eu.habbo.messages.incoming.rooms.pets.PetUseItemEvent;
 import com.eu.habbo.messages.incoming.rooms.pets.RequestPetInformationEvent;
 import com.eu.habbo.messages.incoming.rooms.pets.RequestPetTrainingPanelEvent;
+import com.eu.habbo.messages.incoming.rooms.pets.RoomUserGiveHandItemPetEvent;
 import com.eu.habbo.messages.incoming.rooms.pets.ScratchPetEvent;
 import com.eu.habbo.messages.incoming.rooms.pets.StopBreedingEvent;
 import com.eu.habbo.messages.incoming.rooms.pets.ToggleMonsterplantBreedableEvent;
 import com.eu.habbo.messages.incoming.rooms.promotions.BuyRoomPromotionEvent;
+import com.eu.habbo.messages.incoming.rooms.promotions.CancelRoomPromotionEvent;
 import com.eu.habbo.messages.incoming.rooms.promotions.RequestPromotionRoomsEvent;
 import com.eu.habbo.messages.incoming.rooms.promotions.UpdateRoomPromotionEvent;
+import com.eu.habbo.messages.incoming.rooms.raidprotection.GetRaidProtectionSettingsEvent;
+import com.eu.habbo.messages.incoming.rooms.raidprotection.SaveRaidProtectionSettingsEvent;
 import com.eu.habbo.messages.incoming.rooms.users.ClickUserEvent;
 import com.eu.habbo.messages.incoming.rooms.users.IgnoreRoomUserEvent;
+import com.eu.habbo.messages.incoming.rooms.users.IgnoreUserIdEvent;
 import com.eu.habbo.messages.incoming.rooms.users.RequestRoomUserTagsEvent;
 import com.eu.habbo.messages.incoming.rooms.users.RoomUserActionEvent;
 import com.eu.habbo.messages.incoming.rooms.users.RoomUserBanEvent;
@@ -373,6 +515,8 @@ import com.eu.habbo.messages.incoming.rooms.users.RoomUserWalkEvent;
 import com.eu.habbo.messages.incoming.rooms.users.RoomUserWhisperEvent;
 import com.eu.habbo.messages.incoming.rooms.users.UnIgnoreRoomUserEvent;
 import com.eu.habbo.messages.incoming.rooms.users.UnbanRoomUserEvent;
+import com.eu.habbo.messages.incoming.rooms.users.UnmuteUserEvent;
+import com.eu.habbo.messages.incoming.selfdonation.SelfDonationEvent;
 import com.eu.habbo.messages.incoming.trading.TradeAcceptEvent;
 import com.eu.habbo.messages.incoming.trading.TradeCancelEvent;
 import com.eu.habbo.messages.incoming.trading.TradeCancelOfferItemEvent;
@@ -385,16 +529,26 @@ import com.eu.habbo.messages.incoming.trading.TradeUnAcceptEvent;
 import com.eu.habbo.messages.incoming.translation.TranslationLanguagesRequestEvent;
 import com.eu.habbo.messages.incoming.translation.TranslationTextRequestEvent;
 import com.eu.habbo.messages.incoming.unknown.RequestResolutionEvent;
+import com.eu.habbo.messages.incoming.unknown.ResetResolutionAchievementEvent;
 import com.eu.habbo.messages.incoming.unknown.UnknownEvent1;
 import com.eu.habbo.messages.incoming.users.ActivateEffectEvent;
+import com.eu.habbo.messages.incoming.users.AddCustomWordFilterWordEvent;
+import com.eu.habbo.messages.incoming.users.BlockUserEvent;
 import com.eu.habbo.messages.incoming.users.ChangeChatBubbleEvent;
+import com.eu.habbo.messages.incoming.users.ChangeEmailEvent;
 import com.eu.habbo.messages.incoming.users.ChangeInfostandBgEvent;
 import com.eu.habbo.messages.incoming.users.ChangeNameCheckUsernameEvent;
 import com.eu.habbo.messages.incoming.users.ConfirmChangeNameEvent;
 import com.eu.habbo.messages.incoming.users.EnableEffectEvent;
+import com.eu.habbo.messages.incoming.users.GetBadgeInfoEvent;
+import com.eu.habbo.messages.incoming.users.GetBlockedUsersEvent;
+import com.eu.habbo.messages.incoming.users.GetEmailStatusEvent;
 import com.eu.habbo.messages.incoming.users.GetIgnoredUsersEvent;
 import com.eu.habbo.messages.incoming.users.PickNewUserGiftEvent;
+import com.eu.habbo.messages.incoming.users.RemoveCustomWordFilterWordEvent;
+import com.eu.habbo.messages.incoming.users.ReplenishRespectEvent;
 import com.eu.habbo.messages.incoming.users.RequestClubCenterEvent;
+import com.eu.habbo.messages.incoming.users.RequestCustomWordFilterEvent;
 import com.eu.habbo.messages.incoming.users.RequestMeMenuSettingsEvent;
 import com.eu.habbo.messages.incoming.users.RequestProfileFriendsEvent;
 import com.eu.habbo.messages.incoming.users.RequestUserCitizinShipEvent;
@@ -405,27 +559,67 @@ import com.eu.habbo.messages.incoming.users.RequestUserProfileEvent;
 import com.eu.habbo.messages.incoming.users.RequestUserWardrobeEvent;
 import com.eu.habbo.messages.incoming.users.RequestWearingBadgesEvent;
 import com.eu.habbo.messages.incoming.users.SaveBlockCameraFollowEvent;
+import com.eu.habbo.messages.incoming.users.SaveChatPreferencesEvent;
+import com.eu.habbo.messages.incoming.users.SaveGamePrivacySettingsEvent;
 import com.eu.habbo.messages.incoming.users.SaveIgnoreRoomInvitesEvent;
 import com.eu.habbo.messages.incoming.users.SaveMottoEvent;
+import com.eu.habbo.messages.incoming.users.SaveOnlineIndicatorPreferenceEvent;
 import com.eu.habbo.messages.incoming.users.SavePreferOldChatEvent;
 import com.eu.habbo.messages.incoming.users.SaveUserVolumesEvent;
 import com.eu.habbo.messages.incoming.users.SaveWardrobeEvent;
+import com.eu.habbo.messages.incoming.users.SaveWiredMenuSettingsEvent;
+import com.eu.habbo.messages.incoming.users.UnblockUserEvent;
 import com.eu.habbo.messages.incoming.users.UpdateUIFlagsEvent;
 import com.eu.habbo.messages.incoming.users.UserActivityEvent;
 import com.eu.habbo.messages.incoming.users.UserNuxEvent;
 import com.eu.habbo.messages.incoming.users.UserSaveLookEvent;
 import com.eu.habbo.messages.incoming.users.UserWearBadgeEvent;
+import com.eu.habbo.messages.incoming.wired.GetWiredContractContentsEvent;
+import com.eu.habbo.messages.incoming.wired.UpdateWiredContractEvent;
+import com.eu.habbo.messages.incoming.wired.WiredAddonSaveDataEvent;
+import com.eu.habbo.messages.incoming.wired.WiredAddonShareSynchronizeEvent;
+import com.eu.habbo.messages.incoming.wired.WiredAllVariablesRequestEvent;
 import com.eu.habbo.messages.incoming.wired.WiredApplySetConditionsEvent;
+import com.eu.habbo.messages.incoming.wired.WiredArrayInspectionRequestEvent;
+import com.eu.habbo.messages.incoming.wired.WiredArrayInspectionUpdateEvent;
 import com.eu.habbo.messages.incoming.wired.WiredConditionSaveDataEvent;
 import com.eu.habbo.messages.incoming.wired.WiredEffectSaveDataEvent;
+import com.eu.habbo.messages.incoming.wired.WiredErrorLogsClearEvent;
+import com.eu.habbo.messages.incoming.wired.WiredErrorLogsRequestEvent;
+import com.eu.habbo.messages.incoming.wired.WiredFeatureCapabilitiesEvent;
+import com.eu.habbo.messages.incoming.wired.WiredFurniRuntimeStateRequestEvent;
+import com.eu.habbo.messages.incoming.wired.WiredGenerateWebApiKeyEvent;
+import com.eu.habbo.messages.incoming.wired.WiredGetVariablesForObjectEvent;
+import com.eu.habbo.messages.incoming.wired.WiredLabelSaveSettingsEvent;
+import com.eu.habbo.messages.incoming.wired.WiredLabelSaveTextEvent;
+import com.eu.habbo.messages.incoming.wired.WiredLeaderboardSubscribeEvent;
+import com.eu.habbo.messages.incoming.wired.WiredLinkCreateNetworkEvent;
+import com.eu.habbo.messages.incoming.wired.WiredLinkDeleteNetworkEvent;
+import com.eu.habbo.messages.incoming.wired.WiredLinkGetConnectionsEvent;
+import com.eu.habbo.messages.incoming.wired.WiredLinkRenameNetworkEvent;
+import com.eu.habbo.messages.incoming.wired.WiredLinkRequestConfigEvent;
+import com.eu.habbo.messages.incoming.wired.WiredLinkSaveSelectionEvent;
+import com.eu.habbo.messages.incoming.wired.WiredMenuPermissionsSaveEvent;
 import com.eu.habbo.messages.incoming.wired.WiredMonitorRequestEvent;
+import com.eu.habbo.messages.incoming.wired.WiredOpenEvent;
+import com.eu.habbo.messages.incoming.wired.WiredRoomLogsPageEvent;
 import com.eu.habbo.messages.incoming.wired.WiredRoomSettingsRequestEvent;
 import com.eu.habbo.messages.incoming.wired.WiredRoomSettingsSaveEvent;
+import com.eu.habbo.messages.incoming.wired.WiredRoomStateActionEvent;
+import com.eu.habbo.messages.incoming.wired.WiredRoomStatsRequestEvent;
+import com.eu.habbo.messages.incoming.wired.WiredSelectorSaveDataEvent;
+import com.eu.habbo.messages.incoming.wired.WiredSetupExportEvent;
+import com.eu.habbo.messages.incoming.wired.WiredSetupImportEvent;
 import com.eu.habbo.messages.incoming.wired.WiredTriggerSaveDataEvent;
 import com.eu.habbo.messages.incoming.wired.WiredUserInspectMoveEvent;
+import com.eu.habbo.messages.incoming.wired.WiredUserSelectedEvent;
 import com.eu.habbo.messages.incoming.wired.WiredUserVariableManageEvent;
 import com.eu.habbo.messages.incoming.wired.WiredUserVariableUpdateEvent;
 import com.eu.habbo.messages.incoming.wired.WiredUserVariablesRequestEvent;
+import com.eu.habbo.messages.incoming.wired.WiredVariableHashesEvent;
+import com.eu.habbo.messages.incoming.wired.WiredVariableHoldersPageEvent;
+import com.eu.habbo.messages.incoming.wired.WiredVariableHoldersRequestEvent;
+import com.eu.habbo.messages.incoming.wired.WiredVariableSaveDataEvent;
 import com.eu.habbo.monitoring.EmulatorNetworkStats;
 import com.eu.habbo.plugin.EventHandler;
 import com.eu.habbo.plugin.events.emulator.EmulatorConfigUpdatedEvent;
@@ -459,6 +653,7 @@ public class PacketManager {
     private final Map<Integer, Class<? extends MessageHandler>> incoming;
     private final Map<Integer, List<ICallable>> callables;
     private final PacketNames names;
+    private final PacketErrorLogLimiter errorLog = new PacketErrorLogLimiter(60_000);
 
     public PacketManager() throws Exception {
         this.incoming = new HashMap<>();
@@ -490,6 +685,7 @@ public class PacketManager {
         this.registerCrafting();
         this.registerCamera();
         this.registerGameCenter();
+        this.registerSnowWar();
         this.registerEarnings();
 
         RuntimeValidationReport report = PacketRuntimeValidator.validateHandlers(this.incoming);
@@ -536,9 +732,7 @@ public class PacketManager {
     }
 
     public void unregisterCallables(Integer header) {
-        if (this.callables.containsKey(header)) {
-            this.callables.clear();
-        }
+        this.callables.remove(header);
     }
 
     public void handlePacket(GameClient client, ClientMessage packet) {
@@ -610,7 +804,15 @@ public class PacketManager {
                 }
             }
         } catch (Exception e) {
-            LOGGER.error("Caught exception", e);
+            PacketErrorLogLimiter.Decision decision =
+                    this.errorLog.record(packet.getMessageId(), e.getClass(), System.currentTimeMillis());
+            if (decision.log()) {
+                LOGGER.error(
+                        "Caught exception handling packet {} ({} more like it in the last minute)",
+                        packet.getMessageId(),
+                        decision.suppressedSinceLast(),
+                        e);
+            }
         }
     }
 
@@ -648,12 +850,43 @@ public class PacketManager {
         this.registerHandler(Incoming.RequestRecylerLogicEvent, RequestRecyclerLogicEvent.class);
         this.registerHandler(Incoming.RequestDiscountEvent, RequestDiscountEvent.class);
         this.registerHandler(Incoming.RequestGiftConfigurationEvent, RequestGiftConfigurationEvent.class);
+        this.registerHandler(Incoming.RequestHasClaimedProductEvent, RequestHasClaimedProductEvent.class);
+        this.registerHandler(Incoming.ClaimFreeProductEvent, ClaimFreeProductEvent.class);
+        this.registerHandler(Incoming.GetCollectibleWalletsEvent, GetCollectibleWalletsEvent.class);
+        this.registerHandler(Incoming.SelectCollectibleWalletEvent, SelectCollectibleWalletEvent.class);
+        this.registerHandler(Incoming.GetCollectibleCollectionsEvent, GetCollectibleCollectionsEvent.class);
+        this.registerHandler(Incoming.ClaimCollectionBonusEvent, ClaimCollectionBonusEvent.class);
+        this.registerHandler(Incoming.ClaimCollectionRewardEvent, ClaimCollectionRewardEvent.class);
+        this.registerHandler(Incoming.GetCollectibleShopEvent, GetCollectibleShopEvent.class);
+        this.registerHandler(Incoming.PurchaseCollectibleEvent, PurchaseCollectibleEvent.class);
+        this.registerHandler(Incoming.GetCollectibleTransferFeeEvent, GetCollectibleTransferFeeEvent.class);
+        this.registerHandler(Incoming.TransferCollectiblesEvent, TransferCollectiblesEvent.class);
+        this.registerHandler(Incoming.GetCollectibleRewardClaimsEvent, GetCollectibleRewardClaimsEvent.class);
+        this.registerHandler(Incoming.ClaimCollectibleRewardsEvent, ClaimCollectibleRewardsEvent.class);
+        this.registerHandler(Incoming.OpenCollectibleRewardBoxEvent, OpenCollectibleRewardBoxEvent.class);
+        this.registerHandler(Incoming.GetCollectiblesInventoryEvent, GetCollectiblesInventoryEvent.class);
+        this.registerHandler(Incoming.GetMintableItemsEvent, GetMintableItemsEvent.class);
+        this.registerHandler(Incoming.GetMintingEnabledEvent, GetMintingEnabledEvent.class);
+        this.registerHandler(Incoming.GetMintTokenOffersEvent, GetMintTokenOffersEvent.class);
+        this.registerHandler(Incoming.GetMintTokensEvent, GetMintTokensEvent.class);
+        this.registerHandler(Incoming.PurchaseMintTokensEvent, PurchaseMintTokensEvent.class);
+        this.registerHandler(Incoming.MintCollectibleEvent, MintCollectibleEvent.class);
+        this.registerHandler(Incoming.RedeemEmeraldFurniEvent, RedeemEmeraldFurniEvent.class);
+        this.registerHandler(Incoming.GetUserNftWardrobeEvent, GetUserNftWardrobeEvent.class);
+        this.registerHandler(Incoming.SaveUserNftWardrobeEvent, SaveUserNftWardrobeEvent.class);
+        this.registerHandler(Incoming.GetSelectedNftWardrobeOutfitEvent, GetSelectedNftWardrobeOutfitEvent.class);
         this.registerHandler(Incoming.GetMarketplaceConfigEvent, RequestMarketplaceConfigEvent.class);
         this.registerHandler(Incoming.RequestCatalogModeEvent, RequestCatalogModeEvent.class);
+        this.registerHandler(
+                Incoming.MarkCatalogNewAdditionsPageOpenedEvent, MarkCatalogNewAdditionsPageOpenedEvent.class);
         this.registerHandler(Incoming.BuildersClubQueryFurniCountEvent, BuildersClubQueryFurniCountEvent.class);
         this.registerHandler(Incoming.BuildersClubPlaceRoomItemEvent, BuildersClubPlaceRoomItemEvent.class);
+        this.registerHandler(
+                Incoming.RecolorFurniEvent, com.eu.habbo.messages.incoming.rooms.items.RecolorFurniEvent.class);
         this.registerHandler(Incoming.BuildersClubPlaceWallItemEvent, BuildersClubPlaceWallItemEvent.class);
         this.registerHandler(Incoming.RequestCatalogPageEvent, RequestCatalogPageEvent.class);
+        this.registerHandler(Incoming.CatalogProductMetadataEvent, CatalogProductMetadataEvent.class);
+        this.registerHandler(Incoming.CatalogRuntimeConfigurationEvent, CatalogRuntimeConfigurationEvent.class);
         this.registerHandler(Incoming.CatalogBuyItemAsGiftEvent, CatalogBuyItemAsGiftEvent.class);
         this.registerHandler(Incoming.CatalogBuyItemEvent, CatalogBuyItemEvent.class);
         this.registerHandler(Incoming.RedeemVoucherEvent, RedeemVoucherEvent.class);
@@ -666,18 +899,24 @@ public class PacketManager {
         this.registerHandler(Incoming.RequestItemInfoEvent, RequestItemInfoEvent.class);
         this.registerHandler(Incoming.BuyItemEvent, BuyItemEvent.class);
         this.registerHandler(Incoming.RequestSellItemEvent, RequestSellItemEvent.class);
+        this.registerHandler(Incoming.BuyMarketplaceTokensEvent, BuyMarketplaceTokensEvent.class);
         this.registerHandler(Incoming.SellItemEvent, SellItemEvent.class);
+        this.registerHandler(Incoming.SellMultipleItemsEvent, SellMultipleItemsEvent.class);
+        this.registerHandler(Incoming.CancelAllOwnItemsEvent, CancelAllOwnItemsEvent.class);
+        this.registerHandler(Incoming.ClearOwnHistoryEvent, ClearOwnHistoryEvent.class);
         this.registerHandler(Incoming.RequestCreditsEvent, RequestCreditsEvent.class);
         this.registerHandler(Incoming.RequestPetBreedsEvent, RequestPetBreedsEvent.class);
         this.registerHandler(Incoming.CheckPetNameEvent, CheckPetNameEvent.class);
         this.registerHandler(Incoming.GetClubDataEvent, RequestClubDataEvent.class);
         this.registerHandler(Incoming.RequestClubGiftsEvent, RequestClubGiftsEvent.class);
         this.registerHandler(Incoming.CatalogSearchedItemEvent, CatalogSearchedItemEvent.class);
+        this.registerHandler(Incoming.RequestTargetOfferEvent, RequestTargetOfferEvent.class);
         this.registerHandler(Incoming.PurchaseTargetOfferEvent, PurchaseTargetOfferEvent.class);
         this.registerHandler(Incoming.TargetOfferStateEvent, TargetOfferStateEvent.class);
         this.registerHandler(Incoming.CatalogSelectClubGiftEvent, CatalogSelectClubGiftEvent.class);
         this.registerHandler(Incoming.RequestClubCenterEvent, RequestClubCenterEvent.class);
         this.registerHandler(Incoming.CatalogRequestClubDiscountEvent, CatalogRequestClubDiscountEvent.class);
+        this.registerHandler(Incoming.RequestClubExtendConfirmEvent, RequestClubExtendConfirmEvent.class);
         this.registerHandler(Incoming.CatalogBuyClubDiscountEvent, CatalogBuyClubDiscountEvent.class);
 
         // Furni Editor
@@ -705,6 +944,16 @@ public class PacketManager {
         this.registerHandler(Incoming.CatalogAdminSavePageIconEvent, CatalogAdminSavePageIconEvent.class);
         this.registerHandler(Incoming.CatalogAdminLoadOfferEvent, CatalogAdminLoadOfferEvent.class);
         this.registerHandler(Incoming.CatalogAdminLoadPageEvent, CatalogAdminLoadPageEvent.class);
+        this.registerHandler(Incoming.CatalogAdminSetPageEnabledEvent, CatalogAdminSetPageEnabledEvent.class);
+        this.registerHandler(Incoming.CatalogAdminSetPageVisibleEvent, CatalogAdminSetPageVisibleEvent.class);
+        this.registerHandler(Incoming.CatalogAdminReorderOffersEvent, CatalogAdminReorderOffersEvent.class);
+        this.registerHandler(Incoming.CatalogStudioOpenSessionEvent, CatalogStudioOpenSessionEvent.class);
+        this.registerHandler(Incoming.CatalogStudioLoadHistoryEvent, CatalogStudioLoadHistoryEvent.class);
+        this.registerHandler(Incoming.CatalogStudioUndoEvent, CatalogStudioUndoEvent.class);
+        this.registerHandler(Incoming.CatalogStudioValidateEvent, CatalogStudioValidateEvent.class);
+        this.registerHandler(Incoming.CatalogStudioExportEvent, CatalogStudioExportEvent.class);
+        this.registerHandler(Incoming.CatalogStudioDocumentDryRunEvent, CatalogStudioDocumentDryRunEvent.class);
+        this.registerHandler(Incoming.CatalogStudioDocumentApplyEvent, CatalogStudioDocumentApplyEvent.class);
     }
 
     private void registerEvent() throws Exception {
@@ -719,7 +968,16 @@ public class PacketManager {
         this.registerHandler(Incoming.SecureLoginEvent, SecureLoginEvent.class);
         this.registerHandler(Incoming.MachineIDEvent, MachineIDEvent.class);
         this.registerHandler(Incoming.GetIgnoredUsersEvent, GetIgnoredUsersEvent.class);
+        this.registerHandler(Incoming.GetBlockedUsersEvent, GetBlockedUsersEvent.class);
+        this.registerHandler(Incoming.BlockUserEvent, BlockUserEvent.class);
+        this.registerHandler(Incoming.UnblockUserEvent, UnblockUserEvent.class);
+        this.registerHandler(Incoming.ReplenishRespectEvent, ReplenishRespectEvent.class);
+        this.registerHandler(Incoming.ActivateNotificationsEvent, ActivateNotificationsEvent.class);
+        this.registerHandler(Incoming.UnmuteUserEvent, UnmuteUserEvent.class);
+        this.registerHandler(Incoming.GetDiscordPreferencesEvent, GetDiscordPreferencesEvent.class);
+        this.registerHandler(Incoming.UpdateDiscordPreferencesEvent, UpdateDiscordPreferencesEvent.class);
         this.registerHandler(Incoming.PingEvent, PingEvent.class);
+        this.registerHandler(Incoming.DisconnectEvent, DisconnectEvent.class);
     }
 
     private void registerFriends() throws Exception {
@@ -731,6 +989,7 @@ public class PacketManager {
         this.registerHandler(Incoming.AcceptFriendRequest, AcceptFriendRequestEvent.class);
         this.registerHandler(Incoming.DeclineFriendRequest, DeclineFriendRequestEvent.class);
         this.registerHandler(Incoming.FriendPrivateMessageEvent, FriendPrivateMessageEvent.class);
+        this.registerHandler(Incoming.RequestOfflineMessagesEvent, RequestOfflineMessagesEvent.class);
         this.registerHandler(Incoming.RequestFriendRequestEvent, RequestFriendRequestsEvent.class);
         this.registerHandler(Incoming.StalkFriendEvent, StalkFriendEvent.class);
         this.registerHandler(Incoming.RequestInitFriendsEvent, RequestInitFriendsEvent.class);
@@ -740,6 +999,9 @@ public class PacketManager {
         this.registerHandler(Incoming.RequestMessengerHistoryEvent, RequestMessengerHistoryEvent.class);
         this.registerHandler(Incoming.SendMessengerMessageEvent, SendMessengerMessageEvent.class);
         this.registerHandler(Incoming.MarkMessengerReadEvent, MarkMessengerReadEvent.class);
+        this.registerHandler(Incoming.MarkConsoleReadEvent, MarkConsoleReadEvent.class);
+        this.registerHandler(Incoming.ConsoleTypingEvent, ConsoleTypingEvent.class);
+        this.registerHandler(Incoming.RefreshFriendListEvent, RefreshFriendListEvent.class);
         this.registerHandler(Incoming.AddFriendCategoryEvent, AddFriendCategoryEvent.class);
         this.registerHandler(Incoming.RenameFriendCategoryEvent, RenameFriendCategoryEvent.class);
         this.registerHandler(Incoming.RemoveFriendCategoryEvent, RemoveFriendCategoryEvent.class);
@@ -752,6 +1014,8 @@ public class PacketManager {
         this.registerHandler(Incoming.RequestUserClubEvent, RequestUserClubEvent.class);
         this.registerHandler(Incoming.RequestMeMenuSettingsEvent, RequestMeMenuSettingsEvent.class);
         this.registerHandler(Incoming.RequestUserCitizinShipEvent, RequestUserCitizinShipEvent.class);
+        this.registerHandler(Incoming.GetEmailStatusEvent, GetEmailStatusEvent.class);
+        this.registerHandler(Incoming.ChangeEmailEvent, ChangeEmailEvent.class);
         this.registerHandler(Incoming.RequestUserProfileEvent, RequestUserProfileEvent.class);
         this.registerHandler(Incoming.RequestProfileFriendsEvent, RequestProfileFriendsEvent.class);
         this.registerHandler(Incoming.RequestUserWardrobeEvent, RequestUserWardrobeEvent.class);
@@ -760,10 +1024,15 @@ public class PacketManager {
         this.registerHandler(Incoming.UserSaveLookEvent, UserSaveLookEvent.class);
         this.registerHandler(Incoming.UserWearBadgeEvent, UserWearBadgeEvent.class);
         this.registerHandler(Incoming.RequestWearingBadgesEvent, RequestWearingBadgesEvent.class);
+        this.registerHandler(Incoming.GetBadgeInfoEvent, GetBadgeInfoEvent.class);
         this.registerHandler(Incoming.SaveUserVolumesEvent, SaveUserVolumesEvent.class);
         this.registerHandler(Incoming.SaveBlockCameraFollowEvent, SaveBlockCameraFollowEvent.class);
         this.registerHandler(Incoming.SaveIgnoreRoomInvitesEvent, SaveIgnoreRoomInvitesEvent.class);
         this.registerHandler(Incoming.SavePreferOldChatEvent, SavePreferOldChatEvent.class);
+        this.registerHandler(Incoming.SaveGamePrivacySettingsEvent, SaveGamePrivacySettingsEvent.class);
+        this.registerHandler(Incoming.SaveChatPreferencesEvent, SaveChatPreferencesEvent.class);
+        this.registerHandler(Incoming.SaveOnlineIndicatorPreferenceEvent, SaveOnlineIndicatorPreferenceEvent.class);
+        this.registerHandler(Incoming.SaveWiredMenuSettingsEvent, SaveWiredMenuSettingsEvent.class);
         this.registerHandler(Incoming.ActivateEffectEvent, ActivateEffectEvent.class);
         this.registerHandler(Incoming.EnableEffectEvent, EnableEffectEvent.class);
         this.registerHandler(Incoming.UserActivityEvent, UserActivityEvent.class);
@@ -782,10 +1051,12 @@ public class PacketManager {
         this.registerHandler(Incoming.RequestHighestScoreRoomsEvent, RequestHighestScoreRoomsEvent.class);
         this.registerHandler(Incoming.RequestMyRoomsEvent, RequestMyRoomsEvent.class);
         this.registerHandler(Incoming.RequestCanCreateRoomEvent, RequestCanCreateRoomEvent.class);
-        this.registerHandler(Incoming.RequestPromotedRoomsEvent, RequestPromotedRoomsEvent.class);
+        this.registerHandler(Incoming.GetUnreadForumsCountEvent, GetUnreadForumsCountEvent.class);
+        this.registerHandler(Incoming.RequestPublicRoomsEvent, RequestPublicRoomsEvent.class);
+        this.registerHandler(Incoming.RoomNetworkOpenConnectionEvent, RoomNetworkOpenConnectionEvent.class);
         this.registerHandler(Incoming.RequestCreateRoomEvent, RequestCreateRoomEvent.class);
         this.registerHandler(Incoming.RequestTagsEvent, RequestTagsEvent.class);
-        this.registerHandler(Incoming.SearchRoomsByTagEvent, SearchRoomsByTagEvent.class);
+        this.registerHandler(UnsupportedIncoming.SearchRoomsByTagEvent, SearchRoomsByTagEvent.class);
         this.registerHandler(Incoming.SearchRoomsEvent, SearchRoomsEvent.class);
         this.registerHandler(Incoming.SearchRoomsFriendsNowEvent, SearchRoomsFriendsNowEvent.class);
         this.registerHandler(Incoming.SearchRoomsFriendsOwnEvent, SearchRoomsFriendsOwnEvent.class);
@@ -804,6 +1075,7 @@ public class PacketManager {
         this.registerHandler(Incoming.NavigatorCollapseCategoryEvent, NavigatorCollapseCategoryEvent.class);
         this.registerHandler(Incoming.NavigatorUncollapseCategoryEvent, NavigatorUncollapseCategoryEvent.class);
         this.registerHandler(Incoming.AddSavedSearchEvent, AddSavedSearchEvent.class);
+        this.registerHandler(Incoming.ConvertGlobalRoomIdEvent, ConvertGlobalRoomIdEvent.class);
         this.registerHandler(Incoming.DeleteSavedSearchEvent, DeleteSavedSearchEvent.class);
     }
 
@@ -813,13 +1085,30 @@ public class PacketManager {
         this.registerHandler(Incoming.RequestNewsListEvent, RequestNewsListEvent.class);
         this.registerHandler(Incoming.HotelViewDataEvent, HotelViewDataEvent.class);
         this.registerHandler(Incoming.HotelViewRequestBadgeRewardEvent, HotelViewRequestBadgeRewardEvent.class);
-        this.registerHandler(Incoming.HotelViewClaimBadgeRewardEvent, HotelViewClaimBadgeRewardEvent.class);
+        this.registerHandler(Incoming.HotelViewClaimBadgeEvent, HotelViewClaimBadgeEvent.class);
+        this.registerHandler(Incoming.GetIsBadgeRequestFulfilledEvent, GetIsBadgeRequestFulfilledEvent.class);
+        this.registerHandler(UnsupportedIncoming.HotelViewClaimBadgeRewardEvent, HotelViewClaimBadgeRewardEvent.class);
         this.registerHandler(Incoming.HotelViewRequestLTDAvailabilityEvent, HotelViewRequestLTDAvailabilityEvent.class);
         this.registerHandler(Incoming.HotelViewRequestSecondsUntilEvent, HotelViewRequestSecondsUntilEvent.class);
+        this.registerHandler(Incoming.HotelViewLandingRequestEvent, HotelViewLandingRequestEvent.class);
+        this.registerHandler(Incoming.HotelViewLandingSaveEvent, HotelViewLandingSaveEvent.class);
+        this.registerHandler(Incoming.HotelViewLandingSaveSceneEvent, HotelViewLandingSaveSceneEvent.class);
+        this.registerHandler(Incoming.HotelViewLandingVoteEvent, HotelViewLandingVoteEvent.class);
+        this.registerHandler(Incoming.HotelViewLandingResetVotesEvent, HotelViewLandingResetVotesEvent.class);
+        this.registerHandler(Incoming.HotelViewRequestCommunityGoalEvent, HotelViewRequestCommunityGoalEvent.class);
+        this.registerHandler(Incoming.CommunityGoalVoteEvent, CommunityGoalVoteEvent.class);
+        this.registerHandler(Incoming.HotelViewRequestConcurrentUsersEvent, HotelViewRequestConcurrentUsersEvent.class);
+        this.registerHandler(Incoming.HotelViewConcurrentUsersButtonEvent, HotelViewConcurrentUsersButtonEvent.class);
+        this.registerHandler(Incoming.GetCommunityGoalHallOfFameEvent, GetCommunityGoalHallOfFameEvent.class);
+        this.registerHandler(Incoming.GetCommunityGoalEarnedPrizesEvent, GetCommunityGoalEarnedPrizesEvent.class);
+        this.registerHandler(Incoming.RedeemCommunityGoalPrizeEvent, RedeemCommunityGoalPrizeEvent.class);
+        this.registerHandler(Incoming.SelfDonationEvent, SelfDonationEvent.class);
     }
 
     private void registerInventory() throws Exception {
         this.registerHandler(Incoming.RequestInventoryBadgesEvent, RequestInventoryBadgesEvent.class);
+        this.registerHandler(Incoming.UnseenResetCategoryEvent, UnseenResetCategoryEvent.class);
+        this.registerHandler(Incoming.UnseenResetItemsEvent, UnseenResetItemsEvent.class);
         this.registerHandler(Incoming.RequestInventoryBotsEvent, RequestInventoryBotsEvent.class);
         this.registerHandler(Incoming.RequestInventoryItemsDelete, RequestInventoryItemsDelete.class);
         this.registerHandler(Incoming.RequestInventoryItemsEvent, RequestInventoryItemsEvent.class);
@@ -846,36 +1135,63 @@ public class PacketManager {
         this.registerHandler(Incoming.RequestMentionsEvent, RequestMentionsEvent.class);
         this.registerHandler(Incoming.MarkMentionsReadEvent, MarkMentionsReadEvent.class);
         this.registerHandler(Incoming.DeleteMentionEvent, DeleteMentionEvent.class);
+        this.registerHandler(Incoming.RequestMentionsPageEvent, RequestMentionsPageEvent.class);
         this.registerHandler(Incoming.RequestRoomLoadEvent, RequestRoomLoadEvent.class);
         this.registerHandler(Incoming.RequestHeightmapEvent, RequestRoomHeightmapEvent.class);
         this.registerHandler(Incoming.RequestRoomHeightmapEvent, RequestRoomHeightmapEvent.class);
         this.registerHandler(Incoming.RoomVoteEvent, RoomVoteEvent.class);
         this.registerHandler(Incoming.RequestRoomDataEvent, RequestRoomDataEvent.class);
         this.registerHandler(Incoming.RoomSettingsSaveEvent, RoomSettingsSaveEvent.class);
+        this.registerHandler(
+                Incoming.UpdateRoomCategoryAndTradeSettingsEvent, UpdateRoomCategoryAndTradeSettingsEvent.class);
+        this.registerHandler(Incoming.GetQuizQuestionsEvent, GetQuizQuestionsEvent.class);
+        this.registerHandler(Incoming.PostQuizAnswersEvent, PostQuizAnswersEvent.class);
         this.registerHandler(Incoming.RoomPlaceItemEvent, RoomPlaceItemEvent.class);
         this.registerHandler(Incoming.RotateMoveItemEvent, RotateMoveItemEvent.class);
         this.registerHandler(Incoming.MoveWallItemEvent, MoveWallItemEvent.class);
         this.registerHandler(Incoming.RoomPickupItemEvent, RoomPickupItemEvent.class);
         this.registerHandler(Incoming.RoomPickupChooserEvent, RoomPickupChooserEvent.class);
         this.registerHandler(Incoming.RoomPlacePaintEvent, RoomPlacePaintEvent.class);
+        this.registerHandler(Incoming.RoomRemoveBackgroundEvent, RoomRemoveBackgroundEvent.class);
+        this.registerHandler(Incoming.RoomRemovePaintEvent, RoomRemovePaintEvent.class);
+        this.registerHandler(Incoming.SetBuildUnderpassEvent, SetBuildUnderpassEvent.class);
+        this.registerHandler(Incoming.SetBuildHeightEvent, SetBuildHeightEvent.class);
+        this.registerHandler(Incoming.OpenMysteryTrophyEvent, OpenMysteryTrophyEvent.class);
+        this.registerHandler(Incoming.MysteryBoxWaitingCanceledEvent, MysteryBoxWaitingCanceledEvent.class);
+        this.registerHandler(Incoming.ForwardToACompetitionRoomEvent, ForwardToACompetitionRoomEvent.class);
+        this.registerHandler(Incoming.ForwardToASubmittableRoomEvent, ForwardToASubmittableRoomEvent.class);
+        this.registerHandler(Incoming.ForwardToRandomCompetitionRoomEvent, ForwardToRandomCompetitionRoomEvent.class);
+        this.registerHandler(Incoming.GetIsUserPartOfCompetitionEvent, GetIsUserPartOfCompetitionEvent.class);
+        this.registerHandler(Incoming.RoomCompetitionInitEvent, RoomCompetitionInitEvent.class);
+        this.registerHandler(Incoming.SubmitRoomToCompetitionEvent, SubmitRoomToCompetitionEvent.class);
+        this.registerHandler(Incoming.VoteForRoomEvent, VoteForRoomEvent.class);
+        this.registerHandler(Incoming.CompetitionRoomsSearchEvent, CompetitionRoomsSearchEvent.class);
         this.registerHandler(Incoming.RoomUserStartTypingEvent, RoomUserStartTypingEvent.class);
         this.registerHandler(Incoming.RoomUserStopTypingEvent, RoomUserStopTypingEvent.class);
         this.registerHandler(Incoming.ClickFurniEvent, ClickFurniEvent.class);
         this.registerHandler(Incoming.ClickUserEvent, ClickUserEvent.class);
         this.registerHandler(Incoming.ToggleFloorItemEvent, ToggleFloorItemEvent.class);
         this.registerHandler(Incoming.ToggleWallItemEvent, ToggleWallItemEvent.class);
-        this.registerHandler(Incoming.ChestDepositEvent, ChestDepositEvent.class);
+        // AIR chest model: deposits only go through the wired trade (ChestStartDepositEvent), and the
+        // Wired upgrade is part of the settings save, so the wallet/inventory deposit messages and
+        // ChestEnableWiredEvent are no longer registered.
         this.registerHandler(Incoming.ChestWithdrawEvent, ChestWithdrawEvent.class);
         this.registerHandler(Incoming.ChestWithdrawFurniEvent, ChestWithdrawFurniEvent.class);
-        this.registerHandler(Incoming.ChestDepositFurniEvent, ChestDepositFurniEvent.class);
         this.registerHandler(Incoming.ChestStartDepositEvent, ChestStartDepositEvent.class);
-        this.registerHandler(Incoming.ChestDepositInventoryItemEvent, ChestDepositInventoryItemEvent.class);
         this.registerHandler(Incoming.ChestWithdrawAllFurniEvent, ChestWithdrawAllFurniEvent.class);
         this.registerHandler(Incoming.ChestOpenEvent, ChestOpenEvent.class);
         this.registerHandler(Incoming.ChestSaveSettingsEvent, ChestSaveSettingsEvent.class);
         this.registerHandler(Incoming.ChestSaveNotificationsEvent, ChestSaveNotificationsEvent.class);
+        this.registerHandler(Incoming.ChestSaveOptionsEvent, ChestSaveOptionsEvent.class);
+        this.registerHandler(Incoming.ChestCloseEvent, ChestCloseEvent.class);
         this.registerHandler(Incoming.ChestUpgradeCapacityEvent, ChestUpgradeCapacityEvent.class);
         this.registerHandler(Incoming.ChestRequestLogEvent, ChestRequestLogEvent.class);
+        this.registerHandler(Incoming.WiredChestRoomLogsEvent, WiredChestRoomLogsEvent.class);
+        this.registerHandler(Incoming.WiredChestLockEvent, WiredChestLockEvent.class);
+        this.registerHandler(Incoming.WiredTradeOfferItemsEvent, WiredTradeOfferItemsEvent.class);
+        this.registerHandler(Incoming.WiredTradeAcceptEvent, WiredTradeAcceptEvent.class);
+        this.registerHandler(Incoming.WiredTradeCancelEvent, WiredTradeCancelEvent.class);
+        this.registerHandler(Incoming.WiredChestTransactionDetailsEvent, WiredChestTransactionDetailsEvent.class);
         this.registerHandler(Incoming.RoomBackgroundEvent, RoomBackgroundEvent.class);
         this.registerHandler(Incoming.MannequinSaveNameEvent, MannequinSaveNameEvent.class);
         this.registerHandler(Incoming.MannequinSaveLookEvent, MannequinSaveLookEvent.class);
@@ -890,6 +1206,14 @@ public class PacketManager {
         this.registerHandler(Incoming.RoomUserShoutEvent, RoomUserShoutEvent.class);
         this.registerHandler(Incoming.RoomUserWhisperEvent, RoomUserWhisperEvent.class);
         this.registerHandler(Incoming.RoomUserActionEvent, RoomUserActionEvent.class);
+        this.registerHandler(Incoming.TriggerHabbiconEvent, TriggerHabbiconEvent.class);
+        this.registerHandler(Incoming.GetHabbiconShopDataEvent, HabbiconRequestEvent.class);
+        this.registerHandler(Incoming.GetHabbiconInfoEvent, HabbiconRequestEvent.class);
+        this.registerHandler(Incoming.BuyHabbiconEvent, HabbiconRequestEvent.class);
+        this.registerHandler(Incoming.BuyHabbiconCollectionEvent, HabbiconRequestEvent.class);
+        this.registerHandler(Incoming.ClaimHabbiconEvent, HabbiconRequestEvent.class);
+        this.registerHandler(Incoming.FavoriteHabbiconEvent, HabbiconRequestEvent.class);
+        this.registerHandler(Incoming.UnfavoriteHabbiconEvent, HabbiconRequestEvent.class);
         this.registerHandler(Incoming.RoomUserSitEvent, RoomUserSitEvent.class);
         this.registerHandler(Incoming.RoomUserDanceEvent, RoomUserDanceEvent.class);
         this.registerHandler(Incoming.RoomUserSignEvent, RoomUserSignEvent.class);
@@ -913,8 +1237,10 @@ public class PacketManager {
         this.registerHandler(Incoming.PetPlaceEvent, PetPlaceEvent.class);
         this.registerHandler(Incoming.RoomUserKickEvent, RoomUserKickEvent.class);
         this.registerHandler(Incoming.SetStackHelperHeightEvent, SetStackHelperHeightEvent.class);
+        this.registerHandler(Incoming.SetStackHelperAdjacentHeightEvent, SetStackHelperAdjacentHeightEvent.class);
         this.registerHandler(Incoming.TriggerOneWayGateEvent, TriggerOneWayGateEvent.class);
         this.registerHandler(Incoming.HandleDoorbellEvent, HandleDoorbellEvent.class);
+        this.registerHandler(Incoming.ChangeQueueEvent, ChangeQueueEvent.class);
         this.registerHandler(Incoming.RedeemClothingEvent, RedeemClothingEvent.class);
         this.registerHandler(Incoming.PostItPlaceEvent, PostItPlaceEvent.class);
         this.registerHandler(Incoming.PostItRequestDataEvent, PostItRequestDataEvent.class);
@@ -923,11 +1249,19 @@ public class PacketManager {
         this.registerHandler(Incoming.MoodLightSaveSettingsEvent, MoodLightSaveSettingsEvent.class);
         this.registerHandler(Incoming.RentSpaceEvent, RentSpaceEvent.class);
         this.registerHandler(Incoming.RentSpaceCancelEvent, RentSpaceCancelEvent.class);
+        this.registerHandler(Incoming.GetRentableSpaceStatusEvent, GetRentableSpaceStatusEvent.class);
+        this.registerHandler(Incoming.GetRentOrBuyoutOfferEvent, GetRentOrBuyoutOfferEvent.class);
+        this.registerHandler(Incoming.ExtendRentOrBuyoutFurniEvent, ExtendRentOrBuyoutFurniEvent.class);
+        this.registerHandler(Incoming.ExtendRentOrBuyoutStripItemEvent, ExtendRentOrBuyoutStripItemEvent.class);
         this.registerHandler(Incoming.SetHomeRoomEvent, SetHomeRoomEvent.class);
         this.registerHandler(Incoming.RoomUserGiveHandItemEvent, RoomUserGiveHandItemEvent.class);
+        this.registerHandler(Incoming.RoomUserGiveHandItemPetEvent, RoomUserGiveHandItemPetEvent.class);
         this.registerHandler(Incoming.RoomMuteEvent, RoomMuteEvent.class);
         this.registerHandler(Incoming.RequestRoomWordFilterEvent, RequestRoomWordFilterEvent.class);
         this.registerHandler(Incoming.RoomWordFilterModifyEvent, RoomWordFilterModifyEvent.class);
+        this.registerHandler(Incoming.RequestCustomWordFilterEvent, RequestCustomWordFilterEvent.class);
+        this.registerHandler(Incoming.AddCustomWordFilterWordEvent, AddCustomWordFilterWordEvent.class);
+        this.registerHandler(Incoming.RemoveCustomWordFilterWordEvent, RemoveCustomWordFilterWordEvent.class);
         this.registerHandler(Incoming.RoomStaffPickEvent, RoomStaffPickEvent.class);
         this.registerHandler(Incoming.RoomRequestBannedUsersEvent, RoomRequestBannedUsersEvent.class);
         this.registerHandler(Incoming.JukeBoxRequestTrackCodeEvent, JukeBoxRequestTrackCodeEvent.class);
@@ -941,7 +1275,11 @@ public class PacketManager {
         this.registerHandler(Incoming.RequestPromotionRoomsEvent, RequestPromotionRoomsEvent.class);
         this.registerHandler(Incoming.BuyRoomPromotionEvent, BuyRoomPromotionEvent.class);
         this.registerHandler(Incoming.EditRoomPromotionMessageEvent, UpdateRoomPromotionEvent.class);
+        this.registerHandler(Incoming.CancelRoomPromotionEvent, CancelRoomPromotionEvent.class);
+        this.registerHandler(Incoming.GetRaidProtectionSettingsEvent, GetRaidProtectionSettingsEvent.class);
+        this.registerHandler(Incoming.SaveRaidProtectionSettingsEvent, SaveRaidProtectionSettingsEvent.class);
         this.registerHandler(Incoming.IgnoreRoomUserEvent, IgnoreRoomUserEvent.class);
+        this.registerHandler(Incoming.IgnoreUserIdEvent, IgnoreUserIdEvent.class);
         this.registerHandler(Incoming.UnIgnoreRoomUserEvent, UnIgnoreRoomUserEvent.class);
         this.registerHandler(Incoming.RoomUserMuteEvent, RoomUserMuteEvent.class);
         this.registerHandler(Incoming.RoomUserBanEvent, RoomUserBanEvent.class);
@@ -971,22 +1309,26 @@ public class PacketManager {
         this.registerHandler(Incoming.ModToolCloseTicketEvent, ModToolCloseTicketEvent.class);
         this.registerHandler(Incoming.ModToolReleaseTicketEvent, ModToolReleaseTicketEvent.class);
         this.registerHandler(Incoming.ModToolAlertEvent, ModToolAlertEvent.class);
-        this.registerHandler(Incoming.ModToolWarnEvent, ModToolWarnEvent.class);
+        this.registerHandler(UnsupportedIncoming.ModToolWarnEvent, ModToolWarnEvent.class);
         this.registerHandler(Incoming.ModToolKickEvent, ModToolKickEvent.class);
         this.registerHandler(Incoming.ModToolRoomAlertEvent, ModToolRoomAlertEvent.class);
         this.registerHandler(Incoming.ModToolChangeRoomSettingsEvent, ModToolChangeRoomSettingsEvent.class);
         this.registerHandler(Incoming.ModToolRequestRoomVisitsEvent, ModToolRequestRoomVisitsEvent.class);
         this.registerHandler(Incoming.ModToolRequestIssueChatlogEvent, ModToolRequestIssueChatlogEvent.class);
-        this.registerHandler(Incoming.ModToolRequestRoomUserChatlogEvent, ModToolRequestRoomUserChatlogEvent.class);
+        this.registerHandler(
+                UnsupportedIncoming.ModToolRequestRoomUserChatlogEvent, ModToolRequestRoomUserChatlogEvent.class);
         this.registerHandler(Incoming.ModToolRequestUserChatlogEvent, ModToolRequestUserChatlogEvent.class);
         this.registerHandler(Incoming.ModToolSanctionAlertEvent, ModToolSanctionAlertEvent.class);
         this.registerHandler(Incoming.ModToolSanctionMuteEvent, ModToolSanctionMuteEvent.class);
         this.registerHandler(Incoming.ModToolSanctionBanEvent, ModToolSanctionBanEvent.class);
         this.registerHandler(Incoming.ModToolSanctionTradeLockEvent, ModToolSanctionTradeLockEvent.class);
         this.registerHandler(Incoming.ModToolIssueChangeTopicEvent, ModToolIssueChangeTopicEvent.class);
+        this.registerHandler(Incoming.ModToolDefaultSanctionEvent, ModToolDefaultSanctionEvent.class);
+        this.registerHandler(Incoming.ModToolPreferencesEvent, ModToolPreferencesEvent.class);
         this.registerHandler(Incoming.ModToolIssueDefaultSanctionEvent, ModToolIssueDefaultSanctionEvent.class);
 
         this.registerHandler(Incoming.RequestReportRoomEvent, RequestReportRoomEvent.class);
+        this.registerHandler(Incoming.DeletePendingCallsForHelpEvent, DeletePendingCallsForHelpEvent.class);
         this.registerHandler(Incoming.RequestReportUserBullyingEvent, RequestReportUserBullyingEvent.class);
         this.registerHandler(Incoming.ReportBullyEvent, ReportBullyEvent.class);
         this.registerHandler(Incoming.ReportEvent, ReportEvent.class);
@@ -1021,8 +1363,10 @@ public class PacketManager {
         this.registerHandler(Incoming.GuildChangeColorsEvent, GuildChangeColorsEvent.class);
         this.registerHandler(Incoming.GuildRemoveAdminEvent, GuildRemoveAdminEvent.class);
         this.registerHandler(Incoming.GuildRemoveMemberEvent, GuildRemoveMemberEvent.class);
+        this.registerHandler(Incoming.GuildUnblockMemberEvent, GuildUnblockMemberEvent.class);
         this.registerHandler(Incoming.GuildChangeSettingsEvent, GuildChangeSettingsEvent.class);
         this.registerHandler(Incoming.GuildAcceptMembershipEvent, GuildAcceptMembershipEvent.class);
+        this.registerHandler(Incoming.GuildAcceptAllMembershipsEvent, GuildAcceptAllMembershipsEvent.class);
         this.registerHandler(Incoming.GuildDeclineMembershipEvent, GuildDeclineMembershipEvent.class);
         this.registerHandler(Incoming.GuildSetAdminEvent, GuildSetAdminEvent.class);
         this.registerHandler(Incoming.GuildSetFavoriteEvent, GuildSetFavoriteEvent.class);
@@ -1057,6 +1401,9 @@ public class PacketManager {
         this.registerHandler(Incoming.ScratchPetEvent, ScratchPetEvent.class);
         this.registerHandler(Incoming.RequestPetTrainingPanelEvent, RequestPetTrainingPanelEvent.class);
         this.registerHandler(Incoming.PetUseItemEvent, PetUseItemEvent.class);
+        this.registerHandler(Incoming.PetSupplementEvent, PetSupplementEvent.class);
+        // The official client (AIR 13) sends the same composer on 2868.
+        this.registerHandler(Incoming.PetSupplementOfficialEvent, PetSupplementEvent.class);
         this.registerHandler(Incoming.HorseRideSettingsEvent, PetRideSettingsEvent.class);
         this.registerHandler(Incoming.HorseRideEvent, PetRideEvent.class);
         this.registerHandler(Incoming.HorseRemoveSaddleEvent, HorseRemoveSaddleEvent.class);
@@ -1072,6 +1419,9 @@ public class PacketManager {
     void registerWired() throws Exception {
         this.registerHandler(Incoming.WiredTriggerSaveDataEvent, WiredTriggerSaveDataEvent.class);
         this.registerHandler(Incoming.WiredEffectSaveDataEvent, WiredEffectSaveDataEvent.class);
+        this.registerHandler(Incoming.WiredAddonSaveDataEvent, WiredAddonSaveDataEvent.class);
+        this.registerHandler(Incoming.WiredSelectorSaveDataEvent, WiredSelectorSaveDataEvent.class);
+        this.registerHandler(Incoming.WiredVariableSaveDataEvent, WiredVariableSaveDataEvent.class);
         this.registerHandler(Incoming.WiredConditionSaveDataEvent, WiredConditionSaveDataEvent.class);
         this.registerHandler(Incoming.WiredApplySetConditionsEvent, WiredApplySetConditionsEvent.class);
         this.registerHandler(Incoming.WiredMonitorRequestEvent, WiredMonitorRequestEvent.class);
@@ -1080,7 +1430,39 @@ public class PacketManager {
         this.registerHandler(Incoming.WiredUserVariablesRequestEvent, WiredUserVariablesRequestEvent.class);
         this.registerHandler(Incoming.WiredUserVariableUpdateEvent, WiredUserVariableUpdateEvent.class);
         this.registerHandler(Incoming.WiredUserVariableManageEvent, WiredUserVariableManageEvent.class);
+        this.registerHandler(Incoming.WiredGenerateWebApiKeyEvent, WiredGenerateWebApiKeyEvent.class);
         this.registerHandler(Incoming.WiredUserInspectMoveEvent, WiredUserInspectMoveEvent.class);
+        this.registerHandler(Incoming.WiredFurniRuntimeStateRequestEvent, WiredFurniRuntimeStateRequestEvent.class);
+        this.registerHandler(Incoming.WiredFeatureCapabilitiesEvent, WiredFeatureCapabilitiesEvent.class);
+        this.registerHandler(Incoming.WiredArrayInspectionRequestEvent, WiredArrayInspectionRequestEvent.class);
+        this.registerHandler(Incoming.WiredArrayInspectionUpdateEvent, WiredArrayInspectionUpdateEvent.class);
+        this.registerHandler(Incoming.WiredSetupExportEvent, WiredSetupExportEvent.class);
+        this.registerHandler(Incoming.WiredSetupImportEvent, WiredSetupImportEvent.class);
+        this.registerHandler(Incoming.WiredOpenEvent, WiredOpenEvent.class);
+        this.registerHandler(Incoming.GetWiredContractContentsEvent, GetWiredContractContentsEvent.class);
+        this.registerHandler(Incoming.UpdateWiredContractEvent, UpdateWiredContractEvent.class);
+        this.registerHandler(Incoming.WiredUserSelectedEvent, WiredUserSelectedEvent.class);
+        this.registerHandler(Incoming.WiredMenuPermissionsSaveEvent, WiredMenuPermissionsSaveEvent.class);
+        this.registerHandler(Incoming.WiredRoomStateActionEvent, WiredRoomStateActionEvent.class);
+        this.registerHandler(Incoming.WiredRoomLogsPageEvent, WiredRoomLogsPageEvent.class);
+        this.registerHandler(Incoming.WiredRoomStatsRequestEvent, WiredRoomStatsRequestEvent.class);
+        this.registerHandler(Incoming.WiredErrorLogsRequestEvent, WiredErrorLogsRequestEvent.class);
+        this.registerHandler(Incoming.WiredErrorLogsClearEvent, WiredErrorLogsClearEvent.class);
+        this.registerHandler(Incoming.WiredVariableHoldersPageEvent, WiredVariableHoldersPageEvent.class);
+        this.registerHandler(Incoming.WiredLeaderboardSubscribeEvent, WiredLeaderboardSubscribeEvent.class);
+        this.registerHandler(Incoming.WiredLinkRequestConfigEvent, WiredLinkRequestConfigEvent.class);
+        this.registerHandler(Incoming.WiredLinkSaveSelectionEvent, WiredLinkSaveSelectionEvent.class);
+        this.registerHandler(Incoming.WiredLinkCreateNetworkEvent, WiredLinkCreateNetworkEvent.class);
+        this.registerHandler(Incoming.WiredLinkRenameNetworkEvent, WiredLinkRenameNetworkEvent.class);
+        this.registerHandler(Incoming.WiredLinkDeleteNetworkEvent, WiredLinkDeleteNetworkEvent.class);
+        this.registerHandler(Incoming.WiredLinkGetConnectionsEvent, WiredLinkGetConnectionsEvent.class);
+        this.registerHandler(Incoming.WiredAddonShareSynchronizeEvent, WiredAddonShareSynchronizeEvent.class);
+        this.registerHandler(Incoming.WiredLabelSaveTextEvent, WiredLabelSaveTextEvent.class);
+        this.registerHandler(Incoming.WiredLabelSaveSettingsEvent, WiredLabelSaveSettingsEvent.class);
+        this.registerHandler(Incoming.WiredVariableHoldersRequestEvent, WiredVariableHoldersRequestEvent.class);
+        this.registerHandler(Incoming.WiredVariableHashesEvent, WiredVariableHashesEvent.class);
+        this.registerHandler(Incoming.WiredAllVariablesRequestEvent, WiredAllVariablesRequestEvent.class);
+        this.registerHandler(Incoming.WiredGetVariablesForObjectEvent, WiredGetVariablesForObjectEvent.class);
     }
 
     void registerTranslation() throws Exception {
@@ -1090,9 +1472,12 @@ public class PacketManager {
 
     void registerUnknown() throws Exception {
         this.registerHandler(Incoming.RequestResolutionEvent, RequestResolutionEvent.class);
+        this.registerHandler(Incoming.ResetResolutionAchievementEvent, ResetResolutionAchievementEvent.class);
         this.registerHandler(Incoming.RequestTalenTrackEvent, RequestTalentTrackEvent.class);
         this.registerHandler(Incoming.UnknownEvent1, UnknownEvent1.class);
         this.registerHandler(Incoming.MySanctionStatusEvent, MySanctionStatusEvent.class);
+        this.registerHandler(Incoming.GetMyReportsStatusEvent, GetMyReportsStatusEvent.class);
+        this.registerHandler(Incoming.AppealReportEvent, AppealReportEvent.class);
     }
 
     void registerFloorPlanEditor() throws Exception {
@@ -1105,7 +1490,8 @@ public class PacketManager {
 
     void registerAchievements() throws Exception {
         this.registerHandler(Incoming.RequestAchievementsEvent, RequestAchievementsEvent.class);
-        this.registerHandler(Incoming.RequestAchievementConfigurationEvent, RequestAchievementConfigurationEvent.class);
+        this.registerHandler(
+                UnsupportedIncoming.RequestAchievementConfigurationEvent, RequestAchievementConfigurationEvent.class);
     }
 
     void registerGuides() throws Exception {
@@ -1140,14 +1526,87 @@ public class PacketManager {
         this.registerHandler(Incoming.CameraPurchaseEvent, CameraPurchaseEvent.class);
         this.registerHandler(Incoming.CameraRoomThumbnailEvent, CameraRoomThumbnailEvent.class);
         this.registerHandler(Incoming.CameraPublishToWebEvent, CameraPublishToWebEvent.class);
+        this.registerHandler(Incoming.PhotoCompetitionEvent, PhotoCompetitionEvent.class);
+    }
+
+    void registerSnowWar() throws Exception {
+        // The UNKNOWN_SNOWSTORM_* constant names are frozen by the plugin ABI
+        // gate (PluginAbiCompatibilityTest) and duplicate ids are rejected by
+        // PacketNamesContractTest, so the legacy names stay canonical. The
+        // handler class names document what each header actually is.
+        this.registerHandler(
+                Incoming.UNKNOWN_SNOWSTORM_6000, // load stage ready
+                com.eu.habbo.messages.incoming.snowwar.SnowStormLoadStageReadyEvent.class);
+        this.registerHandler(
+                Incoming.UNKNOWN_SNOWSTORM_6001, // exit game
+                com.eu.habbo.messages.incoming.snowwar.SnowStormExitGameEvent.class);
+        this.registerHandler(
+                Incoming.UNKNOWN_SNOWSTORM_6010, // open arena editor (6002 is taken by ClickFurniEvent)
+                com.eu.habbo.messages.incoming.snowwar.SnowStormEditRoomEvent.class);
+        this.registerHandler(
+                Incoming.UNKNOWN_SNOWSTORM_6003, // walk
+                com.eu.habbo.messages.incoming.snowwar.SnowStormWalkEvent.class);
+        this.registerHandler(
+                Incoming.UNKNOWN_SNOWSTORM_6004, // throw at location
+                com.eu.habbo.messages.incoming.snowwar.SnowStormThrowAtLocationEvent.class);
+        this.registerHandler(
+                Incoming.UNKNOWN_SNOWSTORM_6005, // throw at player
+                com.eu.habbo.messages.incoming.snowwar.SnowStormThrowAtPlayerEvent.class);
+        this.registerHandler(
+                Incoming.UNKNOWN_SNOWSTORM_6006, // create snowball
+                com.eu.habbo.messages.incoming.snowwar.SnowStormCreateSnowballEvent.class);
+        this.registerHandler(
+                Incoming.UNKNOWN_SNOWSTORM_6007, // request full game status
+                com.eu.habbo.messages.incoming.snowwar.SnowStormRequestFullGameStatusEvent.class);
+        this.registerHandler(
+                Incoming.UNKNOWN_SNOWSTORM_6008, // play again
+                com.eu.habbo.messages.incoming.snowwar.SnowStormPlayAgainEvent.class);
+        this.registerHandler(
+                Incoming.UNKNOWN_SNOWSTORM_6009, // game chat
+                com.eu.habbo.messages.incoming.snowwar.SnowStormGameChatEvent.class);
+        this.registerHandler(
+                Incoming.SnowStormJoinQueueEvent, com.eu.habbo.messages.incoming.snowwar.SnowStormJoinQueueEvent.class);
+        this.registerHandler(
+                Incoming.UNKNOWN_SNOWSTORM_6013, // leave queue
+                com.eu.habbo.messages.incoming.snowwar.SnowStormLeaveQueueEvent.class);
+        this.registerHandler(
+                Incoming.UNKNOWN_SNOWSTORM_6011, // save in-game arena editor layout
+                com.eu.habbo.messages.incoming.snowwar.SnowStormSaveEditorEvent.class);
+        this.registerHandler(
+                Incoming.UNKNOWN_SNOWSTORM_6014, // close arena editor (release matchmaking lock)
+                com.eu.habbo.messages.incoming.snowwar.SnowStormExitEditorEvent.class);
+        this.registerHandler(
+                Incoming.UNKNOWN_SNOWSTORM_6015, // lobby leader selects the next arena
+                com.eu.habbo.messages.incoming.snowwar.SnowStormSelectArenaEvent.class);
+        this.registerHandler(
+                Incoming.SnowStormGetAllTimeLeaderboardEvent,
+                com.eu.habbo.messages.incoming.snowwar.SnowStormGetAllTimeLeaderboardEvent.class);
+        this.registerHandler(
+                Incoming.SnowStormGetAllTimeFriendsLeaderboardEvent,
+                com.eu.habbo.messages.incoming.snowwar.SnowStormGetAllTimeFriendsLeaderboardEvent.class);
+        this.registerHandler(
+                Incoming.SnowStormGetWeeklyLeaderboardEvent,
+                com.eu.habbo.messages.incoming.snowwar.SnowStormGetWeeklyLeaderboardEvent.class);
+        this.registerHandler(
+                Incoming.SnowStormGetWeeklyFriendsLeaderboardEvent,
+                com.eu.habbo.messages.incoming.snowwar.SnowStormGetWeeklyFriendsLeaderboardEvent.class);
+        this.registerHandler(
+                Incoming.SnowStormGetTotalGroupLeaderboardEvent,
+                com.eu.habbo.messages.incoming.snowwar.SnowStormGetTotalGroupLeaderboardEvent.class);
+        this.registerHandler(
+                Incoming.SnowStormGetWeeklyGroupLeaderboardEvent,
+                com.eu.habbo.messages.incoming.snowwar.SnowStormGetWeeklyGroupLeaderboardEvent.class);
     }
 
     void registerGameCenter() throws Exception {
         this.registerHandler(Incoming.GameCenterRequestGamesEvent, GameCenterRequestGamesEvent.class);
         this.registerHandler(Incoming.GameCenterRequestAccountStatusEvent, GameCenterRequestAccountStatusEvent.class);
+        this.registerHandler(Incoming.GetSnowWarGameTokensOfferEvent, GetSnowWarGameTokensOfferEvent.class);
+        this.registerHandler(Incoming.PurchaseSnowWarGameTokensOfferEvent, PurchaseSnowWarGameTokensOfferEvent.class);
         this.registerHandler(Incoming.GameCenterJoinGameEvent, GameCenterJoinGameEvent.class);
         this.registerHandler(Incoming.GameCenterLoadGameEvent, GameCenterLoadGameEvent.class);
         this.registerHandler(Incoming.GameCenterLeaveGameEvent, GameCenterLeaveGameEvent.class);
+        this.registerHandler(Incoming.GameCenterCheckDirectoryStatusEvent, GameCenterCheckDirectoryStatusEvent.class);
         this.registerHandler(Incoming.GameCenterEvent, GameCenterEvent.class);
         this.registerHandler(Incoming.GameCenterRequestGameStatusEvent, GameCenterRequestGameStatusEvent.class);
 
@@ -1234,10 +1693,38 @@ public class PacketManager {
         this.registerHandler(
                 Incoming.HousekeepingListActionLogEvent,
                 com.eu.habbo.messages.incoming.housekeeping.HousekeepingListActionLogEvent.class);
+        this.registerHandler(
+                Incoming.HousekeepingSaveRoomSettingsEvent,
+                com.eu.habbo.messages.incoming.housekeeping.HousekeepingSaveRoomSettingsEvent.class);
+        this.registerHandler(
+                Incoming.HousekeepingRequestListEvent,
+                com.eu.habbo.messages.incoming.housekeeping.HousekeepingRequestListEvent.class);
+        this.registerHandler(
+                Incoming.HousekeepingReloadEvent,
+                com.eu.habbo.messages.incoming.housekeeping.HousekeepingReloadEvent.class);
+        this.registerHandler(
+                Incoming.HousekeepingRevokeBanEvent,
+                com.eu.habbo.messages.incoming.housekeeping.HousekeepingRevokeBanEvent.class);
+        this.registerHandler(
+                Incoming.HousekeepingMaintenanceEvent,
+                com.eu.habbo.messages.incoming.housekeeping.HousekeepingMaintenanceEvent.class);
+        this.registerHandler(
+                Incoming.HousekeepingWordFilterEvent,
+                com.eu.habbo.messages.incoming.housekeeping.HousekeepingWordFilterEvent.class);
+        this.registerHandler(
+                Incoming.HousekeepingSetPermissionEvent,
+                com.eu.habbo.messages.incoming.housekeeping.HousekeepingSetPermissionEvent.class);
+        this.registerHandler(
+                Incoming.HousekeepingUserNoteEvent,
+                com.eu.habbo.messages.incoming.housekeeping.HousekeepingUserNoteEvent.class);
+        this.registerHandler(
+                Incoming.HousekeepingLockdownEvent,
+                com.eu.habbo.messages.incoming.housekeeping.HousekeepingLockdownEvent.class);
 
         this.registerHandler(
                 Incoming.RequestRareValuesEvent,
                 com.eu.habbo.messages.incoming.rarevalues.RequestRareValuesEvent.class);
+        this.registerHandler(Incoming.GetHotLooksEvent, com.eu.habbo.messages.incoming.hotlooks.GetHotLooksEvent.class);
 
         this.registerHandler(Incoming.WheelOpenEvent, com.eu.habbo.messages.incoming.wheel.WheelOpenEvent.class);
         this.registerHandler(Incoming.WheelSpinEvent, com.eu.habbo.messages.incoming.wheel.WheelSpinEvent.class);
@@ -1253,6 +1740,21 @@ public class PacketManager {
         this.registerHandler(
                 Incoming.SoundboardSetEnabledEvent,
                 com.eu.habbo.messages.incoming.soundboard.SoundboardSetEnabledEvent.class);
+        this.registerHandler(
+                Incoming.SoundboardSaveVolumeEvent,
+                com.eu.habbo.messages.incoming.soundboard.SoundboardSaveVolumeEvent.class);
+        this.registerHandler(
+                Incoming.SoundboardRequestSettingsEvent,
+                com.eu.habbo.messages.incoming.soundboard.SoundboardRequestSettingsEvent.class);
+        this.registerHandler(
+                Incoming.SoundboardCatalogRequestEvent,
+                com.eu.habbo.messages.incoming.soundboard.SoundboardCatalogRequestEvent.class);
+        this.registerHandler(
+                Incoming.SoundboardCatalogUpsertEvent,
+                com.eu.habbo.messages.incoming.soundboard.SoundboardCatalogUpsertEvent.class);
+        this.registerHandler(
+                Incoming.SoundboardCatalogReorderEvent,
+                com.eu.habbo.messages.incoming.soundboard.SoundboardCatalogReorderEvent.class);
 
         this.registerHandler(
                 Incoming.TraxEditorRequestSongsEvent,
@@ -1272,5 +1774,28 @@ public class PacketManager {
         this.registerHandler(Incoming.RequestEarningsCenterEvent, RequestEarningsCenterEvent.class);
         this.registerHandler(Incoming.ClaimEarningsRewardEvent, ClaimEarningsRewardEvent.class);
         this.registerHandler(Incoming.ClaimAllEarningsRewardsEvent, ClaimAllEarningsRewardsEvent.class);
+
+        this.registerHandler(Incoming.GetQuestsEvent, GetQuestsEvent.class);
+        this.registerHandler(Incoming.GetSeasonalQuestsOnlyEvent, GetSeasonalQuestsOnlyEvent.class);
+        this.registerHandler(Incoming.GetSeasonalCalendarDailyOfferEvent, GetSeasonalCalendarDailyOfferEvent.class);
+        this.registerHandler(Incoming.AcceptQuestEvent, AcceptQuestEvent.class);
+        this.registerHandler(Incoming.ActivateQuestEvent, ActivateQuestEvent.class);
+        this.registerHandler(Incoming.RejectQuestEvent, RejectQuestEvent.class);
+        this.registerHandler(Incoming.CancelDailyQuestEvent, CancelDailyQuestEvent.class);
+        this.registerHandler(Incoming.GetDailyQuestEvent, GetDailyQuestEvent.class);
+        this.registerHandler(Incoming.OpenQuestTrackerEvent, OpenQuestTrackerEvent.class);
+        this.registerHandler(Incoming.StartCampaignEvent, StartCampaignEvent.class);
+        this.registerHandler(Incoming.GetDailyTasksEvent, GetDailyTasksEvent.class);
+        this.registerHandler(Incoming.ClaimDailyTaskEvent, ClaimDailyTaskEvent.class);
+        this.registerHandler(Incoming.GetRewardTracksEvent, GetRewardTracksEvent.class);
+        this.registerHandler(Incoming.ClaimRewardTrackPrizeEvent, ClaimRewardTrackPrizeEvent.class);
+        this.registerHandler(Incoming.PurchaseRewardTrackPremiumEvent, PurchaseRewardTrackPremiumEvent.class);
+        this.registerHandler(Incoming.GetRewardTrackAdminDataEvent, GetRewardTrackAdminDataEvent.class);
+        this.registerHandler(Incoming.SaveRewardTrackEvent, SaveRewardTrackEvent.class);
+        this.registerHandler(Incoming.SaveRewardTrackTaskEvent, SaveRewardTrackTaskEvent.class);
+        this.registerHandler(Incoming.SaveRewardTrackPrizeEvent, SaveRewardTrackPrizeEvent.class);
+        this.registerHandler(Incoming.DeleteRewardTrackEntityEvent, DeleteRewardTrackEntityEvent.class);
+        this.registerHandler(Incoming.SearchRewardTrackFurniEvent, SearchRewardTrackFurniEvent.class);
+        this.registerHandler(Incoming.SaveRewardTrackTextsEvent, SaveRewardTrackTextsEvent.class);
     }
 }

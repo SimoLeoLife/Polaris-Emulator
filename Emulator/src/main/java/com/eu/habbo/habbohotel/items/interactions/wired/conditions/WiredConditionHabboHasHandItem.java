@@ -6,16 +6,17 @@ import com.eu.habbo.habbohotel.items.interactions.wired.WiredSettings;
 import com.eu.habbo.habbohotel.rooms.Room;
 import com.eu.habbo.habbohotel.rooms.RoomUnit;
 import com.eu.habbo.habbohotel.wired.WiredConditionType;
-import com.eu.habbo.habbohotel.wired.core.WiredManager;
 import com.eu.habbo.habbohotel.wired.core.WiredContext;
+import com.eu.habbo.habbohotel.wired.core.WiredManager;
+import com.eu.habbo.habbohotel.wired.core.WiredQuantifier;
 import com.eu.habbo.habbohotel.wired.core.WiredSourceUtil;
+import com.eu.habbo.habbohotel.wired.protocol.WiredOfficialQuantifier;
 import com.eu.habbo.messages.ServerMessage;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.List;
 
-public class WiredConditionHabboHasHandItem extends InteractionWiredCondition {
+public class WiredConditionHabboHasHandItem extends InteractionWiredCondition implements WiredOfficialQuantifier {
     protected static final int QUANTIFIER_ALL = 0;
     protected static final int QUANTIFIER_ANY = 1;
     protected static final int MAX_HAND_ITEM_ID = 10_000;
@@ -30,7 +31,8 @@ public class WiredConditionHabboHasHandItem extends InteractionWiredCondition {
         super(set, baseItem);
     }
 
-    public WiredConditionHabboHasHandItem(int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
+    public WiredConditionHabboHasHandItem(
+            int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
         super(id, userId, item, extradata, limitedStack, limitedSells);
     }
 
@@ -47,10 +49,8 @@ public class WiredConditionHabboHasHandItem extends InteractionWiredCondition {
         message.appendInt(this.getBaseItem().getSpriteId());
         message.appendInt(this.getId());
         message.appendString("");
-        message.appendInt(3);
+        message.appendInt(1);
         message.appendInt(this.handItem);
-        message.appendInt(this.userSource);
-        message.appendInt(this.quantifier);
         message.appendInt(0);
         message.appendInt(this.getType().code);
         message.appendInt(0);
@@ -59,11 +59,13 @@ public class WiredConditionHabboHasHandItem extends InteractionWiredCondition {
 
     @Override
     public boolean saveData(WiredSettings settings) {
-        if(settings.getIntParams().length < 1) return false;
+        if (settings.getIntParams().length < 1) return false;
         this.handItem = WiredUserConditionInputGuard.normalizeHandItemId(settings.getIntParams()[0]);
-        int[] params = settings.getIntParams();
-        this.userSource = (params.length > 1) ? WiredUserConditionInputGuard.normalizeUserSource(params[1]) : WiredSourceUtil.SOURCE_TRIGGER;
-        this.quantifier = (params.length > 2) ? this.normalizeQuantifier(params[2]) : QUANTIFIER_ALL;
+        // Official layout: [hand item (0 any)], the users in the official source slot, the quantifier in its slot.
+        this.userSource = settings.getUserSourceTypes().length > 0
+                ? WiredUserConditionInputGuard.normalizeUserSource(settings.getUserSourceTypes()[0])
+                : WiredSourceUtil.SOURCE_TRIGGER;
+        this.quantifier = this.normalizeQuantifier(settings.getQuantifierCode());
 
         return true;
     }
@@ -71,7 +73,7 @@ public class WiredConditionHabboHasHandItem extends InteractionWiredCondition {
     @Override
     public boolean evaluate(WiredContext ctx) {
         List<RoomUnit> targets = WiredSourceUtil.resolveUsers(ctx, this.userSource);
-        if (targets.isEmpty()) return false;
+        if (targets.isEmpty()) return WiredQuantifier.overEmpty(this.quantifier != QUANTIFIER_ANY);
 
         if (this.quantifier == QUANTIFIER_ANY) {
             return this.matchesAnyTarget(targets);
@@ -88,11 +90,7 @@ public class WiredConditionHabboHasHandItem extends InteractionWiredCondition {
 
     @Override
     public String getWiredData() {
-        return WiredManager.getGson().toJson(new JsonData(
-                this.handItem,
-                this.userSource,
-                this.quantifier
-        ));
+        return WiredManager.getGson().toJson(new JsonData(this.handItem, this.userSource, this.quantifier));
     }
 
     @Override
@@ -150,7 +148,7 @@ public class WiredConditionHabboHasHandItem extends InteractionWiredCondition {
 
     protected boolean matchesAnyTarget(List<RoomUnit> targets) {
         for (RoomUnit roomUnit : targets) {
-            if (roomUnit != null && roomUnit.getHandItem() == this.handItem) {
+            if (this.matchesHandItem(roomUnit)) {
                 return true;
             }
         }
@@ -160,12 +158,18 @@ public class WiredConditionHabboHasHandItem extends InteractionWiredCondition {
 
     protected boolean matchesAllTargets(List<RoomUnit> targets) {
         for (RoomUnit roomUnit : targets) {
-            if (roomUnit == null || roomUnit.getHandItem() != this.handItem) {
+            if (!this.matchesHandItem(roomUnit)) {
                 return false;
             }
         }
 
         return true;
+    }
+
+    /** Hand item 0 is "any hand item", as officially. */
+    protected boolean matchesHandItem(RoomUnit roomUnit) {
+        return roomUnit != null
+                && (this.handItem == 0 ? roomUnit.getHandItem() != 0 : roomUnit.getHandItem() == this.handItem);
     }
 
     protected int normalizeQuantifier(int value) {
@@ -186,5 +190,10 @@ public class WiredConditionHabboHasHandItem extends InteractionWiredCondition {
             this.userSource = userSource;
             this.quantifier = quantifier;
         }
+    }
+
+    @Override
+    public int officialQuantifierCode() {
+        return this.getQuantifier();
     }
 }

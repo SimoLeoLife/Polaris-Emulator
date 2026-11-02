@@ -4,14 +4,15 @@ import com.eu.habbo.habbohotel.items.Item;
 import com.eu.habbo.habbohotel.rooms.Room;
 import com.eu.habbo.habbohotel.rooms.RoomUnit;
 import com.eu.habbo.habbohotel.users.Habbo;
-
+import com.eu.habbo.habbohotel.wired.WiredConditionType;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 
 /**
  * Passes when the resolved user has rights in the current room (owner, group rights, or explicitly
- * granted). Reuses the {@link WiredConditionHabboWearsBadge} dialog and serialization (badge-code text
- * field unused), so it needs no new client dialog.
+ * granted). It keeps {@link WiredConditionHabboWearsBadge}'s serialization — the user source and the
+ * quantifier are the settings it needs — but answers {@link WiredConditionType#USER_ATTRIBUTE} so the
+ * client opens the dialog without the badge-code field.
  */
 public class WiredConditionHabboHasRights extends WiredConditionHabboWearsBadge {
 
@@ -19,7 +20,8 @@ public class WiredConditionHabboHasRights extends WiredConditionHabboWearsBadge 
         super(set, baseItem);
     }
 
-    public WiredConditionHabboHasRights(int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
+    public WiredConditionHabboHasRights(
+            int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
         super(id, userId, item, extradata, limitedStack, limitedSells);
     }
 
@@ -27,5 +29,10 @@ public class WiredConditionHabboHasRights extends WiredConditionHabboWearsBadge 
     protected boolean matchesBadge(Room room, RoomUnit roomUnit) {
         Habbo habbo = room.getHabbo(roomUnit);
         return habbo != null && room.hasRights(habbo);
+    }
+
+    @Override
+    public WiredConditionType getType() {
+        return WiredConditionType.USER_ATTRIBUTE;
     }
 }

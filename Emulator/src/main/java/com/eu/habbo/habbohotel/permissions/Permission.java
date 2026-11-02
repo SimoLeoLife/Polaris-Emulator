@@ -1,7 +1,8 @@
 package com.eu.habbo.habbohotel.permissions;
 
 public class Permission {
-    public static String ACC_ANYCHATCOLOR = "acc_anychatcolor"; // allows them to pick and choose any color from the chat bubbles.
+    public static String ACC_ANYCHATCOLOR =
+            "acc_anychatcolor"; // allows them to pick and choose any color from the chat bubbles.
     public static String ACC_ANYROOMOWNER = "acc_anyroomowner";
     public static String ACC_EMPTY_OTHERS = "acc_empty_others";
     public static String ACC_ENABLE_OTHERS = "acc_enable_others";
@@ -30,6 +31,8 @@ public class Permission {
     public static String ACC_CHAT_NO_LIMIT = "acc_chat_no_limit";
     public static String ACC_CHAT_NO_FILTER = "acc_chat_no_filter";
     public static String ACC_NOMUTE = "acc_nomute";
+    public static final String ACC_UNLOAD_ANY_ROOM = "acc_unload_any_room";
+    public static final String ACC_HOTELVIEW_EDIT = "acc_hotelview_edit";
     public static String ACC_GUILD_ADMIN = "acc_guild_admin";
     public static String ACC_CATALOG_IDS = "acc_catalog_ids";
     public static String ACC_CATALOGFURNI = "acc_catalogfurni";
@@ -46,8 +49,10 @@ public class Permission {
     public static String ACC_HELPER_JUDGE_CHAT_REVIEWS = "acc_helper_judge_chat_reviews";
     public static String ACC_FLOORPLAN_EDITOR = "acc_floorplan_editor";
     public static String ACC_UNIGNORABLE = "acc_unignorable";
+    public static final String ACC_REWARDTRACK = "acc_rewardtrack";
     public final String key;
     public final PermissionSetting setting;
+
     public Permission(String key, PermissionSetting setting) {
         this.key = key;
         this.setting = setting;

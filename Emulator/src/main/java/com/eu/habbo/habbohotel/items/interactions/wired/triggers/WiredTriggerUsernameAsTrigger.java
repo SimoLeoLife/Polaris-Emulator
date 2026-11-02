@@ -5,8 +5,8 @@ import com.eu.habbo.habbohotel.rooms.Room;
 import com.eu.habbo.habbohotel.rooms.RoomUnit;
 import com.eu.habbo.habbohotel.users.Habbo;
 import com.eu.habbo.habbohotel.users.HabboItem;
+import com.eu.habbo.habbohotel.wired.WiredTriggerType;
 import com.eu.habbo.habbohotel.wired.core.WiredEvent;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 
@@ -19,9 +19,10 @@ import java.sql.SQLException;
  * username rather than from an owner-supplied string.
  * </p>
  * <p>
- * It extends {@link WiredTriggerHabboSaysKeyword} so it reuses the existing
- * {@code SAY_SOMETHING} (code 0) client dialog, serialization and persistence. Only {@link #matches}
- * is overridden to compare the chat text against the actor's username; the owner-only gate is
+ * It extends {@link WiredTriggerHabboSaysKeyword} for its serialization and persistence, but reports
+ * its own {@link WiredTriggerType#USERNAME_AS_TRIGGER} so the client draws a dialog without the
+ * keyword and match-mode controls this box never reads, and listens on its own event. Only
+ * {@link #matches} compares the chat text against the actor's username; the owner-only gate is
  * inherited via {@link #isOwnerOnly()}.
  * </p>
  */
@@ -31,8 +32,14 @@ public class WiredTriggerUsernameAsTrigger extends WiredTriggerHabboSaysKeyword 
         super(set, baseItem);
     }
 
-    public WiredTriggerUsernameAsTrigger(int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
+    public WiredTriggerUsernameAsTrigger(
+            int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
         super(id, userId, item, extradata, limitedStack, limitedSells);
+    }
+
+    @Override
+    public WiredTriggerType getType() {
+        return WiredTriggerType.USERNAME_AS_TRIGGER;
     }
 
     @Override

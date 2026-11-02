@@ -1,10 +1,12 @@
 package com.eu.habbo.habbohotel.rooms;
 
+import com.eu.habbo.threading.ThreadPooling;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 final class RoomPersistence {
 
@@ -23,11 +25,41 @@ final class RoomPersistence {
             + "move_diagonally = ?, owner_id = ?, owner_name = ?, "
             + "jukebox_active = ?, hidewired = ?, allow_underpass = ?, "
             + "youtube_enabled = ?, builders_club_trial_locked = ?, "
-            + "builders_club_original_state = ? WHERE id = ?";
+            + "builders_club_original_state = ?, mute_all_pets = ?, "
+            + "leave_on_door_tile = ?, idle_sleep_enabled = ?, "
+            + "idle_sleep_timeout_seconds = ?, idle_autokick_enabled = ?, "
+            + "idle_autokick_timeout_seconds = ? WHERE id = ?";
     private final RoomDependencies.ConnectionProvider database;
+    private final AtomicBoolean savePending = new AtomicBoolean();
 
     RoomPersistence(RoomDependencies.ConnectionProvider database) {
         this.database = Objects.requireNonNull(database, "database");
+    }
+
+    /**
+     * Runs the room's save on the persistence executor, so a slow database does not stall the room
+     * cycle. At most one save waits at a time; a rejected task saves right away.
+     */
+    void saveLater(ThreadPooling threading, Runnable save) {
+        if (threading == null) {
+            save.run();
+            return;
+        }
+        if (!this.savePending.compareAndSet(false, true)) {
+            return;
+        }
+        try {
+            threading.runPersistence(() -> {
+                try {
+                    save.run();
+                } finally {
+                    this.savePending.set(false);
+                }
+            });
+        } catch (RuntimeException rejected) {
+            this.savePending.set(false);
+            save.run();
+        }
     }
 
     void save(State state) throws SQLException {
@@ -80,7 +112,13 @@ final class RoomPersistence {
                     Objects.requireNonNullElse(state.buildersClubOriginalState(), RoomState.OPEN)
                             .name()
                             .toLowerCase());
-            statement.setInt(44, state.id());
+            statement.setString(44, databaseBoolean(state.muteAllPets()));
+            statement.setString(45, databaseBoolean(state.leaveOnDoorTileEnabled()));
+            statement.setString(46, databaseBoolean(state.idleSleepEnabled()));
+            statement.setInt(47, state.idleSleepTimeoutSeconds());
+            statement.setString(48, databaseBoolean(state.idleAutokickEnabled()));
+            statement.setInt(49, state.idleAutokickTimeoutSeconds());
+            statement.setInt(50, state.id());
             statement.executeUpdate();
         }
     }
@@ -146,7 +184,13 @@ final class RoomPersistence {
             boolean allowUnderpass,
             boolean youtubeEnabled,
             boolean buildersClubTrialLocked,
-            RoomState buildersClubOriginalState) {
+            RoomState buildersClubOriginalState,
+            boolean muteAllPets,
+            boolean leaveOnDoorTileEnabled,
+            boolean idleSleepEnabled,
+            int idleSleepTimeoutSeconds,
+            boolean idleAutokickEnabled,
+            int idleAutokickTimeoutSeconds) {
 
         State {
             moodlightData = List.copyOf(moodlightData);

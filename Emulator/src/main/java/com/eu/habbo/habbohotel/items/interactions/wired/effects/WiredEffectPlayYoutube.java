@@ -4,6 +4,7 @@ import com.eu.habbo.Emulator;
 import com.eu.habbo.habbohotel.gameclients.GameClient;
 import com.eu.habbo.habbohotel.items.Item;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredEffect;
+import com.eu.habbo.habbohotel.items.interactions.wired.WiredInputGuard;
 import com.eu.habbo.habbohotel.items.interactions.wired.WiredSettings;
 import com.eu.habbo.habbohotel.rooms.Room;
 import com.eu.habbo.habbohotel.rooms.RoomUnit;
@@ -13,7 +14,6 @@ import com.eu.habbo.habbohotel.wired.core.WiredManager;
 import com.eu.habbo.messages.ServerMessage;
 import com.eu.habbo.messages.incoming.wired.WiredSaveException;
 import com.eu.habbo.messages.outgoing.rooms.youtube.YouTubeRoomBroadcastComposer;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.Collections;
@@ -69,7 +69,8 @@ public class WiredEffectPlayYoutube extends InteractionWiredEffect {
         // Wired has no triggering "DJ" user — attribute the broadcast to the room owner.
         String senderName = room.getOwnerName() == null ? "" : room.getOwnerName();
         room.setYoutubeVideo(this.videoId, senderName, Collections.emptyList());
-        room.sendComposer(new YouTubeRoomBroadcastComposer(this.videoId, senderName, Collections.emptyList()).compose());
+        room.sendComposer(
+                new YouTubeRoomBroadcastComposer(this.videoId, senderName, Collections.emptyList()).compose());
     }
 
     @Deprecated
@@ -104,7 +105,7 @@ public class WiredEffectPlayYoutube extends InteractionWiredEffect {
         this.videoId = id.substring(0, Math.min(id.length(), MAX_VIDEO_ID_LENGTH));
 
         int delay = settings.getDelay();
-        if (delay > Emulator.getConfig().getInt("hotel.wired.max_delay", 20)) {
+        if (delay > Emulator.getConfig().getInt("hotel.wired.max_delay", WiredInputGuard.DEFAULT_MAX_DELAY)) {
             throw new WiredSaveException("Delay too long");
         }
 

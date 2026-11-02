@@ -6,8 +6,7 @@ import com.eu.habbo.habbohotel.wired.core.WiredSourceUtil;
 final class WiredEffectPayloadGuard {
     static final int MAX_LOAD_DELAY = 3600;
 
-    private WiredEffectPayloadGuard() {
-    }
+    private WiredEffectPayloadGuard() {}
 
     static int delay(int value) {
         if (value < 0) {
@@ -60,7 +59,9 @@ final class WiredEffectPayloadGuard {
 
         try {
             return WiredManager.getGson().fromJson(wiredData, type);
-        } catch (RuntimeException e) {
+        } catch (Exception e) {
+            // A truncated document reaches here as EOFException, which is checked and so slipped
+            // straight through a RuntimeException-only catch and failed the whole furni load.
             return null;
         }
     }

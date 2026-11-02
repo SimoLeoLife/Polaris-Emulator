@@ -3,6 +3,7 @@ package com.eu.habbo.messages.incoming.modtool;
 import com.eu.habbo.Emulator;
 import com.eu.habbo.habbohotel.modtool.ModToolChatLog;
 import com.eu.habbo.habbohotel.modtool.ModToolIssue;
+import com.eu.habbo.habbohotel.modtool.ModToolManager;
 import com.eu.habbo.habbohotel.modtool.ModToolTicketType;
 import com.eu.habbo.habbohotel.users.Habbo;
 import com.eu.habbo.habbohotel.users.HabboInfo;
@@ -10,12 +11,19 @@ import com.eu.habbo.habbohotel.users.HabboManager;
 import com.eu.habbo.messages.incoming.MessageHandler;
 import com.eu.habbo.messages.outgoing.modtool.HelperRequestDisabledComposer;
 import com.eu.habbo.threading.runnables.InsertModToolIssue;
-
 import java.util.ArrayList;
 
 public class ReportFriendPrivateChatEvent extends MessageHandler {
     @Override
+    public int getRatelimit() {
+        return ModToolReportGate.RATE_LIMIT_MS;
+    }
+
+    @Override
     public void handle() throws Exception {
+        ModToolManager modTools = Emulator.getGameEnvironment().getModToolManager();
+        if (ModToolReportGate.refuse(this.client, modTools)) return;
+
         if (!this.client.getHabbo().getHabboStats().allowTalk()) {
             this.client.sendResponse(new HelperRequestDisabledComposer());
             return;
@@ -27,11 +35,11 @@ public class ReportFriendPrivateChatEvent extends MessageHandler {
         int count = this.packet.readInt();
         ArrayList<ModToolChatLog> chatLogs = new ArrayList<>();
 
-        if (!ModToolReportInputGuard.isValidReportMessage(message) ||
-                category <= 0 ||
-                !ModToolReportInputGuard.isPositiveId(userId) ||
-                userId == this.client.getHabbo().getHabboInfo().getId() ||
-                !ModToolReportInputGuard.isValidPrivateChatLogCount(count)) {
+        if (!ModToolReportInputGuard.isValidReportMessage(message)
+                || category <= 0
+                || !ModToolReportInputGuard.isPositiveId(userId)
+                || userId == this.client.getHabbo().getHabboInfo().getId()
+                || !ModToolReportInputGuard.isValidPrivateChatLogCount(count)) {
             return;
         }
 
@@ -62,11 +70,33 @@ public class ReportFriendPrivateChatEvent extends MessageHandler {
             chatLogs.add(new ModToolChatLog(0, chatUserId, username, chatMessage));
         }
 
-        ModToolIssue issue = new ModToolIssue(this.client.getHabbo().getHabboInfo().getId(), this.client.getHabbo().getHabboInfo().getUsername(), userId, info.getUsername(), 0, message, ModToolTicketType.IM);
+        // Official class_2390 and friends end with the unlawful-activity reporter name and
+        // e-mail; older clients stop before them, so they are read only while bytes remain.
+        String reporterName = "";
+        String reporterEmail = "";
+
+        if (this.packet.bytesAvailable() > 0) {
+            reporterName = this.packet.readString();
+        }
+
+        if (this.packet.bytesAvailable() > 0) {
+            reporterEmail = this.packet.readString();
+        }
+
+        message = ModToolReportInputGuard.withReporterContact(message, reporterName, reporterEmail);
+
+        ModToolIssue issue = new ModToolIssue(
+                this.client.getHabbo().getHabboInfo().getId(),
+                this.client.getHabbo().getHabboInfo().getUsername(),
+                userId,
+                info.getUsername(),
+                0,
+                message,
+                ModToolTicketType.IM);
         issue.category = category;
         issue.chatLogs = chatLogs;
         new InsertModToolIssue(issue).run();
-        Emulator.getGameEnvironment().getModToolManager().addTicket(issue);
-        Emulator.getGameEnvironment().getModToolManager().updateTicketToMods(issue);
+        modTools.addTicket(issue);
+        modTools.updateTicketToMods(issue);
     }
 }

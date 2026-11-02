@@ -8,30 +8,57 @@ import io.netty.channel.ChannelDuplexHandler;
 import io.netty.channel.ChannelFutureListener;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelPromise;
-import io.netty.handler.codec.http.*;
+import io.netty.handler.codec.http.DefaultFullHttpResponse;
+import io.netty.handler.codec.http.FullHttpRequest;
+import io.netty.handler.codec.http.FullHttpResponse;
+import io.netty.handler.codec.http.HttpHeaderNames;
+import io.netty.handler.codec.http.HttpHeaderValues;
+import io.netty.handler.codec.http.HttpMethod;
+import io.netty.handler.codec.http.HttpResponseStatus;
+import io.netty.handler.codec.http.HttpVersion;
+import io.netty.handler.codec.http.QueryStringDecoder;
 import io.netty.util.AttributeKey;
 import io.netty.util.ReferenceCountUtil;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.Objects;
-import java.util.concurrent.ConcurrentHashMap;
+import javax.crypto.SecretKey;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class NitroSecureApiHandler extends ChannelDuplexHandler {
     private static final Logger LOGGER = LoggerFactory.getLogger(NitroSecureApiHandler.class);
     private static final String ENABLED_CONFIG = "nitro.secure.api.enabled";
     private static final String MAX_PAYLOAD_CONFIG = "nitro.secure.api.max_payload_bytes";
+    private static final String REQUIRED_CONFIG = "nitro.secure.api.required";
     private static final String API_PREFIX = "/api/";
+    private static final String PUBLIC_API_PREFIX = "/api/public/";
+    // What the Octane client always sends encrypted. The endpoints other callers use in
+    // the clear (CMS, health, maintenance, stats, the public wired API) are not listed.
+    private static final String[] CLIENT_API_ROOTS = {"/api/auth", "/api/badges"};
     private static final int DEFAULT_MAX_PAYLOAD_BYTES = 64 * 1024;
+    // Secure API requests per client bucket and minute: every client HTTP call goes through here, so the share is wide.
+    static final String RATE_LIMIT_CONFIG = "nitro.secure.api.requests_per_minute";
+    private static final int DEFAULT_RATE_LIMIT_PER_MINUTE = 600;
     private static final AttributeKey<Deque<SecureApiContext>> SECURE_CONTEXTS =
             AttributeKey.valueOf("nitroSecureApiContexts");
-    private static final ConcurrentHashMap<String, Long> NONCE_CACHE = new ConcurrentHashMap<>();
     private static final long MAX_REQUEST_SKEW_MS = 90_000L;
     private static final long NONCE_TTL_MS = 2 * 60 * 1000L;
+    // A replay cache fed by unauthenticated requests is a memory target: an
+    // unbounded map of free-length nonces is heap an attacker controls, and the
+    // full scan it needed on every request was I/O they controlled too. Caffeine
+    // bounds both, evicting by size and by the TTL the replay window needs.
+    private static final int MAX_NONCE_ENTRIES = 100_000;
+    private static final int MIN_NONCE_LENGTH = 16;
+    private static final int MAX_NONCE_LENGTH = 128;
+    private static final java.util.regex.Pattern NONCE_RE =
+            java.util.regex.Pattern.compile("^[A-Za-z0-9+/=_.:-]{" + MIN_NONCE_LENGTH + "," + MAX_NONCE_LENGTH + "}$");
+    private static final com.github.benmanes.caffeine.cache.Cache<String, Boolean> NONCE_CACHE =
+            com.github.benmanes.caffeine.cache.Caffeine.newBuilder()
+                    .maximumSize(MAX_NONCE_ENTRIES)
+                    .expireAfterWrite(java.time.Duration.ofMillis(NONCE_TTL_MS))
+                    .build();
 
     @Override
     public void channelRead(ChannelHandlerContext ctx, Object msg) throws Exception {
@@ -47,7 +74,7 @@ public class NitroSecureApiHandler extends ChannelDuplexHandler {
             return;
         }
 
-        if (!path.startsWith(API_PREFIX)) {
+        if (!path.startsWith(API_PREFIX) || path.startsWith(PUBLIC_API_PREFIX)) {
             super.channelRead(ctx, msg);
             return;
         }
@@ -59,7 +86,22 @@ public class NitroSecureApiHandler extends ChannelDuplexHandler {
         }
 
         if (!isSecureRequest(req)) {
+            if (secureApiRequired() && isClientApiPath(path)) {
+                sendText(ctx, req, HttpResponseStatus.FORBIDDEN, "Secure API required.");
+                ReferenceCountUtil.release(req);
+                return;
+            }
             super.channelRead(ctx, msg);
+            return;
+        }
+
+        // The key exchange below runs for every request: a client over its share is refused before it.
+        if (!NitroSecureRequestLimiter.tryAcquire(
+                "api",
+                AuthHttpUtil.resolveClientIp(ctx, req),
+                configInt(RATE_LIMIT_CONFIG, DEFAULT_RATE_LIMIT_PER_MINUTE))) {
+            sendText(ctx, req, HttpResponseStatus.TOO_MANY_REQUESTS, "Too many requests.");
+            ReferenceCountUtil.release(req);
             return;
         }
 
@@ -67,15 +109,22 @@ public class NitroSecureApiHandler extends ChannelDuplexHandler {
             String clientKey = req.headers().get("X-Nitro-Key");
             if (clientKey == null || clientKey.isBlank()) {
                 sendText(ctx, req, HttpResponseStatus.UNAUTHORIZED, "Missing key.");
+                ReferenceCountUtil.release(req);
                 return;
             }
 
-            SecretKey sessionKey = NitroSecureAssetHandler.deriveSessionKey(java.util.Base64.getDecoder().decode(clientKey));
+            if (!NitroSecureAssetHandler.isValidClientKey(clientKey)) {
+                sendText(ctx, req, HttpResponseStatus.BAD_REQUEST, "Invalid key.");
+                ReferenceCountUtil.release(req);
+                return;
+            }
+
+            SecretKey sessionKey = NitroSecureAssetHandler.deriveSessionKey(
+                    java.util.Base64.getDecoder().decode(clientKey));
             SecureApiContext secureContext = new SecureApiContext(
                     NitroSecureAssetHandler.getServerKeyFingerprint(),
                     NitroSecureAssetHandler.fingerprint(sessionKey.getEncoded()),
-                    sessionKey
-            );
+                    sessionKey);
 
             if (!req.content().isReadable()) {
                 enqueueContext(ctx, secureContext);
@@ -87,22 +136,20 @@ public class NitroSecureApiHandler extends ChannelDuplexHandler {
             int maxPayloadBytes = maxPayloadBytes();
             if (readableBytes > maxPayloadBytes) {
                 sendText(ctx, req, HttpResponseStatus.REQUEST_ENTITY_TOO_LARGE, "Secure payload too large.");
+                ReferenceCountUtil.release(req);
                 return;
             }
 
             byte[] encrypted = new byte[readableBytes];
             req.content().getBytes(req.content().readerIndex(), encrypted);
-            byte[] clear = NitroSecureAssetHandler.decrypt(sessionKey, NitroSecureAssetHandler.fromHex(new String(encrypted, StandardCharsets.UTF_8)));
+            byte[] clear = NitroSecureAssetHandler.decrypt(
+                    sessionKey, NitroSecureHex.fromHex(new String(encrypted, StandardCharsets.UTF_8)));
             clear = unwrapEnvelope(clear, req, secureContext);
 
-            FullHttpRequest decryptedReq = new DefaultFullHttpRequest(
-                    req.protocolVersion(),
-                    req.method(),
-                    req.uri(),
-                    Unpooled.wrappedBuffer(clear)
-            );
+            // Same request line and headers, decrypted body: this is the inbound
+            // request continuing down our own pipeline, not an outbound call.
+            FullHttpRequest decryptedReq = req.replace(Unpooled.wrappedBuffer(clear));
 
-            decryptedReq.headers().setAll(req.headers());
             decryptedReq.headers().set(HttpHeaderNames.CONTENT_TYPE, "application/json; charset=utf-8");
             decryptedReq.headers().setInt(HttpHeaderNames.CONTENT_LENGTH, clear.length);
 
@@ -136,13 +183,10 @@ public class NitroSecureApiHandler extends ChannelDuplexHandler {
         try {
             byte[] clear = readBytes(response.content());
             byte[] encrypted = NitroSecureAssetHandler.encrypt(secureContext.sessionKey(), clear);
-            byte[] hex = NitroSecureAssetHandler.toHex(encrypted).getBytes(StandardCharsets.UTF_8);
+            byte[] hex = NitroSecureHex.toHex(encrypted).getBytes(StandardCharsets.UTF_8);
 
             FullHttpResponse encryptedResponse = new DefaultFullHttpResponse(
-                    response.protocolVersion(),
-                    response.status(),
-                    Unpooled.wrappedBuffer(hex)
-            );
+                    response.protocolVersion(), response.status(), Unpooled.wrappedBuffer(hex));
 
             encryptedResponse.headers().setAll(response.headers());
             encryptedResponse.headers().set(HttpHeaderNames.CONTENT_TYPE, "text/plain; charset=utf-8");
@@ -150,13 +194,22 @@ public class NitroSecureApiHandler extends ChannelDuplexHandler {
             encryptedResponse.headers().set("X-Nitro-Sec", "1");
             encryptedResponse.headers().set("X-Nitro-Key-Fp", secureContext.serverKeyFingerprint());
             encryptedResponse.headers().set("X-Nitro-Derive-Fp", secureContext.derivedFingerprint());
-            encryptedResponse.headers().set("Access-Control-Expose-Headers", "X-Nitro-Sec, X-Nitro-Key-Fp, X-Nitro-Derive-Fp");
+            encryptedResponse
+                    .headers()
+                    .set("Access-Control-Expose-Headers", "X-Nitro-Sec, X-Nitro-Key-Fp, X-Nitro-Derive-Fp");
 
             ReferenceCountUtil.release(response);
             super.write(ctx, encryptedResponse, promise);
         } catch (Exception e) {
+            // The caller asked for an encrypted answer: never fall back to the clear one.
             LOGGER.error("Nitro secure API failed to encrypt response", e);
-            super.write(ctx, msg, promise);
+            ReferenceCountUtil.safeRelease(msg);
+            byte[] body = "Secure response failed.".getBytes(StandardCharsets.UTF_8);
+            FullHttpResponse failure = new DefaultFullHttpResponse(
+                    HttpVersion.HTTP_1_1, HttpResponseStatus.INTERNAL_SERVER_ERROR, Unpooled.wrappedBuffer(body));
+            failure.headers().set(HttpHeaderNames.CONTENT_TYPE, "text/plain; charset=utf-8");
+            failure.headers().setInt(HttpHeaderNames.CONTENT_LENGTH, body.length);
+            super.write(ctx, failure, promise);
         }
     }
 
@@ -179,22 +232,42 @@ public class NitroSecureApiHandler extends ChannelDuplexHandler {
     }
 
     private static boolean secureApiEnabled() {
-        return com.eu.habbo.Emulator.getConfig().getBoolean(ENABLED_CONFIG, true);
+        return configFlag(ENABLED_CONFIG, true);
+    }
+
+    private static boolean secureApiRequired() {
+        return configFlag(REQUIRED_CONFIG, false);
+    }
+
+    private static boolean configFlag(String key, boolean fallback) {
+        return com.eu.habbo.Emulator.getConfig().getBoolean(key, fallback);
+    }
+
+    static boolean isClientApiPath(String path) {
+        for (String root : CLIENT_API_ROOTS) {
+            if (path.equals(root) || path.startsWith(root + "/")) return true;
+        }
+        return false;
     }
 
     static int maxPayloadBytes() {
-        if (com.eu.habbo.Emulator.getConfig() == null) {
-            return DEFAULT_MAX_PAYLOAD_BYTES;
-        }
-
-        int configured = com.eu.habbo.Emulator.getConfig().getInt(MAX_PAYLOAD_CONFIG, DEFAULT_MAX_PAYLOAD_BYTES);
+        int configured = configInt(MAX_PAYLOAD_CONFIG, DEFAULT_MAX_PAYLOAD_BYTES);
         return configured > 0 ? configured : DEFAULT_MAX_PAYLOAD_BYTES;
+    }
+
+    /** A number from the config; the fallback without a configuration. 0 or less turns the request limit off. */
+    private static int configInt(String key, int fallback) {
+        if (com.eu.habbo.Emulator.getConfig() == null) {
+            return fallback;
+        }
+        return com.eu.habbo.Emulator.getConfig().getInt(key, fallback);
     }
 
     private static byte[] unwrapEnvelope(byte[] clear, FullHttpRequest req, SecureApiContext secureContext) {
         if (!requiresReplayEnvelope(req.method())) return clear;
 
-        JsonObject envelope = JsonParser.parseString(new String(clear, StandardCharsets.UTF_8)).getAsJsonObject();
+        JsonObject envelope = JsonParser.parseString(new String(clear, StandardCharsets.UTF_8))
+                .getAsJsonObject();
         long ts = envelope.has("ts") ? envelope.get("ts").getAsLong() : 0L;
         String nonce = envelope.has("nonce") ? envelope.get("nonce").getAsString() : "";
         String method = envelope.has("method") ? envelope.get("method").getAsString() : "";
@@ -219,10 +292,14 @@ public class NitroSecureApiHandler extends ChannelDuplexHandler {
             throw new IllegalArgumentException("Missing secure request nonce.");
         }
 
-        cleanupExpiredNonces(now);
+        // Bound the nonce before it is ever stored: the client mints 16 random
+        // bytes, so anything longer only exists to fill the replay cache.
+        if (!NONCE_RE.matcher(nonce).matches()) {
+            throw new IllegalArgumentException("Secure request nonce malformed.");
+        }
 
         String replayKey = secureContext.derivedFingerprint() + ':' + nonce;
-        if (NONCE_CACHE.putIfAbsent(replayKey, now + NONCE_TTL_MS) != null) {
+        if (NONCE_CACHE.asMap().putIfAbsent(replayKey, Boolean.TRUE) != null) {
             throw new IllegalArgumentException("Secure request replay detected.");
         }
 
@@ -236,9 +313,14 @@ public class NitroSecureApiHandler extends ChannelDuplexHandler {
                 || method == HttpMethod.DELETE;
     }
 
-    private static void cleanupExpiredNonces(long now) {
-        if (NONCE_CACHE.size() < 512) return;
-        NONCE_CACHE.entrySet().removeIf(entry -> entry.getValue() < now);
+    /** Visible for tests: a fresh replay window per case. */
+    static void clearNonceCacheForTests() {
+        NONCE_CACHE.invalidateAll();
+    }
+
+    /** Visible for tests: whether a nonce is shaped like one the client mints. */
+    static boolean isNonceAcceptable(String nonce) {
+        return nonce != null && NONCE_RE.matcher(nonce).matches();
     }
 
     private static void enqueueContext(ChannelHandlerContext ctx, SecureApiContext context) {
@@ -269,9 +351,11 @@ public class NitroSecureApiHandler extends ChannelDuplexHandler {
         ctx.writeAndFlush(response).addListener(ChannelFutureListener.CLOSE);
     }
 
-    private static void sendText(ChannelHandlerContext ctx, FullHttpRequest req, HttpResponseStatus status, String text) {
+    private static void sendText(
+            ChannelHandlerContext ctx, FullHttpRequest req, HttpResponseStatus status, String text) {
         byte[] bytes = text.getBytes(StandardCharsets.UTF_8);
-        FullHttpResponse response = new DefaultFullHttpResponse(HttpVersion.HTTP_1_1, status, Unpooled.wrappedBuffer(bytes));
+        FullHttpResponse response =
+                new DefaultFullHttpResponse(HttpVersion.HTTP_1_1, status, Unpooled.wrappedBuffer(bytes));
         response.headers().set(HttpHeaderNames.CONTENT_TYPE, "text/plain; charset=utf-8");
         response.headers().setInt(HttpHeaderNames.CONTENT_LENGTH, bytes.length);
         applyCors(req, response);
@@ -294,8 +378,10 @@ public class NitroSecureApiHandler extends ChannelDuplexHandler {
         if (requestedHeaders != null && !requestedHeaders.isEmpty()) {
             response.headers().set("Access-Control-Allow-Headers", requestedHeaders);
         } else {
-            response.headers().set("Access-Control-Allow-Headers",
-                    "Authorization, Content-Type, X-Requested-With, X-Nitro-Key, X-Nitro-Api");
+            response.headers()
+                    .set(
+                            "Access-Control-Allow-Headers",
+                            "Authorization, Content-Type, X-Requested-With, X-Nitro-Key, X-Nitro-Api");
         }
 
         response.headers().set("Vary", "Origin, Access-Control-Request-Headers, Access-Control-Request-Method");

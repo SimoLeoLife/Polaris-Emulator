@@ -6,14 +6,18 @@ import com.eu.habbo.habbohotel.catalog.CatalogPage;
 import com.eu.habbo.habbohotel.catalog.CatalogPageType;
 import com.eu.habbo.habbohotel.items.FurnitureType;
 import com.eu.habbo.habbohotel.items.Item;
+import com.eu.habbo.habbohotel.items.interactions.InteractionRecolorable;
+import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredWebApiOwnership;
 import com.eu.habbo.habbohotel.rooms.BuildersClubRoomSupport;
 import com.eu.habbo.habbohotel.rooms.FurnitureMovementError;
 import com.eu.habbo.habbohotel.rooms.Room;
+import com.eu.habbo.habbohotel.rooms.RoomPlayTestSupport;
 import com.eu.habbo.habbohotel.users.HabboItem;
 import com.eu.habbo.messages.incoming.MessageHandler;
+import com.eu.habbo.messages.incoming.rooms.items.RoomItemInputGuard;
+import com.eu.habbo.messages.outgoing.catalog.BuildersClubPlacementWarningComposer;
 import com.eu.habbo.messages.outgoing.generic.alerts.BubbleAlertComposer;
 import com.eu.habbo.messages.outgoing.generic.alerts.BubbleAlertKeys;
-
 import java.util.Iterator;
 
 public class BuildersClubPlaceWallItemEvent extends MessageHandler {
@@ -23,67 +27,107 @@ public class BuildersClubPlaceWallItemEvent extends MessageHandler {
         int offerId = this.packet.readInt();
         String extraData = this.packet.readString();
         String wallPosition = this.packet.readString();
+        boolean confirmed = this.packet.readBoolean();
+
+        // The same check as for a wall furni placed from the inventory: the position is stored and sent to the room.
+        if (!RoomItemInputGuard.isValidWallPosition(wallPosition)) {
+            this.client.sendResponse(new BubbleAlertComposer(
+                    BubbleAlertKeys.FURNITURE_PLACEMENT_ERROR.key, FurnitureMovementError.INVALID_MOVE.errorCode));
+            return;
+        }
 
         Room room = this.client.getHabbo().getHabboInfo().getCurrentRoom();
         int placementUserId = BuildersClubRoomSupport.getPlacementPoolUserId(this.client.getHabbo());
 
         if (room == null || !this.client.getHabbo().getRoomUnit().isInRoom()) {
-            this.client.sendResponse(new BubbleAlertComposer(BubbleAlertKeys.FURNITURE_PLACEMENT_ERROR.key, FurnitureMovementError.NO_RIGHTS.errorCode));
+            this.client.sendResponse(new BubbleAlertComposer(
+                    BubbleAlertKeys.FURNITURE_PLACEMENT_ERROR.key, FurnitureMovementError.NO_RIGHTS.errorCode));
+            return;
+        }
+
+        // Playtest (the hotel's own rule beyond AIR): no Builders Club furni is placed either.
+        if (RoomPlayTestSupport.isBuildingRefused(this.client.getHabbo())) {
+            this.client.sendResponse(new BubbleAlertComposer(
+                    BubbleAlertKeys.FURNITURE_PLACEMENT_ERROR.key, FurnitureMovementError.NO_RIGHTS.errorCode));
             return;
         }
 
         if (!BuildersClubRoomSupport.canPlaceInCurrentRoom(this.client.getHabbo())) {
-            this.client.sendResponse(new BubbleAlertComposer(BubbleAlertKeys.FURNITURE_PLACEMENT_ERROR.key, "builder.placement_widget.error.not_group_admin"));
+            this.client.sendResponse(new BubbleAlertComposer(
+                    BubbleAlertKeys.FURNITURE_PLACEMENT_ERROR.key, "builder.placement_widget.error.not_group_admin"));
             BuildersClubRoomSupport.sendPlacementStatus(this.client.getHabbo());
             return;
         }
 
         if (placementUserId <= 0) {
-            this.client.sendResponse(new BubbleAlertComposer(BubbleAlertKeys.FURNITURE_PLACEMENT_ERROR.key, FurnitureMovementError.NO_RIGHTS.errorCode));
+            this.client.sendResponse(new BubbleAlertComposer(
+                    BubbleAlertKeys.FURNITURE_PLACEMENT_ERROR.key, FurnitureMovementError.NO_RIGHTS.errorCode));
             return;
         }
 
-        if (!BuildersClubRoomSupport.hasActiveMembership(this.client.getHabbo().getHabboInfo().getId())) {
-            int trackedFurniCount = BuildersClubRoomSupport.getTrackedFurniCount(placementUserId);
+        // Members build up to their package limit, trial users up to the trial limit.
+        if (BuildersClubRoomSupport.getTrackedFurniCount(placementUserId)
+                >= BuildersClubRoomSupport.getFurniLimit(placementUserId)) {
+            this.client.sendResponse(
+                    new BubbleAlertComposer(BubbleAlertKeys.FURNITURE_PLACEMENT_ERROR.key, "room.error.max_furniture"));
+            BuildersClubRoomSupport.sendPlacementStatus(this.client.getHabbo());
+            return;
+        }
 
-            if (trackedFurniCount >= BuildersClubRoomSupport.getFurniLimit(placementUserId)) {
-                this.client.sendResponse(new BubbleAlertComposer(BubbleAlertKeys.FURNITURE_PLACEMENT_ERROR.key, "room.error.max_furniture"));
-                BuildersClubRoomSupport.sendPlacementStatus(this.client.getHabbo());
-                return;
-            }
-
-            if (BuildersClubRoomSupport.hasPlacementVisitors(room, this.client.getHabbo())) {
-                this.client.sendResponse(new BubbleAlertComposer(BubbleAlertKeys.FURNITURE_PLACEMENT_ERROR.key, "builder.placement_widget.error.visitors"));
-                return;
-            }
+        if (!BuildersClubRoomSupport.hasActiveMembership(
+                        this.client.getHabbo().getHabboInfo().getId())
+                && BuildersClubRoomSupport.hasPlacementVisitors(room, this.client.getHabbo())) {
+            this.client.sendResponse(new BubbleAlertComposer(
+                    BubbleAlertKeys.FURNITURE_PLACEMENT_ERROR.key, "builder.placement_widget.error.visitors"));
+            return;
         }
 
         CatalogItem catalogItem = resolveCatalogItem(pageId, offerId);
         Item baseItem = resolveBaseItem(catalogItem, FurnitureType.WALL);
 
-        if (catalogItem == null || baseItem == null) {
-            this.client.sendResponse(new BubbleAlertComposer(BubbleAlertKeys.FURNITURE_PLACEMENT_ERROR.key, FurnitureMovementError.INVALID_MOVE.errorCode));
+        if (catalogItem == null || baseItem == null || WiredWebApiOwnership.isWebApiItem(baseItem)) {
+            this.client.sendResponse(new BubbleAlertComposer(
+                    BubbleAlertKeys.FURNITURE_PLACEMENT_ERROR.key, FurnitureMovementError.INVALID_MOVE.errorCode));
             return;
         }
 
-        HabboItem item = Emulator.getGameEnvironment().getItemManager().createItem(placementUserId, baseItem, 0, 0, (extraData != null && !extraData.isEmpty()) ? extraData : catalogItem.getExtradata());
+        if (!confirmed && BuildersClubRoomSupport.placementWouldHideRoom(room)) {
+            this.client.sendResponse(
+                    BuildersClubPlacementWarningComposer.wall(pageId, offerId, extraData, wallPosition));
+            return;
+        }
+
+        HabboItem item = Emulator.getGameEnvironment()
+                .getItemManager()
+                .createItem(
+                        placementUserId,
+                        baseItem,
+                        0,
+                        0,
+                        InteractionRecolorable.placementExtradata(baseItem, extraData, catalogItem.getExtradata()));
 
         if (item == null) {
-            this.client.sendResponse(new BubbleAlertComposer(BubbleAlertKeys.FURNITURE_PLACEMENT_ERROR.key, FurnitureMovementError.INVALID_MOVE.errorCode));
+            this.client.sendResponse(new BubbleAlertComposer(
+                    BubbleAlertKeys.FURNITURE_PLACEMENT_ERROR.key, FurnitureMovementError.INVALID_MOVE.errorCode));
             return;
         }
 
         item.setVirtualUserId(BuildersClubRoomSupport.VIRTUAL_OWNER_ID);
 
+        // Tracked before it enters the room, so the room hands it a Builders Club band id before announcing it.
+        BuildersClubRoomSupport.trackPlacedItem(item.getId(), placementUserId, room.getId());
         FurnitureMovementError error = room.placeWallFurniAt(item, wallPosition, this.client.getHabbo());
 
         if (!error.equals(FurnitureMovementError.NONE)) {
+            BuildersClubRoomSupport.deleteTrackedItem(item.getId());
             Emulator.getGameEnvironment().getItemManager().deleteItem(item);
-            this.client.sendResponse(new BubbleAlertComposer(BubbleAlertKeys.FURNITURE_PLACEMENT_ERROR.key, error.errorCode));
+            this.client.sendResponse(
+                    new BubbleAlertComposer(BubbleAlertKeys.FURNITURE_PLACEMENT_ERROR.key, error.errorCode));
             return;
         }
 
-        BuildersClubRoomSupport.trackPlacedItem(item.getId(), placementUserId, room.getId());
+        com.eu.habbo.habbohotel.quests.QuestProgressEvents.progress(
+                this.client.getHabbo(), com.eu.habbo.habbohotel.quests.QuestGoalType.PLACE_BUILDERS_CLUB_FURNI, 1);
 
         if (BuildersClubRoomSupport.syncRoom(room) == BuildersClubRoomSupport.SyncResult.LOCKED) {
             BuildersClubRoomSupport.sendRoomLockedBubble(room.getOwnerId());
@@ -93,19 +137,28 @@ public class BuildersClubPlaceWallItemEvent extends MessageHandler {
     }
 
     private CatalogItem resolveCatalogItem(int pageId, int offerId) {
-        CatalogItem buildersClubItem = Emulator.getGameEnvironment().getCatalogManager().getCatalogItem(offerId, CatalogPageType.BUILDER);
+        CatalogItem buildersClubItem =
+                Emulator.getGameEnvironment().getCatalogManager().getCatalogItem(offerId, CatalogPageType.BUILDER);
 
         if (buildersClubItem != null) {
             return buildersClubItem;
         }
 
-        int catalogItemId = Emulator.getGameEnvironment().getCatalogManager().offerDefs.get(offerId);
+        // Only Builders Club offers: the normal catalog's offers were placed for free, past their page's rank,
+        // club, limited and price rules, and could then be redeemed.
+        int catalogItemId = Emulator.getGameEnvironment()
+                .getCatalogManager()
+                .buildersClubOfferDefs
+                .get(offerId);
 
         if (catalogItemId > 0) {
-            return Emulator.getGameEnvironment().getCatalogManager().getCatalogItem(catalogItemId);
+            return Emulator.getGameEnvironment()
+                    .getCatalogManager()
+                    .getCatalogItem(catalogItemId, CatalogPageType.BUILDER);
         }
 
-        CatalogPage page = Emulator.getGameEnvironment().getCatalogManager().getCatalogPage(pageId, CatalogPageType.BUILDER);
+        CatalogPage page =
+                Emulator.getGameEnvironment().getCatalogManager().getCatalogPage(pageId, CatalogPageType.BUILDER);
 
         if (page == null) {
             return null;
@@ -121,7 +174,9 @@ public class BuildersClubPlaceWallItemEvent extends MessageHandler {
     }
 
     private Item resolveBaseItem(CatalogItem catalogItem, FurnitureType expectedType) {
-        if (catalogItem == null || catalogItem.getAmount() != 1 || catalogItem.getBaseItems().size() != 1) {
+        if (catalogItem == null
+                || catalogItem.getAmount() != 1
+                || catalogItem.getBaseItems().size() != 1) {
             return null;
         }
 

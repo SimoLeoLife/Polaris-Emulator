@@ -2,9 +2,12 @@ package com.eu.habbo.habbohotel.items.interactions.wired.effects;
 
 import com.eu.habbo.Emulator;
 import com.eu.habbo.habbohotel.gameclients.GameClient;
+import com.eu.habbo.habbohotel.items.FurnitureDirections;
 import com.eu.habbo.habbohotel.items.FurnitureType;
 import com.eu.habbo.habbohotel.items.Item;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredEffect;
+import com.eu.habbo.habbohotel.items.interactions.wired.WiredInputGuard;
+import com.eu.habbo.habbohotel.items.interactions.wired.WiredRewardPolicy;
 import com.eu.habbo.habbohotel.items.interactions.wired.WiredSettings;
 import com.eu.habbo.habbohotel.rooms.FurnitureMovementError;
 import com.eu.habbo.habbohotel.rooms.Room;
@@ -17,12 +20,11 @@ import com.eu.habbo.habbohotel.wired.core.WiredContext;
 import com.eu.habbo.habbohotel.wired.core.WiredManager;
 import com.eu.habbo.messages.ServerMessage;
 import com.eu.habbo.messages.incoming.wired.WiredSaveException;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 
 /**
- * Spawns ("builds") a fresh floor furni into the room when the stack fires — the in-room analogue of
+ * Our "spawn furni" (furni classname {@code wf_act_spawn_furni}): spawns ("builds") a fresh floor furni into the room when the stack fires — the in-room analogue of
  * {@link WiredEffectGiveOrTakeFurni} (which mints into a user's inventory). The furni is a freshly minted,
  * persisted item owned by the ROOM OWNER, placed either on this effect furni's own tile or at a stored x/y.
  *
@@ -31,7 +33,8 @@ import java.sql.SQLException;
  * room's furniture ceiling is honoured so a repeater trigger + place loop cannot flood/OOM the room.</p>
  */
 public class WiredEffectPlaceFurni extends InteractionWiredEffect {
-    public static final WiredEffectType type = WiredEffectType.PLACE_FURNI;
+    // Ours (wf_act_spawn_furni): the official "place furni" is WiredEffectPlaceTemporaryFurni.
+    public static final WiredEffectType type = WiredEffectType.SPAWN_FURNI;
 
     public static final int MODE_THIS_TILE = 0;
     public static final int MODE_STORED_XY = 1;
@@ -58,7 +61,7 @@ public class WiredEffectPlaceFurni extends InteractionWiredEffect {
     @Override
     public void execute(WiredContext ctx) {
         Room room = ctx.room();
-        if (room == null || room.getLayout() == null) return;
+        if (room == null || room.getLayout() == null || this.baseItemId <= 0) return;
 
         Item baseItem = Emulator.getGameEnvironment().getItemManager().getItem(this.baseItemId);
         if (baseItem == null || baseItem.getType() != FurnitureType.FLOOR) return;
@@ -75,10 +78,13 @@ public class WiredEffectPlaceFurni extends InteractionWiredEffect {
         for (int i = 0; i < this.quantity; i++) {
             if (room.getFloorItems().size() >= ceiling) break;
 
-            HabboItem item = Emulator.getGameEnvironment().getItemManager().createItem(room.getOwnerId(), baseItem, 0, 0, "");
+            HabboItem item =
+                    Emulator.getGameEnvironment().getItemManager().createItem(room.getOwnerId(), baseItem, 0, 0, "");
             if (item == null) continue;
 
-            FurnitureMovementError error = room.placeFloorFurniAt(item, tile, this.rotation, owner);
+            // A configured direction the furni's asset lacks is placed as its default one, like a user's placement.
+            int rotation = FurnitureDirections.of(item).place(this.rotation);
+            FurnitureMovementError error = room.placeFloorFurniAt(item, tile, rotation, owner);
 
             if (error != FurnitureMovementError.NONE) {
                 // Placement failed (no fit / blocked) — destroy the orphan instead of leaking a roomless item.
@@ -116,6 +122,11 @@ public class WiredEffectPlaceFurni extends InteractionWiredEffect {
 
     @Override
     public boolean saveData(WiredSettings settings, GameClient gameClient) throws WiredSaveException {
+        // Value out of nothing: the amount cap bounds one firing, not a room full of them.
+        if (!WiredRewardPolicy.canConfigure(gameClient)) {
+            return false;
+        }
+
         int[] params = settings.getIntParams();
         if (params.length < 6) {
             throw new WiredSaveException("Invalid data");
@@ -128,7 +139,7 @@ public class WiredEffectPlaceFurni extends InteractionWiredEffect {
         }
 
         int delay = settings.getDelay();
-        if (delay > Emulator.getConfig().getInt("hotel.wired.max_delay", 20)) {
+        if (delay > Emulator.getConfig().getInt("hotel.wired.max_delay", WiredInputGuard.DEFAULT_MAX_DELAY)) {
             throw new WiredSaveException("Delay too long");
         }
 
@@ -149,7 +160,15 @@ public class WiredEffectPlaceFurni extends InteractionWiredEffect {
 
     @Override
     public String getWiredData() {
-        return WiredManager.getGson().toJson(new JsonData(this.baseItemId, this.quantity, this.placementMode, this.storedX, this.storedY, this.rotation, this.getDelay()));
+        return WiredManager.getGson()
+                .toJson(new JsonData(
+                        this.baseItemId,
+                        this.quantity,
+                        this.placementMode,
+                        this.storedX,
+                        this.storedY,
+                        this.rotation,
+                        this.getDelay()));
     }
 
     @Override
@@ -201,7 +220,8 @@ public class WiredEffectPlaceFurni extends InteractionWiredEffect {
         int rotation;
         int delay;
 
-        public JsonData(int baseItemId, int quantity, int placementMode, int storedX, int storedY, int rotation, int delay) {
+        public JsonData(
+                int baseItemId, int quantity, int placementMode, int storedX, int storedY, int rotation, int delay) {
             this.baseItemId = baseItemId;
             this.quantity = quantity;
             this.placementMode = placementMode;

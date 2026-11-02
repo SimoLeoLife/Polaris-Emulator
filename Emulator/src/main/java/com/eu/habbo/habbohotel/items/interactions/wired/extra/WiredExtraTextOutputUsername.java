@@ -9,7 +9,7 @@ import com.eu.habbo.habbohotel.rooms.RoomUnit;
 import com.eu.habbo.habbohotel.wired.core.WiredManager;
 import com.eu.habbo.habbohotel.wired.core.WiredSourceUtil;
 import com.eu.habbo.messages.ServerMessage;
-
+import com.eu.habbo.messages.incoming.wired.WiredSaveException;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.regex.Pattern;
@@ -19,9 +19,13 @@ public class WiredExtraTextOutputUsername extends InteractionWiredExtra {
     public static final int TYPE_SINGLE = 1;
     public static final int TYPE_MULTIPLE = 2;
     public static final String DEFAULT_PLACEHOLDER_NAME = "";
-    public static final String DEFAULT_DELIMITER = ", ";
+    /** AIR: the delimiter starts empty and takes at most 5 characters. */
+    public static final String DEFAULT_DELIMITER = "";
+
     public static final int MAX_PLACEHOLDER_NAME_LENGTH = 32;
-    public static final int MAX_DELIMITER_LENGTH = 16;
+    public static final int MAX_DELIMITER_LENGTH = 5;
+    /** Boxes saved before AIR's limit keep their longer delimiter until they are saved again. */
+    private static final int MAX_STORED_DELIMITER_LENGTH = 16;
 
     private static final Pattern WRAPPED_PLACEHOLDER_PATTERN = Pattern.compile("^\\$\\((.*)\\)$");
 
@@ -34,7 +38,8 @@ public class WiredExtraTextOutputUsername extends InteractionWiredExtra {
         super(set, baseItem);
     }
 
-    public WiredExtraTextOutputUsername(int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
+    public WiredExtraTextOutputUsername(
+            int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
         super(id, userId, item, extradata, limitedStack, limitedSells);
     }
 
@@ -44,21 +49,31 @@ public class WiredExtraTextOutputUsername extends InteractionWiredExtra {
     }
 
     @Override
-    public boolean saveData(WiredSettings settings, GameClient gameClient) {
+    public boolean saveData(WiredSettings settings, GameClient gameClient) throws WiredSaveException {
         int[] intParams = settings.getIntParams();
         String[] stringData = splitStringData(settings.getStringParam());
+        boolean multiple = intParams.length > 0 && intParams[0] != 0;
+        // AIR refuses an empty name too, also on the box's first frame.
+        String refusal = WiredPlaceholderNameRules.refusal(stringData[0], multiple, stringData[1]);
+        if (refusal != null) {
+            throw new WiredSaveException(refusal);
+        }
 
-        this.placeholderType = normalizePlaceholderType((intParams.length > 0) ? intParams[0] : TYPE_SINGLE);
-        this.userSource = normalizeUserSource((intParams.length > 1) ? intParams[1] : WiredSourceUtil.SOURCE_TRIGGER);
-        this.placeholderName = normalizePlaceholderName(stringData[0]);
-        this.delimiter = normalizeDelimiter(stringData[1]);
+        this.placeholderType = multiple ? TYPE_MULTIPLE : TYPE_SINGLE;
+        this.userSource = normalizeUserSource(
+                settings.getUserSourceTypes().length > 0
+                        ? settings.getUserSourceTypes()[0]
+                        : WiredSourceUtil.SOURCE_TRIGGER);
+        this.placeholderName = WiredPlaceholderNameRules.storedName(stringData[0]);
+        this.delimiter = normalizeDelimiter(stringData[1], MAX_DELIMITER_LENGTH);
 
         return true;
     }
 
     @Override
     public String getWiredData() {
-        return WiredManager.getGson().toJson(new JsonData(this.placeholderName, this.placeholderType, this.delimiter, this.userSource));
+        return WiredManager.getGson()
+                .toJson(new JsonData(this.placeholderName, this.placeholderType, this.delimiter, this.userSource));
     }
 
     @Override
@@ -68,10 +83,14 @@ public class WiredExtraTextOutputUsername extends InteractionWiredExtra {
         message.appendInt(0);
         message.appendInt(this.getBaseItem().getSpriteId());
         message.appendInt(this.getId());
-        message.appendString(this.placeholderName + "\t" + this.delimiter);
-        message.appendInt(2);
-        message.appendInt(this.placeholderType);
-        message.appendInt(this.userSource);
+        // AIR: the name alone, or name and delimiter when every name is written.
+        message.appendString(
+                this.placeholderType == TYPE_MULTIPLE
+                        ? this.placeholderName + "\t" + this.delimiter
+                        : this.placeholderName);
+        // Official layout: [multiple (0 one, 1 all)], the users in the official source slot.
+        message.appendInt(1);
+        message.appendInt(this.placeholderType == TYPE_MULTIPLE ? 1 : 0);
         message.appendInt(0);
         message.appendInt(CODE);
         message.appendInt(0);
@@ -93,7 +112,7 @@ public class WiredExtraTextOutputUsername extends InteractionWiredExtra {
             if (data != null) {
                 this.placeholderName = normalizePlaceholderName(data.placeholderName);
                 this.placeholderType = normalizePlaceholderType(data.placeholderType);
-                this.delimiter = normalizeDelimiter(data.delimiter);
+                this.delimiter = normalizeDelimiter(data.delimiter, MAX_STORED_DELIMITER_LENGTH);
                 this.userSource = normalizeUserSource(data.userSource);
             }
 
@@ -102,7 +121,7 @@ public class WiredExtraTextOutputUsername extends InteractionWiredExtra {
 
         String[] legacyData = splitStringData(wiredData);
         this.placeholderName = normalizePlaceholderName(legacyData[0]);
-        this.delimiter = normalizeDelimiter(legacyData[1]);
+        this.delimiter = normalizeDelimiter(legacyData[1], MAX_STORED_DELIMITER_LENGTH);
     }
 
     @Override
@@ -114,9 +133,7 @@ public class WiredExtraTextOutputUsername extends InteractionWiredExtra {
     }
 
     @Override
-    public void onWalk(RoomUnit roomUnit, Room room, Object[] objects) throws Exception {
-
-    }
+    public void onWalk(RoomUnit roomUnit, Room room, Object[] objects) throws Exception {}
 
     @Override
     public boolean hasConfiguration() {
@@ -145,16 +162,16 @@ public class WiredExtraTextOutputUsername extends InteractionWiredExtra {
 
     private static String[] splitStringData(String value) {
         if (value == null) {
-            return new String[] { DEFAULT_PLACEHOLDER_NAME, DEFAULT_DELIMITER };
+            return new String[] {DEFAULT_PLACEHOLDER_NAME, DEFAULT_DELIMITER};
         }
 
         String[] parts = value.split("\t", -1);
 
         if (parts.length <= 1) {
-            return new String[] { value, DEFAULT_DELIMITER };
+            return new String[] {value, DEFAULT_DELIMITER};
         }
 
-        return new String[] { parts[0], parts[1] };
+        return new String[] {parts[0], parts[1]};
     }
 
     private static int normalizePlaceholderType(int value) {
@@ -178,15 +195,15 @@ public class WiredExtraTextOutputUsername extends InteractionWiredExtra {
         return normalized;
     }
 
-    private static String normalizeDelimiter(String value) {
+    private static String normalizeDelimiter(String value, int maxLength) {
         if (value == null) {
             return DEFAULT_DELIMITER;
         }
 
         String normalized = value.replace("\t", "").replace("\r", "").replace("\n", "");
 
-        if (normalized.length() > MAX_DELIMITER_LENGTH) {
-            normalized = normalized.substring(0, MAX_DELIMITER_LENGTH);
+        if (normalized.length() > maxLength) {
+            normalized = normalized.substring(0, maxLength);
         }
 
         return normalized;

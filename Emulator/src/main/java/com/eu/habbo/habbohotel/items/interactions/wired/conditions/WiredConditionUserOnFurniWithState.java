@@ -1,6 +1,5 @@
 package com.eu.habbo.habbohotel.items.interactions.wired.conditions;
 
-import com.eu.habbo.Emulator;
 import com.eu.habbo.habbohotel.items.Item;
 import com.eu.habbo.habbohotel.items.interactions.wired.WiredSettings;
 import com.eu.habbo.habbohotel.rooms.Room;
@@ -9,9 +8,9 @@ import com.eu.habbo.habbohotel.users.HabboItem;
 import com.eu.habbo.habbohotel.wired.WiredConditionType;
 import com.eu.habbo.habbohotel.wired.core.WiredContext;
 import com.eu.habbo.habbohotel.wired.core.WiredManager;
+import com.eu.habbo.habbohotel.wired.core.WiredQuantifier;
 import com.eu.habbo.habbohotel.wired.core.WiredSourceUtil;
 import com.eu.habbo.messages.ServerMessage;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.Collection;
@@ -23,8 +22,8 @@ import java.util.Set;
  * {@link HabboItem#getExtradata() extradata state} equals a required value.
  *
  * <p>This is a specialisation of {@link WiredConditionTriggerOnFurni}: it reuses the same furni
- * picker, {@code userSource}, and {@code quantifier} machinery (and therefore the same int-param
- * layout {@code [furniSource, userSource, quantifier]} and furni-id selection), but additionally
+ * picker, {@code userSource}, and {@code quantifier} machinery (and therefore the same layout: no int
+ * params, the quantifier in its slot, the furni and users in the official source slots, and furni-id selection), but additionally
  * carries a single {@code requiredState} string. When that string is non-empty, a user only counts
  * as "on the furni" if the furni under their feet currently reports that exact extradata state. An
  * empty {@code requiredState} degrades gracefully to the plain on-furni behaviour.</p>
@@ -47,7 +46,8 @@ public class WiredConditionUserOnFurniWithState extends WiredConditionTriggerOnF
         super(set, baseItem);
     }
 
-    public WiredConditionUserOnFurniWithState(int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
+    public WiredConditionUserOnFurniWithState(
+            int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
         super(id, userId, item, extradata, limitedStack, limitedSells);
     }
 
@@ -65,12 +65,10 @@ public class WiredConditionUserOnFurniWithState extends WiredConditionTriggerOnF
         this.refresh();
 
         List<RoomUnit> userTargets = WiredSourceUtil.resolveUsers(ctx, this.userSource);
-        if (userTargets.isEmpty())
-            return false;
+        if (userTargets.isEmpty()) return WiredQuantifier.overEmpty(this.getQuantifier() != QUANTIFIER_ANY);
 
         List<HabboItem> itemTargets = WiredSourceUtil.resolveItems(ctx, this.furniSource, this.items);
-        if (itemTargets.isEmpty())
-            return false;
+        if (itemTargets.isEmpty()) return false;
 
         if (this.getQuantifier() == QUANTIFIER_ANY) {
             return this.isAnyUserOnFurniWithState(userTargets, itemTargets, ctx.room());
@@ -132,13 +130,13 @@ public class WiredConditionUserOnFurniWithState extends WiredConditionTriggerOnF
     @Override
     public String getWiredData() {
         this.refresh();
-        return WiredManager.getGson().toJson(new JsonData(
-                this.items.stream().map(HabboItem::getId).toList(),
-                this.furniSource,
-                this.userSource,
-                this.getQuantifier(),
-                this.requiredState
-        ));
+        return WiredManager.getGson()
+                .toJson(new JsonData(
+                        this.items.stream().map(HabboItem::getId).toList(),
+                        this.furniSource,
+                        this.userSource,
+                        this.getQuantifier(),
+                        this.requiredState));
     }
 
     @Override
@@ -150,7 +148,7 @@ public class WiredConditionUserOnFurniWithState extends WiredConditionTriggerOnF
         }
 
         if (wiredData.startsWith("{")) {
-            JsonData data = WiredManager.getGson().fromJson(wiredData, JsonData.class);
+            JsonData data = parsePayload(wiredData);
             if (data == null) {
                 return;
             }
@@ -160,7 +158,8 @@ public class WiredConditionUserOnFurniWithState extends WiredConditionTriggerOnF
             this.quantifier = this.normalizeQuantifier(data.quantifier);
             this.requiredState = this.normalizeRequiredState(data.requiredState);
 
-            for (int id : WiredFurniConditionInputGuard.sanitizeItemIds(data.itemIds, WiredManager.MAXIMUM_FURNI_SELECTION)) {
+            for (int id :
+                    WiredFurniConditionInputGuard.sanitizeItemIds(data.itemIds, WiredManager.MAXIMUM_FURNI_SELECTION)) {
                 HabboItem item = room.getHabboItem(id);
 
                 if (item != null) {
@@ -168,7 +167,8 @@ public class WiredConditionUserOnFurniWithState extends WiredConditionTriggerOnF
                 }
             }
 
-            this.furniSource = WiredFurniConditionInputGuard.selectedOrNormalizedFurniSource(this.furniSource, !this.items.isEmpty());
+            this.furniSource = WiredFurniConditionInputGuard.selectedOrNormalizedFurniSource(
+                    this.furniSource, !this.items.isEmpty());
         }
     }
 
@@ -186,16 +186,12 @@ public class WiredConditionUserOnFurniWithState extends WiredConditionTriggerOnF
         message.appendInt(WiredManager.MAXIMUM_FURNI_SELECTION);
         message.appendInt(this.items.size());
 
-        for (HabboItem item : this.items)
-            message.appendInt(item.getId());
+        for (HabboItem item : this.items) message.appendInt(item.getId());
 
         message.appendInt(this.getBaseItem().getSpriteId());
         message.appendInt(this.getId());
         message.appendString(this.requiredState == null ? "" : this.requiredState);
-        message.appendInt(3);
-        message.appendInt(this.furniSource);
-        message.appendInt(this.userSource);
-        message.appendInt(this.getQuantifier());
+        message.appendInt(0);
         message.appendInt(0);
         message.appendInt(this.getType().code);
         message.appendInt(0);
@@ -204,33 +200,10 @@ public class WiredConditionUserOnFurniWithState extends WiredConditionTriggerOnF
 
     @Override
     public boolean saveData(WiredSettings settings) {
-        int count = settings.getFurniIds().length;
-        if (count > Emulator.getConfig().getInt("hotel.wired.furni.selection.count")) return false;
-
-        int[] params = settings.getIntParams();
-        this.furniSource = (params.length > 0) ? WiredFurniConditionInputGuard.normalizeFurniSource(params[0]) : WiredSourceUtil.SOURCE_TRIGGER;
-        this.userSource = (params.length > 1) ? WiredFurniConditionInputGuard.normalizeUserSource(params[1]) : WiredSourceUtil.SOURCE_TRIGGER;
-        this.quantifier = (params.length > 2) ? this.normalizeQuantifier(params[2]) : QUANTIFIER_ALL;
+        // The parent's official layout: the furni and users in the official source slots, the quantifier in
+        // its slot; the required state in the string.
+        if (!super.saveData(settings)) return false;
         this.requiredState = this.normalizeRequiredState(settings.getStringParam());
-
-        this.furniSource = WiredFurniConditionInputGuard.selectedOrNormalizedFurniSource(this.furniSource, count > 0);
-
-        this.items.clear();
-
-        if (this.furniSource == WiredSourceUtil.SOURCE_SELECTED) {
-            Room room = Emulator.getGameEnvironment().getRoomManager().getRoom(this.getRoomId());
-
-            if (room != null) {
-                for (int i = 0; i < count; i++) {
-                    HabboItem item = room.getHabboItem(settings.getFurniIds()[i]);
-
-                    if (item != null) {
-                        this.items.add(item);
-                    }
-                }
-            }
-        }
-
         return true;
     }
 
@@ -251,6 +224,19 @@ public class WiredConditionUserOnFurniWithState extends WiredConditionTriggerOnF
     @Override
     public boolean execute(RoomUnit roomUnit, Room room, Object[] stuff) {
         return false;
+    }
+
+    /**
+     * A truncated document leaves Gson throwing EOFException, which is checked - so it escapes a
+     * RuntimeException catch and takes the whole furni load down. Anything unreadable is simply no
+     * configuration.
+     */
+    private static JsonData parsePayload(String wiredData) {
+        try {
+            return WiredManager.getGson().fromJson(wiredData, JsonData.class);
+        } catch (Exception exception) {
+            return null;
+        }
     }
 
     static class JsonData {

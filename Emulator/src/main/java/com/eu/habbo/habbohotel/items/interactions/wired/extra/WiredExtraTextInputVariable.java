@@ -11,14 +11,20 @@ import com.eu.habbo.habbohotel.rooms.WiredVariableDefinitionInfo;
 import com.eu.habbo.habbohotel.wired.core.WiredContextVariableSupport;
 import com.eu.habbo.habbohotel.wired.core.WiredManager;
 import com.eu.habbo.habbohotel.wired.core.WiredVariableTextConnectorSupport;
+import com.eu.habbo.habbohotel.wired.protocol.WiredOfficialVariableIds;
+import com.eu.habbo.habbohotel.wired.protocol.WiredVariableIds;
+import com.eu.habbo.habbohotel.wired.protocol.WiredVariableTargets;
 import com.eu.habbo.messages.ServerMessage;
 import com.eu.habbo.messages.incoming.wired.WiredSaveException;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.regex.Pattern;
 
-public class WiredExtraTextInputVariable extends InteractionWiredExtra {
+/**
+ * The official variable capturer (AIR addon 16): int params {@code [text mode]}, variable ids {@code [context
+ * variable]}, the capturer name as the string. Older clients sent {@code variable\tname}; still read.
+ */
+public class WiredExtraTextInputVariable extends InteractionWiredExtra implements WiredOfficialVariableIds {
     public static final int CODE = 85;
     public static final int DISPLAY_NUMERIC = 1;
     public static final int DISPLAY_TEXTUAL = 2;
@@ -26,7 +32,7 @@ public class WiredExtraTextInputVariable extends InteractionWiredExtra {
     public static final int MAX_CAPTURER_NAME_LENGTH = 32;
 
     private static final String CUSTOM_TOKEN_PREFIX = "custom:";
-    private static final Pattern WRAPPED_PLACEHOLDER_PATTERN = Pattern.compile("^#(.*)#$");
+    private static final Pattern WRAPPED_PLACEHOLDER_PATTERN = Pattern.compile("^#\\((.*)\\)$|^#(.*)#$");
 
     private int variableItemId = 0;
     private String variableToken = "";
@@ -37,7 +43,8 @@ public class WiredExtraTextInputVariable extends InteractionWiredExtra {
         super(set, baseItem);
     }
 
-    public WiredExtraTextInputVariable(int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
+    public WiredExtraTextInputVariable(
+            int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
         super(id, userId, item, extradata, limitedStack, limitedSells);
     }
 
@@ -54,7 +61,12 @@ public class WiredExtraTextInputVariable extends InteractionWiredExtra {
         }
 
         int[] intParams = settings.getIntParams();
-        String[] stringData = splitStringData(settings.getStringParam());
+        String[] stringData = WiredVariableIds.present(settings.getVariableIds())
+                ? new String[] {
+                    WiredVariableIds.tokenAt(settings.getVariableIds(), 0),
+                    settings.getStringParam() == null ? DEFAULT_CAPTURER_NAME : settings.getStringParam()
+                }
+                : splitStringData(settings.getStringParam());
         String nextVariableToken = normalizeVariableToken(stringData[0]);
         int nextVariableItemId = getCustomItemId(nextVariableToken);
 
@@ -62,7 +74,8 @@ public class WiredExtraTextInputVariable extends InteractionWiredExtra {
             throw new WiredSaveException("wiredfurni.params.variables.validation.missing_variable");
         }
 
-        WiredVariableDefinitionInfo definitionInfo = WiredContextVariableSupport.getDefinitionInfo(room, nextVariableItemId);
+        WiredVariableDefinitionInfo definitionInfo =
+                WiredContextVariableSupport.getDefinitionInfo(room, nextVariableItemId);
         if (definitionInfo == null || !definitionInfo.hasValue()) {
             throw new WiredSaveException("wiredfurni.params.variables.validation.invalid_variable");
         }
@@ -70,7 +83,8 @@ public class WiredExtraTextInputVariable extends InteractionWiredExtra {
         this.variableItemId = nextVariableItemId;
         this.variableToken = nextVariableToken;
         this.capturerName = normalizeCapturerName(stringData[1]);
-        this.displayType = normalizeDisplayType((intParams.length > 0) ? intParams[0] : DISPLAY_NUMERIC);
+        // Official layout: [text mode 0/1].
+        this.displayType = (intParams.length > 0 && intParams[0] == 1) ? DISPLAY_TEXTUAL : DISPLAY_NUMERIC;
 
         if (!canUseTextualDisplay(room, this.variableItemId)) {
             this.displayType = DISPLAY_NUMERIC;
@@ -80,8 +94,15 @@ public class WiredExtraTextInputVariable extends InteractionWiredExtra {
     }
 
     @Override
+    public String[] officialVariableIds() {
+        return WiredVariableIds.list(
+                WiredVariableIds.toWire(WiredVariableTargets.OFFICIAL_CONTEXT, this.variableItemId));
+    }
+
+    @Override
     public String getWiredData() {
-        return WiredManager.getGson().toJson(new JsonData(this.variableToken, this.variableItemId, this.capturerName, this.displayType));
+        return WiredManager.getGson()
+                .toJson(new JsonData(this.variableToken, this.variableItemId, this.capturerName, this.displayType));
     }
 
     @Override
@@ -91,9 +112,9 @@ public class WiredExtraTextInputVariable extends InteractionWiredExtra {
         message.appendInt(0);
         message.appendInt(this.getBaseItem().getSpriteId());
         message.appendInt(this.getId());
-        message.appendString(this.variableToken + "\t" + this.capturerName);
+        message.appendString(this.capturerName);
         message.appendInt(1);
-        message.appendInt(this.getDisplayType(room));
+        message.appendInt(this.displayType == DISPLAY_TEXTUAL ? 1 : 0);
         message.appendInt(0);
         message.appendInt(CODE);
         message.appendInt(0);
@@ -113,9 +134,10 @@ public class WiredExtraTextInputVariable extends InteractionWiredExtra {
             JsonData data = WiredExtraPayloadGuard.fromJson(wiredData, JsonData.class);
 
             if (data != null) {
-                this.variableToken = normalizeVariableToken((data.variableToken != null)
-                        ? data.variableToken
-                        : ((data.variableItemId > 0) ? String.valueOf(data.variableItemId) : ""));
+                this.variableToken = normalizeVariableToken(
+                        (data.variableToken != null)
+                                ? data.variableToken
+                                : ((data.variableItemId > 0) ? String.valueOf(data.variableItemId) : ""));
                 this.variableItemId = getCustomItemId(this.variableToken);
                 this.capturerName = normalizeCapturerName(data.capturerName);
                 this.displayType = normalizeDisplayType(data.displayType);
@@ -139,8 +161,7 @@ public class WiredExtraTextInputVariable extends InteractionWiredExtra {
     }
 
     @Override
-    public void onWalk(RoomUnit roomUnit, Room room, Object[] objects) {
-    }
+    public void onWalk(RoomUnit roomUnit, Room room, Object[] objects) {}
 
     @Override
     public boolean hasConfiguration() {
@@ -160,7 +181,7 @@ public class WiredExtraTextInputVariable extends InteractionWiredExtra {
     }
 
     public String getPlaceholderToken() {
-        return this.capturerName.isEmpty() ? "" : "#" + this.capturerName + "#";
+        return this.capturerName.isEmpty() ? "" : "#(" + this.capturerName + ")";
     }
 
     public int getDisplayType(Room room) {
@@ -173,8 +194,12 @@ public class WiredExtraTextInputVariable extends InteractionWiredExtra {
         String capturedValue = rawValue != null ? rawValue : "";
         String normalizedValue = capturedValue.trim();
 
-        if (this.getDisplayType(room) == DISPLAY_TEXTUAL) {
-            return WiredVariableTextConnectorSupport.toValue(room, this.variableItemId, capturedValue);
+        // Text mode captures connector labels only: without a connector it captures nothing (observed on AIR),
+        // it does not fall back to numbers.
+        if (this.displayType == DISPLAY_TEXTUAL) {
+            return canUseTextualDisplay(room, this.variableItemId)
+                    ? WiredVariableTextConnectorSupport.toValue(room, this.variableItemId, capturedValue)
+                    : null;
         }
 
         if (normalizedValue.isEmpty()) {
@@ -189,21 +214,22 @@ public class WiredExtraTextInputVariable extends InteractionWiredExtra {
     }
 
     private static boolean canUseTextualDisplay(Room room, int definitionItemId) {
-        WiredVariableDefinitionInfo definitionInfo = WiredContextVariableSupport.getDefinitionInfo(room, definitionItemId);
+        WiredVariableDefinitionInfo definitionInfo =
+                WiredContextVariableSupport.getDefinitionInfo(room, definitionItemId);
         return definitionInfo != null && definitionInfo.hasValue() && definitionInfo.isTextConnected();
     }
 
     private static String[] splitStringData(String value) {
         if (value == null) {
-            return new String[]{ "", DEFAULT_CAPTURER_NAME };
+            return new String[] {"", DEFAULT_CAPTURER_NAME};
         }
 
         String[] parts = value.split("\t", -1);
         if (parts.length == 1) {
-            return new String[]{ parts[0], DEFAULT_CAPTURER_NAME };
+            return new String[] {parts[0], DEFAULT_CAPTURER_NAME};
         }
 
-        return new String[]{ parts[0], parts[1] };
+        return new String[] {parts[0], parts[1]};
     }
 
     private static int normalizeDisplayType(int value) {
@@ -216,8 +242,9 @@ public class WiredExtraTextInputVariable extends InteractionWiredExtra {
         }
 
         String normalized = value.trim().replace("\t", "").replace("\r", "").replace("\n", "");
-        if (WRAPPED_PLACEHOLDER_PATTERN.matcher(normalized).matches()) {
-            normalized = normalized.substring(1, normalized.length() - 1).trim();
+        java.util.regex.Matcher wrapped = WRAPPED_PLACEHOLDER_PATTERN.matcher(normalized);
+        if (wrapped.matches()) {
+            normalized = (wrapped.group(1) != null ? wrapped.group(1) : wrapped.group(2)).trim();
         }
 
         if (normalized.length() > MAX_CAPTURER_NAME_LENGTH) {

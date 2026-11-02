@@ -5,10 +5,10 @@ import com.eu.habbo.habbohotel.bots.Bot;
 import com.eu.habbo.habbohotel.gameclients.GameClient;
 import com.eu.habbo.habbohotel.items.Item;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredEffect;
+import com.eu.habbo.habbohotel.items.interactions.wired.WiredInputGuard;
 import com.eu.habbo.habbohotel.items.interactions.wired.WiredSettings;
 import com.eu.habbo.habbohotel.rooms.Room;
 import com.eu.habbo.habbohotel.rooms.RoomTile;
-import com.eu.habbo.habbohotel.rooms.RoomTileState;
 import com.eu.habbo.habbohotel.rooms.RoomUnit;
 import com.eu.habbo.habbohotel.users.HabboItem;
 import com.eu.habbo.habbohotel.wired.WiredEffectType;
@@ -16,22 +16,18 @@ import com.eu.habbo.habbohotel.wired.core.WiredBotSourceUtil;
 import com.eu.habbo.habbohotel.wired.core.WiredContext;
 import com.eu.habbo.habbohotel.wired.core.WiredManager;
 import com.eu.habbo.habbohotel.wired.core.WiredSourceUtil;
+import com.eu.habbo.habbohotel.wired.protocol.WiredOfficialSources;
 import com.eu.habbo.messages.ServerMessage;
 import com.eu.habbo.messages.incoming.wired.WiredSaveException;
-import com.eu.habbo.messages.outgoing.rooms.users.RoomUserEffectComposer;
-import com.eu.habbo.threading.runnables.RoomUnitTeleport;
-import com.eu.habbo.threading.runnables.SendRoomUnitEffectComposer;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashSet;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.CopyOnWriteArraySet;
 
-public class WiredEffectBotTeleport extends InteractionWiredEffect {
+public class WiredEffectBotTeleport extends InteractionWiredEffect implements WiredOfficialSources {
     public static final WiredEffectType type = WiredEffectType.BOT_TELEPORT;
 
     private Set<HabboItem> items;
@@ -41,53 +37,21 @@ public class WiredEffectBotTeleport extends InteractionWiredEffect {
 
     public WiredEffectBotTeleport(ResultSet set, Item baseItem) throws SQLException {
         super(set, baseItem);
-        this.items = new LinkedHashSet<>();
+        this.items = new CopyOnWriteArraySet<>();
     }
 
     public WiredEffectBotTeleport(int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
         super(id, userId, item, extradata, limitedStack, limitedSells);
-        this.items = new LinkedHashSet<>();
+        this.items = new CopyOnWriteArraySet<>();
     }
 
+    /**
+     * Bot Teleport uses the same steps as a user's normal Teleport To: the room's 500 ms grid, effect 4 and the
+     * landing next to a blocked target (north first). Behaviour observed in plus-emulator/PlusEMU 58a2f279,
+     * reimplemented.
+     */
     public static void teleportUnitToTile(RoomUnit roomUnit, RoomTile tile) {
-        if (roomUnit == null || tile == null || roomUnit.isWiredTeleporting)
-            return;
-
-        Room room = roomUnit.getRoom();
-
-        if (room == null) {
-            return;
-        }
-
-        // makes a temporary effect
-
-        roomUnit.getRoom().unIdle(roomUnit.getRoom().getHabbo(roomUnit));
-        room.sendComposer(new RoomUserEffectComposer(roomUnit, 4).compose());
-        Emulator.getThreading().run(new SendRoomUnitEffectComposer(room, roomUnit), WiredManager.TELEPORT_DELAY + 1000);
-
-        if (tile == roomUnit.getCurrentLocation()) {
-            return;
-        }
-
-        if (tile.state == RoomTileState.INVALID || tile.state == RoomTileState.BLOCKED) {
-            RoomTile alternativeTile = null;
-            List<RoomTile> optionalTiles = room.getLayout().getTilesAround(tile);
-
-            Collections.reverse(optionalTiles);
-            for (RoomTile optionalTile : optionalTiles) {
-                if (optionalTile.state != RoomTileState.INVALID && optionalTile.state != RoomTileState.BLOCKED) {
-                    alternativeTile = optionalTile;
-                    break;
-                }
-            }
-
-            if (alternativeTile != null) {
-                tile = alternativeTile;
-            }
-        }
-
-        Emulator.getThreading().run(() -> { roomUnit.isWiredTeleporting = true; }, Math.max(0, WiredManager.TELEPORT_DELAY - 500));
-        Emulator.getThreading().run(new RoomUnitTeleport(roomUnit, room, tile.x, tile.y, tile.getStackHeight() + (tile.state == RoomTileState.SIT ? -0.5 : 0), roomUnit.getEffectId()), WiredManager.TELEPORT_DELAY);
+        WiredEffectTeleport.teleportUnitToTile(roomUnit, tile, false);
     }
 
     @Override
@@ -96,8 +60,12 @@ public class WiredEffectBotTeleport extends InteractionWiredEffect {
         Set<HabboItem> items = new HashSet<>();
 
         for (HabboItem item : itemsSnapshot) {
-            if (item.getRoomId() != this.getRoomId() || Emulator.getGameEnvironment().getRoomManager().getRoom(this.getRoomId()).getHabboItem(item.getId()) == null)
-                items.add(item);
+            if (item.getRoomId() != this.getRoomId()
+                    || Emulator.getGameEnvironment()
+                                    .getRoomManager()
+                                    .getRoom(this.getRoomId())
+                                    .getHabboItem(item.getId())
+                            == null) items.add(item);
         }
 
         for (HabboItem item : items) {
@@ -108,15 +76,12 @@ public class WiredEffectBotTeleport extends InteractionWiredEffect {
         message.appendBoolean(false);
         message.appendInt(WiredManager.MAXIMUM_FURNI_SELECTION);
         message.appendInt(itemsSnapshot.size());
-        for (HabboItem item : itemsSnapshot)
-            message.appendInt(item.getId());
+        for (HabboItem item : itemsSnapshot) message.appendInt(item.getId());
 
         message.appendInt(this.getBaseItem().getSpriteId());
         message.appendInt(this.getId());
         message.appendString(this.botName);
-        message.appendInt(2);
-        message.appendInt(this.furniSource);
-        message.appendInt(this.botSource);
+        message.appendInt(0);
         message.appendInt(0);
         message.appendInt(this.getType().code);
         message.appendInt(this.getDelay());
@@ -124,14 +89,27 @@ public class WiredEffectBotTeleport extends InteractionWiredEffect {
     }
 
     @Override
+    public int[] officialFurniSources() {
+        return new int[] {this.furniSource};
+    }
+
+    @Override
+    public int[] officialUserSources() {
+        return new int[] {this.botSource};
+    }
+
+    @Override
     public boolean saveData(WiredSettings settings, GameClient gameClient) throws WiredSaveException {
         String botName = settings.getStringParam();
         int[] params = settings.getIntParams();
-        this.furniSource = (params.length > 0) ? params[0] : WiredSourceUtil.SOURCE_TRIGGER;
-        this.botSource = (params.length > 1) ? WiredBotSourceUtil.normalizeBotSource(params[1]) : WiredBotSourceUtil.SOURCE_BOT_NAME;
+        // Official: the bot name, no int params; the furni source and the bots (user slot 0) are the
+        // official source slots.
+        this.furniSource = settings.furniSource(0, WiredSourceUtil.SOURCE_TRIGGER);
+        this.botSource =
+                WiredBotSourceUtil.normalizeBotSource(settings.userSource(0, WiredBotSourceUtil.SOURCE_BOT_NAME));
         int itemsCount = settings.getFurniIds().length;
 
-        if(itemsCount > Emulator.getConfig().getInt("hotel.wired.furni.selection.count")) {
+        if (itemsCount > Emulator.getConfig().getInt("hotel.wired.furni.selection.count")) {
             throw new WiredSaveException("Too many furni selected");
         }
 
@@ -144,10 +122,12 @@ public class WiredEffectBotTeleport extends InteractionWiredEffect {
         if (this.furniSource == WiredSourceUtil.SOURCE_SELECTED) {
             for (int i = 0; i < itemsCount; i++) {
                 int itemId = settings.getFurniIds()[i];
-                HabboItem it = Emulator.getGameEnvironment().getRoomManager().getRoom(this.getRoomId()).getHabboItem(itemId);
+                HabboItem it = Emulator.getGameEnvironment()
+                        .getRoomManager()
+                        .getRoom(this.getRoomId())
+                        .getHabboItem(itemId);
 
-                if(it == null)
-                    throw new WiredSaveException(String.format("Item %s not found", itemId));
+                if (it == null) throw new WiredSaveException(String.format("Item %s not found", itemId));
 
                 newItems.add(it);
             }
@@ -155,14 +135,15 @@ public class WiredEffectBotTeleport extends InteractionWiredEffect {
 
         int delay = settings.getDelay();
 
-        if(delay > Emulator.getConfig().getInt("hotel.wired.max_delay", 20))
+        if (delay > Emulator.getConfig().getInt("hotel.wired.max_delay", WiredInputGuard.DEFAULT_MAX_DELAY))
             throw new WiredSaveException("Delay too long");
 
         this.items.clear();
         if (this.furniSource == WiredSourceUtil.SOURCE_SELECTED) {
             this.items.addAll(newItems);
         }
-        this.botName = botName.substring(0, Math.min(botName.length(), Emulator.getConfig().getInt("hotel.wired.message.max_length", 100)));
+        this.botName = botName.substring(
+                0, Math.min(botName.length(), Emulator.getConfig().getInt("hotel.wired.message.max_length", 100)));
         this.setDelay(delay);
 
         return true;
@@ -224,17 +205,18 @@ public class WiredEffectBotTeleport extends InteractionWiredEffect {
             }
         }
 
-        return WiredManager.getGson().toJson(new JsonData(this.botName, itemIds, this.getDelay(), this.furniSource, this.botSource));
+        return WiredManager.getGson()
+                .toJson(new JsonData(this.botName, itemIds, this.getDelay(), this.furniSource, this.botSource));
     }
 
     @Override
     public void loadWiredData(ResultSet set, Room room) throws SQLException {
-        this.items = new LinkedHashSet<>();
+        this.items = new CopyOnWriteArraySet<>();
 
         String wiredData = set.getString("wired_data");
 
         JsonData jsonData = WiredEffectPayloadGuard.fromJson(wiredData, JsonData.class);
-        if(jsonData != null) {
+        if (jsonData != null) {
             this.setDelay(WiredEffectPayloadGuard.delay(jsonData.delay));
             this.botName = WiredEffectPayloadGuard.text(jsonData.bot_name);
             this.furniSource = WiredEffectPayloadGuard.furniSource(jsonData.furniSource);
@@ -243,18 +225,16 @@ public class WiredEffectBotTeleport extends InteractionWiredEffect {
                     : WiredBotSourceUtil.SOURCE_BOT_NAME;
 
             if (jsonData.items != null) {
-                for(int itemId : jsonData.items) {
+                for (int itemId : jsonData.items) {
                     HabboItem item = room.getHabboItem(itemId);
 
-                    if (item != null)
-                        this.items.add(item);
+                    if (item != null) this.items.add(item);
                 }
             }
             if (this.furniSource == WiredSourceUtil.SOURCE_TRIGGER && !this.items.isEmpty()) {
                 this.furniSource = WiredSourceUtil.SOURCE_SELECTED;
             }
-        }
-        else {
+        } else {
             String[] wiredDataSplit = wiredData != null ? wiredData.split("\t") : new String[0];
 
             if (wiredDataSplit.length >= 2) {
@@ -268,8 +248,7 @@ public class WiredEffectBotTeleport extends InteractionWiredEffect {
                         int itemId = WiredEffectPayloadGuard.parseInt(data[i], 0);
                         HabboItem item = itemId > 0 ? room.getHabboItem(itemId) : null;
 
-                        if (item != null)
-                            this.items.add(item);
+                        if (item != null) this.items.add(item);
                     }
                 }
             }

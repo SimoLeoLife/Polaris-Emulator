@@ -4,14 +4,14 @@ import com.eu.habbo.habbohotel.items.Item;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredTrigger;
 import com.eu.habbo.habbohotel.items.interactions.wired.WiredSettings;
 import com.eu.habbo.habbohotel.rooms.Room;
+import com.eu.habbo.habbohotel.rooms.RoomChatMessage;
 import com.eu.habbo.habbohotel.rooms.RoomUnit;
 import com.eu.habbo.habbohotel.users.Habbo;
 import com.eu.habbo.habbohotel.users.HabboItem;
-import com.eu.habbo.habbohotel.wired.core.WiredManager;
 import com.eu.habbo.habbohotel.wired.WiredTriggerType;
 import com.eu.habbo.habbohotel.wired.core.WiredEvent;
+import com.eu.habbo.habbohotel.wired.core.WiredManager;
 import com.eu.habbo.messages.ServerMessage;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 
@@ -30,7 +30,8 @@ public class WiredTriggerHabboSaysKeyword extends InteractionWiredTrigger {
         super(set, baseItem);
     }
 
-    public WiredTriggerHabboSaysKeyword(int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
+    public WiredTriggerHabboSaysKeyword(
+            int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
         super(id, userId, item, extradata, limitedStack, limitedSells);
     }
 
@@ -49,7 +50,8 @@ public class WiredTriggerHabboSaysKeyword extends InteractionWiredTrigger {
         }
 
         Habbo habbo = room.getHabbo(roomUnit);
-        return !this.ownerOnly || (habbo != null && room.getOwnerId() == habbo.getHabboInfo().getId());
+        return !this.ownerOnly
+                || (habbo != null && room.getOwnerId() == habbo.getHabboInfo().getId());
     }
 
     @Deprecated
@@ -60,33 +62,44 @@ public class WiredTriggerHabboSaysKeyword extends InteractionWiredTrigger {
 
     @Override
     public String getWiredData() {
-        return WiredManager.getGson().toJson(new JsonData(
-            this.hideMessage,
-            this.ownerOnly,
-            this.key,
-            this.matchMode
-        ));
+        return WiredManager.getGson().toJson(new JsonData(this.hideMessage, this.ownerOnly, this.key, this.matchMode));
     }
 
     @Override
     public void loadWiredData(ResultSet set, Room room) throws SQLException {
+        this.onPickUp();
+
         String wiredData = set.getString("wired_data");
+        if (wiredData == null || wiredData.isEmpty()) {
+            return;
+        }
 
         if (wiredData.startsWith("{")) {
-            JsonData data = WiredManager.getGson().fromJson(wiredData, JsonData.class);
+            JsonData data;
+            try {
+                data = WiredManager.getGson().fromJson(wiredData, JsonData.class);
+            } catch (RuntimeException ignored) {
+                // A row that cannot be read is no configuration; the defaults stand.
+                return;
+            }
+            if (data == null) {
+                return;
+            }
+
             this.ownerOnly = data.ownerOnly;
             this.hideMessage = data.hideMessage;
-            this.key = data.key;
+            // A row saved without a keyword must not leave it null: matches() reads its length.
+            this.key = (data.key == null) ? "" : data.key;
             this.matchMode = this.normalizeMatchMode(data.matchMode);
-        } else {
-            String[] data = wiredData.split("\t");
+            return;
+        }
 
-            if (data.length == 2) {
-                this.ownerOnly = data[0].equalsIgnoreCase("1");
-                this.key = data[1];
-                this.hideMessage = false;
-                this.matchMode = MATCH_CONTAINS;
-            }
+        String[] data = wiredData.split("\t");
+        if (data.length == 2) {
+            this.ownerOnly = data[0].equalsIgnoreCase("1");
+            this.key = data[1];
+            this.hideMessage = false;
+            this.matchMode = MATCH_CONTAINS;
         }
     }
 
@@ -111,10 +124,11 @@ public class WiredTriggerHabboSaysKeyword extends InteractionWiredTrigger {
         message.appendInt(this.getBaseItem().getSpriteId());
         message.appendInt(this.getId());
         message.appendString(this.key);
+        // Official layout: [owner only, match mode, hide the message].
         message.appendInt(3);
+        message.appendInt(this.ownerOnly ? 1 : 0);
         message.appendInt(this.matchMode);
         message.appendInt(this.hideMessage ? 1 : 0);
-        message.appendInt(this.ownerOnly ? 1 : 0);
         message.appendInt(0);
         message.appendInt(this.getType().code);
         message.appendInt(0);
@@ -124,10 +138,14 @@ public class WiredTriggerHabboSaysKeyword extends InteractionWiredTrigger {
     @Override
     public boolean saveData(WiredSettings settings) {
         int[] params = settings.getIntParams();
-        this.matchMode = (params.length > 0) ? this.normalizeMatchMode(params[0]) : MATCH_CONTAINS;
-        this.hideMessage = (params.length > 1) && (params[1] == 1);
-        this.ownerOnly = (params.length > 2) && (params[2] == 1);
-        this.key = (this.matchMode == MATCH_ALL_WORDS) ? "" : settings.getStringParam();
+        // Official layout: [owner only, match mode, hide the message].
+        this.ownerOnly = (params.length > 0) && (params[0] == 1);
+        this.matchMode = (params.length > 1) ? this.normalizeMatchMode(params[1]) : MATCH_CONTAINS;
+        this.hideMessage = (params.length > 2) && (params[2] == 1);
+        // A keyword longer than a chat line could never match: it is kept as its first chat-length characters,
+        // as in Habbo. Behaviour observed in plus-emulator/PlusEMU 113363bf, reimplemented.
+        String keyword = RoomChatMessage.truncateToMaximumLength(settings.getStringParam());
+        this.key = (this.matchMode == MATCH_ALL_WORDS) ? "" : keyword;
 
         return true;
     }
@@ -159,7 +177,8 @@ public class WiredTriggerHabboSaysKeyword extends InteractionWiredTrigger {
 
         switch (this.matchMode) {
             case MATCH_EXACT:
-                return normalizedText.equals(normalizedKey);
+                // AIR keeps the message's own spaces: " hi" does not fire for the keyword "hi".
+                return text.toLowerCase().equals(normalizedKey);
             case MATCH_ALL_WORDS:
                 return !normalizedText.isEmpty();
             case MATCH_CONTAINS:

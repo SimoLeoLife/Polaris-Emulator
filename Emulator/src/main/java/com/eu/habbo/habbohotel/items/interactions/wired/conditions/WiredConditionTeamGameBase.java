@@ -12,8 +12,8 @@ import com.eu.habbo.habbohotel.rooms.Room;
 import com.eu.habbo.habbohotel.rooms.RoomUnit;
 import com.eu.habbo.habbohotel.users.Habbo;
 import com.eu.habbo.habbohotel.wired.core.WiredContext;
+import com.eu.habbo.habbohotel.wired.core.WiredQuantifier;
 import com.eu.habbo.habbohotel.wired.core.WiredSourceUtil;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
@@ -31,18 +31,15 @@ abstract class WiredConditionTeamGameBase extends InteractionWiredCondition {
     protected static final int TEAM_TRIGGERER = 0;
     protected static final int MAX_SCORE = 1_000_000;
 
-    private static final GameTeamColors[] SUPPORTED_TEAM_COLORS = new GameTeamColors[] {
-            GameTeamColors.RED,
-            GameTeamColors.GREEN,
-            GameTeamColors.BLUE,
-            GameTeamColors.YELLOW
-    };
+    private static final GameTeamColors[] SUPPORTED_TEAM_COLORS =
+            new GameTeamColors[] {GameTeamColors.RED, GameTeamColors.GREEN, GameTeamColors.BLUE, GameTeamColors.YELLOW};
 
     protected WiredConditionTeamGameBase(ResultSet set, Item baseItem) throws SQLException {
         super(set, baseItem);
     }
 
-    protected WiredConditionTeamGameBase(int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
+    protected WiredConditionTeamGameBase(
+            int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
         super(id, userId, item, extradata, limitedStack, limitedSells);
     }
 
@@ -60,7 +57,7 @@ abstract class WiredConditionTeamGameBase extends InteractionWiredCondition {
 
     protected boolean matchesQuantifier(List<RoomUnit> users, int quantifier, Predicate<RoomUnit> predicate) {
         if (users.isEmpty()) {
-            return false;
+            return WiredQuantifier.overEmpty(quantifier != QUANTIFIER_ANY);
         }
 
         if (quantifier == QUANTIFIER_ANY) {
@@ -140,7 +137,9 @@ abstract class WiredConditionTeamGameBase extends InteractionWiredCondition {
         }
 
         Habbo habbo = room.getHabbo(roomUnit);
-        if (habbo == null || habbo.getHabboInfo() == null || habbo.getHabboInfo().getCurrentGame() == null) {
+        if (habbo == null
+                || habbo.getHabboInfo() == null
+                || habbo.getHabboInfo().getCurrentGame() == null) {
             return null;
         }
 
@@ -173,6 +172,24 @@ abstract class WiredConditionTeamGameBase extends InteractionWiredCondition {
         }
 
         return rank;
+    }
+
+    /**
+     * The team game running in the room, for boxes about a named team rather than about a user:
+     * such a box asks about the room's game, whoever set it off - or nobody, on a timer.
+     */
+    protected Game resolveActiveRoomGame(Room room) {
+        if (room == null || room.getGames() == null) {
+            return null;
+        }
+
+        for (Game game : room.getGames()) {
+            if (this.isSupportedGame(game)) {
+                return game;
+            }
+        }
+
+        return null;
     }
 
     private boolean isSupportedGame(Game game) {

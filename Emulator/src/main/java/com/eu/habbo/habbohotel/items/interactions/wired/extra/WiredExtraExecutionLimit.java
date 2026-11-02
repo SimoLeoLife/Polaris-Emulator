@@ -9,7 +9,6 @@ import com.eu.habbo.habbohotel.rooms.RoomTile;
 import com.eu.habbo.habbohotel.rooms.RoomUnit;
 import com.eu.habbo.habbohotel.wired.core.WiredManager;
 import com.eu.habbo.messages.ServerMessage;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayDeque;
@@ -20,7 +19,7 @@ public class WiredExtraExecutionLimit extends InteractionWiredExtra {
     public static final int MIN_EXECUTIONS = 1;
     public static final int MAX_EXECUTIONS = 100;
     public static final int DEFAULT_EXECUTIONS = 1;
-    public static final int MIN_TIME_WINDOW_MS = 1000;
+    public static final int MIN_TIME_WINDOW_MS = 500;
     public static final int MAX_TIME_WINDOW_MS = 10000;
     public static final int DEFAULT_TIME_WINDOW_MS = 1000;
     public static final int TIME_WINDOW_STEP_MS = 500;
@@ -33,7 +32,8 @@ public class WiredExtraExecutionLimit extends InteractionWiredExtra {
         super(set, baseItem);
     }
 
-    public WiredExtraExecutionLimit(int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
+    public WiredExtraExecutionLimit(
+            int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
         super(id, userId, item, extradata, limitedStack, limitedSells);
     }
 
@@ -46,7 +46,8 @@ public class WiredExtraExecutionLimit extends InteractionWiredExtra {
     public boolean saveData(WiredSettings settings, GameClient gameClient) {
         int[] intParams = settings.getIntParams();
         int nextExecutions = (intParams.length > 0) ? intParams[0] : this.maxExecutions;
-        int nextTimeWindowMs = (intParams.length > 1) ? intParams[1] : this.timeWindowMs;
+        // Official layout: [max executions, window in half-second pulses (1-20)].
+        int nextTimeWindowMs = (intParams.length > 1) ? intParams[1] * TIME_WINDOW_STEP_MS : this.timeWindowMs;
 
         this.maxExecutions = normalizeExecutions(nextExecutions);
         this.timeWindowMs = normalizeTimeWindowMs(nextTimeWindowMs);
@@ -69,7 +70,7 @@ public class WiredExtraExecutionLimit extends InteractionWiredExtra {
         message.appendString("");
         message.appendInt(2);
         message.appendInt(this.maxExecutions);
-        message.appendInt(this.timeWindowMs);
+        message.appendInt(this.timeWindowMs / TIME_WINDOW_STEP_MS);
         message.appendInt(0);
         message.appendInt(CODE);
         message.appendInt(0);
@@ -120,9 +121,7 @@ public class WiredExtraExecutionLimit extends InteractionWiredExtra {
     }
 
     @Override
-    public void onWalk(RoomUnit roomUnit, Room room, Object[] objects) throws Exception {
-
-    }
+    public void onWalk(RoomUnit roomUnit, Room room, Object[] objects) throws Exception {}
 
     @Override
     public void onMove(Room room, RoomTile oldLocation, RoomTile newLocation) {
@@ -169,9 +168,17 @@ public class WiredExtraExecutionLimit extends InteractionWiredExtra {
         }
     }
 
+    /**
+     * Habbo counts the window in whole wired pulses (500 ms), not in milliseconds: an execution
+     * leaves the window once the current pulse is the window's length of pulses after its own.
+     */
     private void pruneExpiredTimestamps(long timestamp) {
+        long currentPulse = Math.floorDiv(timestamp, (long) TIME_WINDOW_STEP_MS);
+        long windowPulses = Math.max(1, this.timeWindowMs / TIME_WINDOW_STEP_MS);
+
         while (!this.recentExecutionTimestamps.isEmpty()
-                && (timestamp - this.recentExecutionTimestamps.peekFirst()) >= this.timeWindowMs) {
+                && currentPulse - Math.floorDiv(this.recentExecutionTimestamps.peekFirst(), (long) TIME_WINDOW_STEP_MS)
+                        >= windowPulses) {
             this.recentExecutionTimestamps.removeFirst();
         }
     }

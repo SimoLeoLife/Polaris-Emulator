@@ -2,10 +2,11 @@ package com.eu.habbo.habbohotel.items.interactions.wired.effects;
 
 import com.eu.habbo.Emulator;
 import com.eu.habbo.habbohotel.gameclients.GameClient;
+import com.eu.habbo.habbohotel.items.FurnitureType;
 import com.eu.habbo.habbohotel.items.Item;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredEffect;
+import com.eu.habbo.habbohotel.items.interactions.wired.WiredInputGuard;
 import com.eu.habbo.habbohotel.items.interactions.wired.WiredSettings;
-import com.eu.habbo.habbohotel.rooms.FurnitureMovementError;
 import com.eu.habbo.habbohotel.rooms.Room;
 import com.eu.habbo.habbohotel.rooms.RoomTile;
 import com.eu.habbo.habbohotel.users.HabboItem;
@@ -14,18 +15,26 @@ import com.eu.habbo.habbohotel.wired.core.WiredContext;
 import com.eu.habbo.habbohotel.wired.core.WiredManager;
 import com.eu.habbo.habbohotel.wired.core.WiredMoveCarryHelper;
 import com.eu.habbo.habbohotel.wired.core.WiredSourceUtil;
+import com.eu.habbo.habbohotel.wired.protocol.WiredOfficialSecondaryPicks;
+import com.eu.habbo.habbohotel.wired.protocol.WiredOfficialSources;
 import com.eu.habbo.messages.ServerMessage;
 import com.eu.habbo.messages.incoming.wired.WiredSaveException;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 
-public class WiredEffectFurniToFurni extends InteractionWiredEffect {
+/**
+ * Official move furni to furni (34): no int params. Furni source slot 0 is the furni to move (100 =
+ * the picks), slot 1 the target furni (100 = the second picks, {@code stuffIds2}). Internally the
+ * target's picks stay source 101.
+ */
+public class WiredEffectFurniToFurni extends InteractionWiredEffect
+        implements WiredOfficialSources, WiredOfficialSecondaryPicks {
     private static final int SOURCE_SECONDARY_SELECTED = 101;
     private static final String FURNI_SPLIT_REGEX = "[;,\\t]";
     private static final String FURNI_DELIMITER = ";";
@@ -41,7 +50,8 @@ public class WiredEffectFurniToFurni extends InteractionWiredEffect {
         super(set, baseItem);
     }
 
-    public WiredEffectFurniToFurni(int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
+    public WiredEffectFurniToFurni(
+            int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
         super(id, userId, item, extradata, limitedStack, limitedSells);
     }
 
@@ -78,12 +88,9 @@ public class WiredEffectFurniToFurni extends InteractionWiredEffect {
                 continue;
             }
 
-            FurnitureMovementError error = WiredMoveCarryHelper.moveFurni(room, this, moveItem, targetTile, moveItem.getRotation(), null, false, ctx);
-            if (error == FurnitureMovementError.NONE) {
-                continue;
-            }
-
-            WiredMoveCarryHelper.moveFurni(room, this, moveItem, targetTile, moveItem.getRotation(), targetItem.getZ(), null, false, ctx);
+            // Habbo's stacking rules decide; a refused move (onto a chair, say) stays refused.
+            // Movement Physics' "move through furni" is what lets it onto such furni.
+            WiredMoveCarryHelper.moveFurni(room, this, moveItem, targetTile, moveItem.getRotation(), null, false, ctx);
         }
     }
 
@@ -95,13 +102,13 @@ public class WiredEffectFurniToFurni extends InteractionWiredEffect {
 
     @Override
     public String getWiredData() {
-        return WiredManager.getGson().toJson(new JsonData(
-                this.getDelay(),
-                this.moveItems.stream().map(HabboItem::getId).collect(Collectors.toList()),
-                this.targetItems.stream().map(HabboItem::getId).collect(Collectors.toList()),
-                this.moveSource,
-                this.targetSource
-        ));
+        return WiredManager.getGson()
+                .toJson(new JsonData(
+                        this.getDelay(),
+                        this.moveItems.stream().map(HabboItem::getId).collect(Collectors.toList()),
+                        this.targetItems.stream().map(HabboItem::getId).collect(Collectors.toList()),
+                        this.moveSource,
+                        this.targetSource));
     }
 
     @Override
@@ -172,10 +179,8 @@ public class WiredEffectFurniToFurni extends InteractionWiredEffect {
 
         message.appendInt(this.getBaseItem().getSpriteId());
         message.appendInt(this.getId());
-        message.appendString(this.serializeIds(this.targetItems));
-        message.appendInt(2);
-        message.appendInt(this.moveSource);
-        message.appendInt(this.targetSource);
+        message.appendString("");
+        message.appendInt(0);
         message.appendInt(0);
         message.appendInt(this.getType().code);
         message.appendInt(this.getDelay());
@@ -184,12 +189,18 @@ public class WiredEffectFurniToFurni extends InteractionWiredEffect {
 
     @Override
     public boolean saveData(WiredSettings settings, GameClient gameClient) throws WiredSaveException {
-        this.moveSource = (settings.getIntParams().length > 0) ? settings.getIntParams()[0] : WiredSourceUtil.SOURCE_TRIGGER;
-        this.targetSource = this.normalizeTargetSource((settings.getIntParams().length > 1) ? settings.getIntParams()[1] : WiredSourceUtil.SOURCE_TRIGGER);
+        this.moveSource = settings.furniSource(0, WiredSourceUtil.SOURCE_TRIGGER);
+        this.targetSource = this.normalizeTargetSource(settings.furniSource(1, WiredSourceUtil.SOURCE_TRIGGER));
 
         Room room = this.getRoom();
         if (room == null) {
             throw new WiredSaveException("Room not found");
+        }
+
+        // Picking furni with the dropdown left on "triggering furni" means the picked furni, the
+        // same promotion loadWiredData already makes.
+        if (settings.getFurniIds().length > 0 && this.moveSource == WiredSourceUtil.SOURCE_TRIGGER) {
+            this.moveSource = WiredSourceUtil.SOURCE_SELECTED;
         }
 
         List<HabboItem> newMoveItems = new ArrayList<>();
@@ -211,7 +222,15 @@ public class WiredEffectFurniToFurni extends InteractionWiredEffect {
 
         List<HabboItem> newTargetItems = new ArrayList<>();
         if (this.targetSource == SOURCE_SECONDARY_SELECTED) {
-            newTargetItems.addAll(this.parseItems(settings.getStringParam(), room));
+            // The official second picks; an older editor sent them as text.
+            int[] picks2 = settings.getFurniIds2();
+            if (picks2.length > 0) {
+                newTargetItems.addAll(this.parseItems(
+                        Arrays.stream(picks2).mapToObj(Integer::toString).collect(Collectors.joining(FURNI_DELIMITER)),
+                        room));
+            } else {
+                newTargetItems.addAll(this.parseItems(settings.getStringParam(), room));
+            }
         }
 
         if (newTargetItems.size() > Emulator.getConfig().getInt("hotel.wired.furni.selection.count")) {
@@ -219,7 +238,7 @@ public class WiredEffectFurniToFurni extends InteractionWiredEffect {
         }
 
         int delay = settings.getDelay();
-        if (delay > Emulator.getConfig().getInt("hotel.wired.max_delay", 20)) {
+        if (delay > Emulator.getConfig().getInt("hotel.wired.max_delay", WiredInputGuard.DEFAULT_MAX_DELAY)) {
             throw new WiredSaveException("Delay too long");
         }
 
@@ -249,7 +268,8 @@ public class WiredEffectFurniToFurni extends InteractionWiredEffect {
     }
 
     private List<HabboItem> resolveTargetItems(WiredContext ctx) {
-        int source = (this.targetSource == SOURCE_SECONDARY_SELECTED) ? WiredSourceUtil.SOURCE_SELECTED : this.targetSource;
+        int source =
+                (this.targetSource == SOURCE_SECONDARY_SELECTED) ? WiredSourceUtil.SOURCE_SELECTED : this.targetSource;
         return this.resolveItems(ctx, source, this.targetItems);
     }
 
@@ -258,8 +278,10 @@ public class WiredEffectFurniToFurni extends InteractionWiredEffect {
             this.validateItems(items);
         }
 
+        // Wall furni save as picks but take no part in the move, as in Habbo (dba6fcd8).
         return WiredSourceUtil.resolveItems(ctx, source, items).stream()
                 .filter(item -> item != null && ctx.room().getHabboItem(item.getId()) != null)
+                .filter(item -> item.getBaseItem() == null || item.getBaseItem().getType() != FurnitureType.WALL)
                 .collect(Collectors.toList());
     }
 
@@ -325,20 +347,26 @@ public class WiredEffectFurniToFurni extends InteractionWiredEffect {
         }
     }
 
-    private int normalizeTargetSource(int source) {
-        return (source == WiredSourceUtil.SOURCE_SELECTED) ? SOURCE_SECONDARY_SELECTED : source;
+    @Override
+    public int[] officialFurniSources() {
+        return new int[] {
+            this.moveSource,
+            (this.targetSource == SOURCE_SECONDARY_SELECTED) ? WiredSourceUtil.SOURCE_SELECTED : this.targetSource
+        };
     }
 
-    private String serializeIds(List<HabboItem> items) {
-        if (items == null || items.isEmpty()) {
-            return "";
-        }
+    @Override
+    public int[] officialUserSources() {
+        return new int[0];
+    }
 
-        return items.stream()
-                .map(HabboItem::getId)
-                .distinct()
-                .map(String::valueOf)
-                .collect(Collectors.joining(FURNI_DELIMITER));
+    @Override
+    public int[] officialFurniIds2() {
+        return this.targetItems.stream().mapToInt(HabboItem::getId).toArray();
+    }
+
+    private int normalizeTargetSource(int source) {
+        return (source == WiredSourceUtil.SOURCE_SELECTED) ? SOURCE_SECONDARY_SELECTED : source;
     }
 
     static class JsonData {
@@ -348,7 +376,8 @@ public class WiredEffectFurniToFurni extends InteractionWiredEffect {
         int moveSource;
         int targetSource;
 
-        public JsonData(int delay, List<Integer> itemIds, List<Integer> targetItemIds, int moveSource, int targetSource) {
+        public JsonData(
+                int delay, List<Integer> itemIds, List<Integer> targetItemIds, int moveSource, int targetSource) {
             this.delay = delay;
             this.itemIds = itemIds;
             this.targetItemIds = targetItemIds;

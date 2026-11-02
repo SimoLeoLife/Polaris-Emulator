@@ -8,7 +8,6 @@ import com.eu.habbo.habbohotel.rooms.Room;
 import com.eu.habbo.habbohotel.wired.WiredTriggerType;
 import com.eu.habbo.habbohotel.wired.core.WiredManager;
 import com.eu.habbo.messages.ServerMessage;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
@@ -26,7 +25,8 @@ public class WiredTriggerRepeaterShort extends WiredTriggerRepeater {
         this.repeatTime = DEFAULT_DELAY;
     }
 
-    public WiredTriggerRepeaterShort(int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
+    public WiredTriggerRepeaterShort(
+            int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
         super(id, userId, item, extradata, limitedStack, limitedSells);
         this.repeatTime = DEFAULT_DELAY;
     }
@@ -35,16 +35,20 @@ public class WiredTriggerRepeaterShort extends WiredTriggerRepeater {
     public void loadWiredData(ResultSet set, Room room) throws SQLException {
         String wiredData = set.getString("wired_data");
 
-        if (wiredData != null && wiredData.startsWith("{")) {
-            JsonData data = WiredManager.getGson().fromJson(wiredData, JsonData.class);
-            this.repeatTime = (data != null) ? data.repeatTime : DEFAULT_DELAY;
-        } else if (wiredData != null && wiredData.length() >= 1) {
-            this.repeatTime = Integer.parseInt(wiredData);
-        } else {
-            this.repeatTime = DEFAULT_DELAY;
+        Integer storedRepeatTime = null;
+        try {
+            if (wiredData != null && wiredData.startsWith("{")) {
+                JsonData data = WiredManager.getGson().fromJson(wiredData, JsonData.class);
+                storedRepeatTime = data != null ? data.repeatTime : null;
+            } else if (wiredData != null && wiredData.length() >= 1) {
+                storedRepeatTime = Integer.parseInt(wiredData);
+            }
+        } catch (RuntimeException ignored) {
+            // A row that cannot be read is no configuration; the default delay stands.
+            storedRepeatTime = null;
         }
 
-        this.repeatTime = clampRepeatTime(this.repeatTime);
+        this.repeatTime = clampRepeatTime(storedRepeatTime != null ? storedRepeatTime : DEFAULT_DELAY);
     }
 
     @Override
@@ -90,7 +94,8 @@ public class WiredTriggerRepeaterShort extends WiredTriggerRepeater {
     public boolean saveData(WiredSettings settings) {
         if (settings.getIntParams().length < 1) return false;
 
-        this.repeatTime = WiredTimerInputGuard.fromClientUnits(settings.getIntParams()[0], STEP_MS, MIN_DELAY, MAX_DELAY);
+        this.repeatTime =
+                WiredTimerInputGuard.fromClientUnits(settings.getIntParams()[0], STEP_MS, MIN_DELAY, MAX_DELAY);
 
         return true;
     }
@@ -99,9 +104,11 @@ public class WiredTriggerRepeaterShort extends WiredTriggerRepeater {
     public void onWiredTick(Room room, long tickCount, int tickIntervalMs) {
         long elapsedMs = tickCount * tickIntervalMs;
 
-        if (elapsedMs % this.repeatTime == 0) {
-            long currentTime = System.currentTimeMillis();
-            if (this.getRoomId() != 0 && room.isLoaded()
+        long currentTime = System.currentTimeMillis();
+        if (this.phase.shouldFire(
+                elapsedMs % this.repeatTime == 0, room.getCycleTimestamp(), currentTime, this.repeatTime)) {
+            if (this.getRoomId() != 0
+                    && room.isLoaded()
                     && WiredManager.isTriggerExecutionAllowed(room, this, currentTime)) {
                 WiredManager.triggerTimerRepeatShort(room, this);
             }

@@ -2,8 +2,33 @@ package com.eu.habbo.habbohotel.items.interactions.wired.effects;
 
 import com.eu.habbo.Emulator;
 import com.eu.habbo.habbohotel.gameclients.GameClient;
+import com.eu.habbo.habbohotel.items.FurnitureUsagePolicy;
 import com.eu.habbo.habbohotel.items.Item;
-import com.eu.habbo.habbohotel.items.interactions.*;
+import com.eu.habbo.habbohotel.items.interactions.InteractionBadgeDisplay;
+import com.eu.habbo.habbohotel.items.interactions.InteractionClothing;
+import com.eu.habbo.habbohotel.items.interactions.InteractionCrackable;
+import com.eu.habbo.habbohotel.items.interactions.InteractionGift;
+import com.eu.habbo.habbohotel.items.interactions.InteractionGymEquipment;
+import com.eu.habbo.habbohotel.items.interactions.InteractionHopper;
+import com.eu.habbo.habbohotel.items.interactions.InteractionMannequin;
+import com.eu.habbo.habbohotel.items.interactions.InteractionObstacle;
+import com.eu.habbo.habbohotel.items.interactions.InteractionOneWayGate;
+import com.eu.habbo.habbohotel.items.interactions.InteractionPressurePlate;
+import com.eu.habbo.habbohotel.items.interactions.InteractionPushable;
+import com.eu.habbo.habbohotel.items.interactions.InteractionPuzzleBox;
+import com.eu.habbo.habbohotel.items.interactions.InteractionQueueSpeedControl;
+import com.eu.habbo.habbohotel.items.interactions.InteractionRemoteSwitchControl;
+import com.eu.habbo.habbohotel.items.interactions.InteractionRoller;
+import com.eu.habbo.habbohotel.items.interactions.InteractionSwitch;
+import com.eu.habbo.habbohotel.items.interactions.InteractionTeleport;
+import com.eu.habbo.habbohotel.items.interactions.InteractionTent;
+import com.eu.habbo.habbohotel.items.interactions.InteractionTrap;
+import com.eu.habbo.habbohotel.items.interactions.InteractionTrophy;
+import com.eu.habbo.habbohotel.items.interactions.InteractionVendingMachine;
+import com.eu.habbo.habbohotel.items.interactions.InteractionWater;
+import com.eu.habbo.habbohotel.items.interactions.InteractionWired;
+import com.eu.habbo.habbohotel.items.interactions.InteractionWiredEffect;
+import com.eu.habbo.habbohotel.items.interactions.InteractionWiredTrigger;
 import com.eu.habbo.habbohotel.items.interactions.games.InteractionGameGate;
 import com.eu.habbo.habbohotel.items.interactions.games.InteractionGameScoreboard;
 import com.eu.habbo.habbohotel.items.interactions.games.InteractionGameTimer;
@@ -14,30 +39,35 @@ import com.eu.habbo.habbohotel.items.interactions.games.freeze.InteractionFreeze
 import com.eu.habbo.habbohotel.items.interactions.games.freeze.InteractionFreezeTile;
 import com.eu.habbo.habbohotel.items.interactions.games.tag.InteractionTagField;
 import com.eu.habbo.habbohotel.items.interactions.games.tag.InteractionTagPole;
-import com.eu.habbo.habbohotel.items.interactions.pets.*;
+import com.eu.habbo.habbohotel.items.interactions.pets.InteractionMonsterPlantSeed;
+import com.eu.habbo.habbohotel.items.interactions.pets.InteractionPetBreedingNest;
+import com.eu.habbo.habbohotel.items.interactions.pets.InteractionPetDrink;
+import com.eu.habbo.habbohotel.items.interactions.pets.InteractionPetFood;
+import com.eu.habbo.habbohotel.items.interactions.pets.InteractionPetToy;
+import com.eu.habbo.habbohotel.items.interactions.wired.WiredInputGuard;
 import com.eu.habbo.habbohotel.items.interactions.wired.WiredLegacyDataGuard;
 import com.eu.habbo.habbohotel.items.interactions.wired.WiredSettings;
 import com.eu.habbo.habbohotel.rooms.Room;
+import com.eu.habbo.habbohotel.rooms.RoomTile;
 import com.eu.habbo.habbohotel.rooms.RoomUnit;
 import com.eu.habbo.habbohotel.users.Habbo;
-import com.eu.habbo.habbohotel.wired.core.WiredContext;
 import com.eu.habbo.habbohotel.users.HabboItem;
 import com.eu.habbo.habbohotel.wired.WiredEffectType;
+import com.eu.habbo.habbohotel.wired.core.WiredContext;
 import com.eu.habbo.habbohotel.wired.core.WiredManager;
 import com.eu.habbo.habbohotel.wired.core.WiredSourceUtil;
 import com.eu.habbo.messages.ServerMessage;
 import com.eu.habbo.messages.incoming.wired.WiredSaveException;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.HashSet;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.CopyOnWriteArraySet;
 import java.util.stream.Collectors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class WiredEffectToggleFurni extends InteractionWiredEffect {
     private static final Logger LOGGER = LoggerFactory.getLogger(WiredEffectToggleFurni.class);
@@ -50,54 +80,68 @@ public class WiredEffectToggleFurni extends InteractionWiredEffect {
     private int toggleType = TOGGLE_TYPE_NEXT;
     private int furniSource = WiredSourceUtil.SOURCE_TRIGGER;
 
-    private static final List<Class<? extends HabboItem>> FORBIDDEN_TYPES = new ArrayList<Class<? extends HabboItem>>() {
-        {
-            this.add(InteractionWired.class);
-            this.add(InteractionTeleport.class);
-            this.add(InteractionPushable.class);
-            this.add(InteractionTagPole.class);
-            this.add(InteractionTagField.class);
-            this.add(InteractionCrackable.class);
-            this.add(InteractionGameScoreboard.class);
-            this.add(InteractionGameGate.class);
-            this.add(InteractionFreezeTile.class);
-            this.add(InteractionFreezeBlock.class);
-            this.add(InteractionFreezeExitTile.class);
-            this.add(InteractionBattleBanzaiTeleporter.class);
-            this.add(InteractionBattleBanzaiTile.class);
-            this.add(InteractionMonsterPlantSeed.class);
-            this.add(InteractionPetBreedingNest.class);
-            this.add(InteractionPetDrink.class);
-            this.add(InteractionPetFood.class);
-            this.add(InteractionPetToy.class);
-            this.add(InteractionBadgeDisplay.class);
-            this.add(InteractionClothing.class);
-            this.add(InteractionVendingMachine.class);
-            this.add(InteractionGift.class);
-            this.add(InteractionPressurePlate.class);
-            this.add(InteractionMannequin.class);
-            this.add(InteractionGymEquipment.class);
-            this.add(InteractionHopper.class);
-            this.add(InteractionObstacle.class);
-            this.add(InteractionOneWayGate.class);
-            this.add(InteractionPuzzleBox.class);
-            this.add(InteractionRoller.class);
-            this.add(InteractionSwitch.class);
-            this.add(InteractionTent.class);
-            this.add(InteractionTrap.class);
-            this.add(InteractionTrophy.class);
-            this.add(InteractionWater.class);
-        }
-    };
+    /** Furni AIR's Toggle State never changes, whatever their state count; no packet is sent for them. */
+    static final Set<String> UNTOUCHED_NAMES = Set.of(
+            "wf_floor_switch1",
+            "wf_floor_switch2",
+            "wf_antenna1",
+            "wf_antenna2",
+            "wf_pressureplate",
+            "wf_arrowplate",
+            "wf_box",
+            "wf_pyramid",
+            "wf_tile1",
+            "wf_tile2");
+
+    private static final List<Class<? extends HabboItem>> FORBIDDEN_TYPES =
+            new ArrayList<Class<? extends HabboItem>>() {
+                {
+                    this.add(InteractionWired.class);
+                    this.add(InteractionTeleport.class);
+                    this.add(InteractionPushable.class);
+                    this.add(InteractionTagPole.class);
+                    this.add(InteractionTagField.class);
+                    this.add(InteractionCrackable.class);
+                    this.add(InteractionGameScoreboard.class);
+                    this.add(InteractionGameGate.class);
+                    this.add(InteractionFreezeTile.class);
+                    this.add(InteractionFreezeBlock.class);
+                    this.add(InteractionFreezeExitTile.class);
+                    this.add(InteractionBattleBanzaiTeleporter.class);
+                    this.add(InteractionBattleBanzaiTile.class);
+                    this.add(InteractionMonsterPlantSeed.class);
+                    this.add(InteractionPetBreedingNest.class);
+                    this.add(InteractionPetDrink.class);
+                    this.add(InteractionPetFood.class);
+                    this.add(InteractionPetToy.class);
+                    this.add(InteractionBadgeDisplay.class);
+                    this.add(InteractionClothing.class);
+                    this.add(InteractionVendingMachine.class);
+                    this.add(InteractionGift.class);
+                    this.add(InteractionPressurePlate.class);
+                    this.add(InteractionMannequin.class);
+                    this.add(InteractionGymEquipment.class);
+                    this.add(InteractionHopper.class);
+                    this.add(InteractionObstacle.class);
+                    this.add(InteractionOneWayGate.class);
+                    this.add(InteractionPuzzleBox.class);
+                    this.add(InteractionRoller.class);
+                    this.add(InteractionSwitch.class);
+                    this.add(InteractionTent.class);
+                    this.add(InteractionTrap.class);
+                    this.add(InteractionTrophy.class);
+                    this.add(InteractionWater.class);
+                }
+            };
 
     public WiredEffectToggleFurni(ResultSet set, Item baseItem) throws SQLException {
         super(set, baseItem);
-        this.items = new LinkedHashSet<>();
+        this.items = new CopyOnWriteArraySet<>();
     }
 
     public WiredEffectToggleFurni(int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
         super(id, userId, item, extradata, limitedStack, limitedSells);
-        this.items = new LinkedHashSet<>();
+        this.items = new CopyOnWriteArraySet<>();
     }
 
     @Override
@@ -107,8 +151,12 @@ public class WiredEffectToggleFurni extends InteractionWiredEffect {
 
         List<HabboItem> invalidItems = new ArrayList<>();
         for (HabboItem item : snapshot) {
-            if (item.getRoomId() != this.getRoomId() || Emulator.getGameEnvironment().getRoomManager().getRoom(this.getRoomId()).getHabboItem(item.getId()) == null)
-                invalidItems.add(item);
+            if (item.getRoomId() != this.getRoomId()
+                    || Emulator.getGameEnvironment()
+                                    .getRoomManager()
+                                    .getRoom(this.getRoomId())
+                                    .getHabboItem(item.getId())
+                            == null) invalidItems.add(item);
         }
 
         for (HabboItem item : invalidItems) {
@@ -127,9 +175,8 @@ public class WiredEffectToggleFurni extends InteractionWiredEffect {
         message.appendInt(this.getBaseItem().getSpriteId());
         message.appendInt(this.getId());
         message.appendString("");
-        message.appendInt(2);
+        message.appendInt(1);
         message.appendInt(this.toggleType);
-        message.appendInt(this.furniSource);
         message.appendInt(0);
         message.appendInt(this.getType().code);
         message.appendInt(this.getDelay());
@@ -153,17 +200,13 @@ public class WiredEffectToggleFurni extends InteractionWiredEffect {
     @Override
     public boolean saveData(WiredSettings settings, GameClient gameClient) throws WiredSaveException {
         int[] params = settings.getIntParams();
-        if (params.length > 1) {
-            this.toggleType = normalizeToggleType(params[0]);
-            this.furniSource = params[1];
-        } else {
-            this.toggleType = TOGGLE_TYPE_NEXT;
-            this.furniSource = (params.length > 0) ? params[0] : WiredSourceUtil.SOURCE_TRIGGER;
-        }
+        // Official layout: [toggle type]; the furni source is the official source slot.
+        this.toggleType = (params.length > 0) ? normalizeToggleType(params[0]) : TOGGLE_TYPE_NEXT;
+        this.furniSource = settings.furniSource(0, WiredSourceUtil.SOURCE_TRIGGER);
 
         int itemsCount = settings.getFurniIds().length;
 
-        if(itemsCount > Emulator.getConfig().getInt("hotel.wired.furni.selection.count")) {
+        if (itemsCount > Emulator.getConfig().getInt("hotel.wired.furni.selection.count")) {
             throw new WiredSaveException("Too many furni selected");
         }
 
@@ -171,28 +214,28 @@ public class WiredEffectToggleFurni extends InteractionWiredEffect {
             this.furniSource = WiredSourceUtil.SOURCE_SELECTED;
         }
 
+        // Picks are kept whatever the source, as in the official client: they are only used while the
+        // source is "picked furni", and switching back to it finds them again.
         List<HabboItem> newItems = new ArrayList<>();
-        if (this.furniSource == WiredSourceUtil.SOURCE_SELECTED) {
-            for (int i = 0; i < itemsCount; i++) {
-                int itemId = settings.getFurniIds()[i];
-                HabboItem it = Emulator.getGameEnvironment().getRoomManager().getRoom(this.getRoomId()).getHabboItem(itemId);
+        for (int i = 0; i < itemsCount; i++) {
+            int itemId = settings.getFurniIds()[i];
+            HabboItem it = Emulator.getGameEnvironment()
+                    .getRoomManager()
+                    .getRoom(this.getRoomId())
+                    .getHabboItem(itemId);
 
-                if(it == null)
-                    throw new WiredSaveException(String.format("Item %s not found", itemId));
+            if (it == null) throw new WiredSaveException(String.format("Item %s not found", itemId));
 
-                newItems.add(it);
-            }
+            newItems.add(it);
         }
 
         int delay = settings.getDelay();
 
-        if(delay > Emulator.getConfig().getInt("hotel.wired.max_delay", 20))
+        if (delay > Emulator.getConfig().getInt("hotel.wired.max_delay", WiredInputGuard.DEFAULT_MAX_DELAY))
             throw new WiredSaveException("Delay too long");
 
         this.items.clear();
-        if (this.furniSource == WiredSourceUtil.SOURCE_SELECTED) {
-            this.items.addAll(newItems);
-        }
+        this.items.addAll(newItems);
         this.setDelay(delay);
 
         return true;
@@ -209,13 +252,28 @@ public class WiredEffectToggleFurni extends InteractionWiredEffect {
 
         Set<HabboItem> itemsToRemove = new HashSet<>();
         for (HabboItem item : effectiveItems) {
-            if (item == null || item.getRoomId() == 0 || FORBIDDEN_TYPES.stream().anyMatch(a -> a.isAssignableFrom(item.getClass()))) {
+            if (item == null || item.getRoomId() == 0) {
+                itemsToRemove.add(item);
+                continue;
+            }
+
+            // A wired box in the list flashes instead of changing state, and stays picked.
+            if (item instanceof InteractionWired wired) {
+                wired.flashBox(room);
+                continue;
+            }
+
+            if (isUntouched(item) || isHeldByFurniOnTop(room, item)) {
+                continue;
+            }
+
+            if (FORBIDDEN_TYPES.stream().anyMatch(a -> a.isAssignableFrom(item.getClass()))) {
                 itemsToRemove.add(item);
                 continue;
             }
 
             try {
-                if (item.getBaseItem().getStateCount() > 1 || item instanceof InteractionGameTimer) {
+                if (toggleStateCount(item) > 1 || item instanceof InteractionGameTimer) {
                     this.toggleItemState(room, habbo, item);
                 }
             } catch (Exception e) {
@@ -236,12 +294,13 @@ public class WiredEffectToggleFurni extends InteractionWiredEffect {
 
     @Override
     public String getWiredData() {
-        return WiredManager.getGson().toJson(new JsonData(
-                this.getDelay(),
-                new ArrayList<>(this.items).stream().map(HabboItem::getId).collect(Collectors.toList()),
-                this.toggleType,
-                this.furniSource
-        ));
+        return WiredManager.getGson()
+                .toJson(new JsonData(
+                        this.getDelay(),
+                        new ArrayList<>(this.items)
+                                .stream().map(HabboItem::getId).collect(Collectors.toList()),
+                        this.toggleType,
+                        this.furniSource));
     }
 
     @Override
@@ -254,18 +313,21 @@ public class WiredEffectToggleFurni extends InteractionWiredEffect {
             this.setDelay(WiredMovementPayloadGuard.delay(jsonData.delay));
             this.toggleType = normalizeToggleType(jsonData.toggleType);
             this.furniSource = WiredMovementPayloadGuard.furniSource(jsonData.furniSource);
-            if (jsonData.itemIds != null) for (Integer id: jsonData.itemIds) {
-                if (id == null) continue;
-                HabboItem item = room.getHabboItem(id);
+            if (jsonData.itemIds != null)
+                for (Integer id : jsonData.itemIds) {
+                    if (id == null) continue;
+                    HabboItem item = room.getHabboItem(id);
 
-                if (item instanceof InteractionFreezeBlock || item instanceof InteractionFreezeTile || item instanceof InteractionCrackable) {
-                    continue;
-                }
+                    if (item instanceof InteractionFreezeBlock
+                            || item instanceof InteractionFreezeTile
+                            || item instanceof InteractionCrackable) {
+                        continue;
+                    }
 
-                if (item != null) {
-                    this.items.add(item);
+                    if (item != null) {
+                        this.items.add(item);
+                    }
                 }
-            }
             if (this.furniSource == WiredSourceUtil.SOURCE_TRIGGER && !this.items.isEmpty()) {
                 this.furniSource = WiredSourceUtil.SOURCE_SELECTED;
             }
@@ -278,8 +340,9 @@ public class WiredEffectToggleFurni extends InteractionWiredEffect {
             if (wiredDataOld.length == 2) {
                 if (wiredDataOld[1].contains(";")) {
                     for (HabboItem item : WiredLegacyDataGuard.parseRoomItems(wiredDataOld[1], room)) {
-                        if (item instanceof InteractionFreezeBlock || item instanceof InteractionFreezeTile || item instanceof InteractionCrackable)
-                            continue;
+                        if (item instanceof InteractionFreezeBlock
+                                || item instanceof InteractionFreezeTile
+                                || item instanceof InteractionCrackable) continue;
 
                         this.items.add(item);
                     }
@@ -307,12 +370,76 @@ public class WiredEffectToggleFurni extends InteractionWiredEffect {
         return (value == TOGGLE_TYPE_PREVIOUS) ? TOGGLE_TYPE_PREVIOUS : TOGGLE_TYPE_NEXT;
     }
 
+    /**
+     * The number of states the toggle cycles through. A room configuration switch is on/off, and the
+     * queue speed controller steps through its own modes, whatever {@code interaction_modes_count}
+     * their catalog row carries.
+     */
+    static int toggleStateCount(HabboItem item) {
+        if (item instanceof InteractionQueueSpeedControl) {
+            return InteractionQueueSpeedControl.MODE_COUNT;
+        }
+
+        if (item instanceof InteractionRemoteSwitchControl) {
+            return 2;
+        }
+
+        return item.getBaseItem().getStateCount();
+    }
+
+    static boolean isUntouched(HabboItem item) {
+        return UNTOUCHED_NAMES.contains(FurnitureUsagePolicy.baseName(item));
+    }
+
+    /**
+     * A furni whose height follows its state does not change while furni stand higher on any of its tiles,
+     * as AIR refuses it (the same rule as a double-click).
+     */
+    static boolean isHeldByFurniOnTop(Room room, HabboItem item) {
+        Item base = item.getBaseItem();
+
+        if (room == null || room.getLayout() == null || base == null) {
+            return false;
+        }
+
+        double[] heights = base.getMultiHeights();
+
+        if (heights == null || heights.length <= 1 || toggleStateCount(item) <= 1) {
+            return false;
+        }
+
+        RoomTile origin = room.getLayout().getTile(item.getX(), item.getY());
+
+        if (origin == null) {
+            return false;
+        }
+
+        for (RoomTile tile :
+                room.getLayout().getTilesAt(origin, base.getWidth(), base.getLength(), item.getRotation())) {
+            for (HabboItem other : room.getItemsAt(tile)) {
+                if (other != item && other.getZ() > item.getZ()) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
     private void toggleItemState(Room room, Habbo habbo, HabboItem item) throws Exception {
-        if (item.getBaseItem().getStateCount() <= 1) {
+        if (item instanceof InteractionQueueSpeedControl queueSpeed) {
+            // Its state also carries the animation frame, so it steps a whole mode, never a frame.
+            // AIR shows the next mode group, but the rollers keep the step time a user chose.
+            queueSpeed.wiredStepMode(room, this.toggleType != TOGGLE_TYPE_PREVIOUS);
+            WiredManager.triggerFurniStateUpdated(room, (habbo != null) ? habbo.getRoomUnit() : null, item, true);
             return;
         }
 
-        int stateCount = item.getBaseItem().getStateCount();
+        int stateCount = toggleStateCount(item);
+
+        if (stateCount <= 1) {
+            return;
+        }
         int currentState = 0;
 
         if (!item.getExtradata().isEmpty()) {
@@ -320,7 +447,7 @@ public class WiredEffectToggleFurni extends InteractionWiredEffect {
                 currentState = Integer.parseInt(item.getExtradata());
             } catch (NumberFormatException ignored) {
                 if (this.toggleType == TOGGLE_TYPE_NEXT) {
-                    item.onClick(habbo != null ? habbo.getClient() : null, room, new Object[]{0, this.getType()});
+                    item.onClick(habbo != null ? habbo.getClient() : null, room, new Object[] {0, this.getType()});
                 }
                 return;
             }
@@ -337,6 +464,7 @@ public class WiredEffectToggleFurni extends InteractionWiredEffect {
         item.setExtradata(Integer.toString(nextState));
         item.needsUpdate(true);
         room.updateItemState(item);
+        WiredManager.triggerFurniStateUpdated(room, (habbo != null) ? habbo.getRoomUnit() : null, item, true);
     }
 
     static class JsonData {

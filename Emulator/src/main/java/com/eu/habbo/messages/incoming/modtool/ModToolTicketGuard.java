@@ -7,8 +7,7 @@ import com.eu.habbo.habbohotel.users.Habbo;
 final class ModToolTicketGuard {
     static final int MAX_RELEASE_BATCH = 50;
 
-    private ModToolTicketGuard() {
-    }
+    private ModToolTicketGuard() {}
 
     static boolean isPositiveId(int id) {
         return id > 0;
@@ -18,8 +17,14 @@ final class ModToolTicketGuard {
         return count > 0 && count <= MAX_RELEASE_BATCH;
     }
 
+    static boolean isValidIdListSize(int count) {
+        return count >= 0 && count <= MAX_RELEASE_BATCH;
+    }
+
     static boolean isOwnedBy(ModToolIssue issue, Habbo moderator) {
-        return issue != null && moderator != null && issue.modId == moderator.getHabboInfo().getId();
+        return issue != null
+                && moderator != null
+                && issue.modId == moderator.getHabboInfo().getId();
     }
 
     static boolean canPick(ModToolIssue issue) {

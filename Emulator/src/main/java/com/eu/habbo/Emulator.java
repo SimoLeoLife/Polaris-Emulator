@@ -144,6 +144,15 @@ public final class Emulator {
     private static final SecureRandom secureRandom = new SecureRandom();
 
     static {
+        WiredPlatform.install(new WiredPlatform.Services(
+                () -> getConfig(),
+                () -> getDatabase(),
+                () -> getGameEnvironment(),
+                () -> getThreading(),
+                () -> getPluginManager(),
+                () -> getRandom(),
+                () -> getIntUnixTimestamp(),
+                () -> isReady));
         Thread hook = new Thread(new Runnable() {
             public synchronized void run() {
                 Emulator.dispose();
@@ -186,10 +195,8 @@ public final class Emulator {
             }
 
             LOGGER.info("Polaris has successfully loaded.");
-            LOGGER.info(
-                    "System launched in: {}ms. Using {} threads!",
-                    (System.nanoTime() - startTime) / 1e6,
-                    Runtime.getRuntime().availableProcessors() * 2);
+            int threads = Emulator.getConfig().getInt("runtime.threads");
+            LOGGER.info("System launched in: {}ms. Using {} threads!", (System.nanoTime() - startTime) / 1e6, threads);
             LOGGER.info(
                     "Memory: {}/{}MB",
                     (runtime.totalMemory() - runtime.freeMemory()) / (1024 * 1024),
@@ -212,11 +219,10 @@ public final class Emulator {
                 EmulatorDashboard.launch();
             }
 
-            if (Emulator.getConfig().getInt("runtime.threads")
-                    < (Runtime.getRuntime().availableProcessors() * 2)) {
+            if (threads < (Runtime.getRuntime().availableProcessors() * 2)) {
                 LOGGER.warn(
                         "Emulator settings runtime.threads ({}) can be increased to ({}) to possibly increase performance.",
-                        Emulator.getConfig().getInt("runtime.threads"),
+                        threads,
                         Runtime.getRuntime().availableProcessors() * 2);
             }
 
@@ -344,7 +350,7 @@ public final class Emulator {
     static String startupCard(String hotelTimezoneId) {
         return "\n" + "+----------------------------------------------------------------+\n"
                 + "| Polaris (formerly Arcturus Morningstar Extended)               |\n"
-                + "| Source : github.com/duckietm/Nitro-Cool-UI-Renderer            |\n"
+                + "| Source : github.com/duckietm/Polaris-Emulator                  |\n"
                 + "| Scope  : Educational open-source fork of Arcturus/Morningstar  |\n"
                 + "| Version: "
                 + version + "\n" + "| Build  : "
@@ -431,8 +437,47 @@ public final class Emulator {
         return Emulator.getConfig() != null && Emulator.getConfig().getBoolean("gui.autostart.enabled", false);
     }
 
+    private static void registerCameraRenderDefaults(ConfigurationManager configuration) {
+        configuration.register(
+                "camera.render.mode",
+                "server",
+                "RenderRoom/thumbnail packets: upload (client PNG only), server (official-client scene JSON only), "
+                        + "auto (both, by payload; JSON only when camera.render.assets.* is configured).");
+        configuration.register("camera.render.workers", "2", "Camera render worker threads.");
+        configuration.register("camera.render.queue", "16", "Camera renders waiting at most; more are refused.");
+        configuration.register("camera.render.timeout_ms", "5000", "A camera render is abandoned after this long.");
+        configuration.register("camera.render.verify_checksum", "1", "Check the official client's scene checksum.");
+        configuration.register("camera.render.assets.furniture_dir", "", "Folder of furniture .nitro bundles.");
+        configuration.register("camera.render.assets.figure_dir", "", "Folder of figure .nitro bundles.");
+        configuration.register("camera.render.assets.figuremap", "", "Path of the hotel's FigureMap.json.");
+        configuration.register("camera.render.assets.effect_dir", "", "Folder of avatar effect .nitro bundles.");
+        configuration.register("camera.render.assets.effectmap", "", "Path of the hotel's EffectMap.json.");
+        configuration.register("camera.render.assets.pet_dir", "", "Folder of pet .nitro bundles.");
+        configuration.register(
+                "camera.render.assets.room_library", "", "room.nitro, or the client's room asset folder.");
+        configuration.register("camera.render.assets.effects_dir", "", "Folder of camera effect/frame <name>.png.");
+        configuration.register("camera.render.assets.sprites_dir", "", "Optional folder of loose <asset>.png.");
+        configuration.register("camera.render.cache_mb", "128", "Memory for decoded camera assets.");
+        configuration.register(
+                "furni.directions.enabled",
+                "1",
+                "1: furni turn only to the directions their furniture bundle lists (as the client does).");
+        configuration.register(
+                "furni.directions.assets_dir",
+                "",
+                "Folder of furniture .nitro/.hab bundles for furni directions; empty uses "
+                        + "camera.render.assets.furniture_dir.");
+        configuration.register("furni.directions.cache_size", "8192", "Furni types whose directions stay cached.");
+        configuration.register(
+                "furni.directions.wait_ms", "50", "Longest wait for a bundle read before the default rotations apply.");
+    }
+
     private static void registerStartupConfigDefaults() {
         ConfigurationManager configuration = Emulator.config;
+        configuration.register(
+                "session.recovery.enabled", "0", "Enable one-time session recovery after a controlled restart.");
+        configuration.register("session.recovery.ttl.seconds", "120", "Maximum controlled-restart recovery window.");
+        configuration.register("shutdown.drain.timeout.seconds", "15", "Maximum wait for accepted persistence work.");
         configuration.register("camera.url", "http://localhost/camera/");
         Emulator.config.register("imager.location.output.camera", "/public/camera/");
         Emulator.config.register("imager.location.output.thumbnail", "/public/camera/thumbnails/");
@@ -443,6 +488,7 @@ public final class Emulator {
         Emulator.config.register("camera.price.points", "0");
         Emulator.config.register("camera.price.points.type", "5");
         Emulator.config.register("camera.render.delay", "5");
+        registerCameraRenderDefaults(configuration);
         Emulator.config.register(
                 "hotel.timezone", java.time.ZoneId.systemDefault().getId());
         Emulator.config.register(
@@ -466,6 +512,9 @@ public final class Emulator {
         Emulator.config.register("rcon.execute_command.denied_permissions", "cmd_shutdown;cmd_give_rank");
         Emulator.config.register("rcon.execute_command.allowed_permissions", "");
         Emulator.config.register("rcon.max_payload_bytes", "65536");
+        // CMS API defaults are documented in ConfigRegistry (cms.api.enabled /
+        // cms.api.allowed) and the emulator_api migration (keys + tuning); every
+        // reader passes an explicit fallback, so no runtime registration is needed.
         configuration.register(
                 "stress.enabled", "0", "Enable transient room stress controls over the allowlisted RCON listener.");
         configuration.register("stress.max_bots", "5000");
@@ -476,9 +525,24 @@ public final class Emulator {
         configuration.register("stress.max_total_entities", "200000");
         configuration.register("stress.max_chat_per_second", "10000");
         configuration.register("stress.max_duration_seconds", "3600");
+        configuration.register("wired.gravity.max_items_per_room", "1000");
+        configuration.register("wired.gravity.settle_delay_ms", "75");
+        configuration.register("wired.gravity.retry_delay_ms", "50");
+        configuration.register(
+                "wired.opacity.max_states_per_room",
+                "5000",
+                "Maximum global and per-user opacity states retained by one room.");
+        configuration.register(
+                "wired.opacity.max_updates_per_packet",
+                "1000",
+                "Maximum furniture opacity updates emitted in one packet.");
         Emulator.config.register("nitro.secure.api.max_payload_bytes", "65536");
         Emulator.config.register("nitro.secure.config.max_file_bytes", "2097152");
         Emulator.config.register("nitro.secure.gamedata.max_file_bytes", "16777216");
+        configuration.register(
+                "nitro.secure.cache.max_bytes",
+                "134217728",
+                "Total bytes of minified secure assets kept in memory; the least recently used go first.");
         registerEarningsSettings();
     }
 

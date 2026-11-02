@@ -9,7 +9,6 @@ import com.eu.habbo.habbohotel.rooms.RoomUnitType;
 import com.eu.habbo.habbohotel.users.Habbo;
 import com.eu.habbo.habbohotel.users.HabboGender;
 import com.eu.habbo.habbohotel.wired.core.WiredManager;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 
@@ -36,7 +35,7 @@ public class InteractionEffectTile extends InteractionPressurePlate {
     public void onWalkOff(RoomUnit roomUnit, Room room, Object[] objects) throws Exception {
         Emulator.getThreading().run(() -> updateState(room), 100);
 
-        if(objects != null && objects.length > 0) {
+        if (objects != null && objects.length > 0) {
             WiredManager.triggerUserWalksOff(room, roomUnit, this);
         }
     }
@@ -53,7 +52,8 @@ public class InteractionEffectTile extends InteractionPressurePlate {
         if (roomUnit.getRoomUnitType() == RoomUnitType.USER) {
             Habbo habbo = room.getHabbo(roomUnit);
 
-            if (habbo != null) {
+            // A rider keeps the riding effect; the tile's effect would hide the horse.
+            if (habbo != null && habbo.getHabboInfo().getRiding() == null) {
                 this.giveEffect(room, roomUnit, habbo.getHabboInfo().getGender());
             }
         } else if (roomUnit.getRoomUnitType() == RoomUnitType.BOT) {

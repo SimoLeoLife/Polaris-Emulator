@@ -9,7 +9,6 @@ import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraFilterUs
 import com.eu.habbo.habbohotel.rooms.Room;
 import com.eu.habbo.habbohotel.rooms.RoomUnit;
 import com.eu.habbo.habbohotel.users.HabboItem;
-
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -18,21 +17,70 @@ import java.util.List;
 final class WiredSelectionFilterSupport {
     private static final ThreadLocal<Integer> FILTER_DEPTH = ThreadLocal.withInitial(() -> 0);
 
-    private WiredSelectionFilterSupport() {
-    }
+    private WiredSelectionFilterSupport() {}
 
+    /**
+     * Applies the stack's filter add-ons to what its selectors picked, as in Habbo: a filter narrows the
+     * selection, and with no selector of its kind it starts from nothing, so the kind ends up empty
+     * instead of keeping the triggering user or furni. Other sources (the triggering user, users in the
+     * room, ...) are never filtered.
+     */
     static void applySelectorFilters(Room room, HabboItem triggerItem, WiredContext ctx) {
         if (ctx == null) {
             return;
         }
 
         if (ctx.targets().isItemsModifiedBySelector()) {
-            ctx.targets().setItems(filterItems(room, triggerItem, ctx, ctx.targets().items()));
+            ctx.targets()
+                    .setItems(filterItems(room, triggerItem, ctx, ctx.targets().items()));
+        } else if (hasFurniFilter(room, triggerItem, ctx)) {
+            ctx.targets().setItems(List.of());
         }
 
         if (ctx.targets().isUsersModifiedBySelector()) {
-            ctx.targets().setUsers(filterUsers(room, triggerItem, ctx, ctx.targets().users()));
+            ctx.targets()
+                    .setUsers(filterUsers(room, triggerItem, ctx, ctx.targets().users()));
+        } else if (hasUserFilter(room, triggerItem, ctx)) {
+            ctx.targets().setUsers(List.of());
         }
+    }
+
+    /** Whether the stack has a furni filter that would narrow a selection (a configured amount, or by variable). */
+    static boolean hasFurniFilter(Room room, HabboItem triggerItem, WiredContext ctx) {
+        if (shouldBypass(room, triggerItem, ctx)) {
+            return false;
+        }
+        Collection<InteractionWiredExtra> extras =
+                room.getRoomSpecialTypes().getExtras(triggerItem.getX(), triggerItem.getY());
+        if (extras == null) {
+            return false;
+        }
+        for (InteractionWiredExtra extra : extras) {
+            if (extra instanceof WiredExtraFilterFurniByVariable
+                    || (extra instanceof WiredExtraFilterFurni furni && furni.resolveAmount(ctx) > 0)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Whether the stack has a user filter that would narrow a selection (a configured amount, or by variable). */
+    static boolean hasUserFilter(Room room, HabboItem triggerItem, WiredContext ctx) {
+        if (shouldBypass(room, triggerItem, ctx)) {
+            return false;
+        }
+        Collection<InteractionWiredExtra> extras =
+                room.getRoomSpecialTypes().getExtras(triggerItem.getX(), triggerItem.getY());
+        if (extras == null) {
+            return false;
+        }
+        for (InteractionWiredExtra extra : extras) {
+            if (extra instanceof WiredExtraFilterUsersByVariable
+                    || (extra instanceof WiredExtraFilterUser user && user.resolveAmount(ctx) > 0)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     static List<HabboItem> filterItems(Room room, HabboItem triggerItem, WiredContext ctx, Iterable<HabboItem> values) {
@@ -42,17 +90,25 @@ final class WiredSelectionFilterSupport {
             return items;
         }
 
-        Collection<InteractionWiredExtra> extras = room.getRoomSpecialTypes().getExtras(triggerItem.getX(), triggerItem.getY());
+        Collection<InteractionWiredExtra> extras =
+                room.getRoomSpecialTypes().getExtras(triggerItem.getX(), triggerItem.getY());
         if (extras == null || extras.isEmpty()) {
             return items;
         }
 
         int furniLimit = Integer.MAX_VALUE;
+        boolean furniRandom = false;
         List<WiredExtraFilterFurniByVariable> variableFilters = new ArrayList<>();
 
         for (InteractionWiredExtra extra : extras) {
             if (extra instanceof WiredExtraFilterFurni) {
-                furniLimit = Math.min(furniLimit, ((WiredExtraFilterFurni) extra).getAmount());
+                // A filter that was never configured carries 0, which means "no limit" rather than
+                // "nothing": applying it would silently empty every selection the stack makes.
+                int amount = ((WiredExtraFilterFurni) extra).resolveAmount(ctx);
+                if (amount > 0) {
+                    furniLimit = Math.min(furniLimit, amount);
+                    furniRandom |= ((WiredExtraFilterFurni) extra).isRandomPick();
+                }
             } else if (extra instanceof WiredExtraFilterFurniByVariable) {
                 variableFilters.add((WiredExtraFilterFurniByVariable) extra);
             }
@@ -72,7 +128,7 @@ final class WiredSelectionFilterSupport {
             }
 
             if (furniLimit != Integer.MAX_VALUE) {
-                filteredItems = limitIterable(filteredItems, furniLimit);
+                filteredItems = limitIterable(filteredItems, furniLimit, furniRandom);
             }
 
             return toItemList(filteredItems);
@@ -86,17 +142,25 @@ final class WiredSelectionFilterSupport {
             return users;
         }
 
-        Collection<InteractionWiredExtra> extras = room.getRoomSpecialTypes().getExtras(triggerItem.getX(), triggerItem.getY());
+        Collection<InteractionWiredExtra> extras =
+                room.getRoomSpecialTypes().getExtras(triggerItem.getX(), triggerItem.getY());
         if (extras == null || extras.isEmpty()) {
             return users;
         }
 
         int userLimit = Integer.MAX_VALUE;
+        boolean userRandom = false;
         List<WiredExtraFilterUsersByVariable> variableFilters = new ArrayList<>();
 
         for (InteractionWiredExtra extra : extras) {
             if (extra instanceof WiredExtraFilterUser) {
-                userLimit = Math.min(userLimit, ((WiredExtraFilterUser) extra).getAmount());
+                // Same as the furni filter: 0 is the unconfigured state and must not limit anything.
+                int amount = ((WiredExtraFilterUser) extra).resolveAmount(ctx);
+                if (amount > 0) {
+                    userLimit = Math.min(userLimit, amount);
+                    // The official user filter always keeps a random N.
+                    userRandom = true;
+                }
             } else if (extra instanceof WiredExtraFilterUsersByVariable) {
                 variableFilters.add((WiredExtraFilterUsersByVariable) extra);
             }
@@ -116,7 +180,7 @@ final class WiredSelectionFilterSupport {
             }
 
             if (userLimit != Integer.MAX_VALUE) {
-                filteredUsers = limitIterable(filteredUsers, userLimit);
+                filteredUsers = limitIterable(filteredUsers, userLimit, userRandom);
             }
 
             return toUserList(filteredUsers);
@@ -136,7 +200,8 @@ final class WiredSelectionFilterSupport {
         return new FilterScope();
     }
 
-    private static <T> List<T> limitIterable(Iterable<T> values, int limit) {
+    /** The first N in selection order, or a random N (the user filter, and furni filters set to random). */
+    private static <T> List<T> limitIterable(Iterable<T> values, int limit, boolean random) {
         List<T> result = new ArrayList<>();
 
         if (values == null || limit <= 0) {
@@ -153,7 +218,9 @@ final class WiredSelectionFilterSupport {
             return result;
         }
 
-        Collections.shuffle(result, Emulator.getRandom());
+        if (random) {
+            Collections.shuffle(result, Emulator.getRandom());
+        }
         return new ArrayList<>(result.subList(0, limit));
     }
 
@@ -187,6 +254,10 @@ final class WiredSelectionFilterSupport {
         }
 
         return result;
+    }
+
+    static void clearThreadLocalsForCurrentThread() {
+        FILTER_DEPTH.remove();
     }
 
     private static final class FilterScope implements AutoCloseable {

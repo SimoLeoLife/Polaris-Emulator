@@ -1,6 +1,8 @@
 package com.eu.habbo.habbohotel.items.interactions.wired.conditions;
 
 import com.eu.habbo.Emulator;
+import com.eu.habbo.WiredCompatibilityDiagnostics;
+import com.eu.habbo.WiredPlatform;
 import com.eu.habbo.habbohotel.items.Item;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredCondition;
 import com.eu.habbo.habbohotel.items.interactions.wired.WiredSettings;
@@ -10,9 +12,12 @@ import com.eu.habbo.habbohotel.users.HabboItem;
 import com.eu.habbo.habbohotel.wired.WiredConditionType;
 import com.eu.habbo.habbohotel.wired.core.WiredContext;
 import com.eu.habbo.habbohotel.wired.core.WiredManager;
+import com.eu.habbo.habbohotel.wired.core.WiredQuantifier;
 import com.eu.habbo.habbohotel.wired.core.WiredSourceUtil;
+import com.eu.habbo.habbohotel.wired.protocol.WiredOfficialQuantifier;
+import com.eu.habbo.habbohotel.wired.protocol.WiredOfficialSecondaryPicks;
+import com.eu.habbo.habbohotel.wired.protocol.WiredOfficialSources;
 import com.eu.habbo.messages.ServerMessage;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
@@ -22,7 +27,8 @@ import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 
-public class WiredConditionFurniTypeMatch extends InteractionWiredCondition {
+public class WiredConditionFurniTypeMatch extends InteractionWiredCondition
+        implements WiredOfficialQuantifier, WiredOfficialSources, WiredOfficialSecondaryPicks {
     protected static final int SOURCE_SECONDARY_SELECTED = 101;
     protected static final int QUANTIFIER_ALL = 0;
     protected static final int QUANTIFIER_ANY = 1;
@@ -39,7 +45,8 @@ public class WiredConditionFurniTypeMatch extends InteractionWiredCondition {
         super(set, baseItem);
     }
 
-    public WiredConditionFurniTypeMatch(int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
+    public WiredConditionFurniTypeMatch(
+            int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
         super(id, userId, item, extradata, limitedStack, limitedSells);
     }
 
@@ -68,7 +75,7 @@ public class WiredConditionFurniTypeMatch extends InteractionWiredCondition {
     protected boolean evaluateAllMatches(WiredContext ctx) {
         List<HabboItem> matchTargets = this.resolveMatchTargets(ctx);
         if (matchTargets.isEmpty()) {
-            return false;
+            return WiredQuantifier.overEmpty(true);
         }
 
         Set<Integer> compareTypeIds = this.resolveCompareTypeIds(ctx);
@@ -125,7 +132,9 @@ public class WiredConditionFurniTypeMatch extends InteractionWiredCondition {
     }
 
     protected boolean matchesType(HabboItem item, Set<Integer> compareTypeIds) {
-        return item != null && item.getBaseItem() != null && compareTypeIds.contains(item.getBaseItem().getId());
+        return item != null
+                && item.getBaseItem() != null
+                && compareTypeIds.contains(item.getBaseItem().getId());
     }
 
     protected List<HabboItem> resolveConfiguredItems(WiredContext ctx, int sourceType) {
@@ -145,13 +154,13 @@ public class WiredConditionFurniTypeMatch extends InteractionWiredCondition {
     @Override
     public String getWiredData() {
         this.refresh();
-        return WiredManager.getGson().toJson(new JsonData(
-                this.items.stream().map(HabboItem::getId).collect(Collectors.toList()),
-                this.secondaryItems.stream().map(HabboItem::getId).collect(Collectors.toList()),
-                this.furniSource,
-                this.compareFurniSource,
-                this.quantifier
-        ));
+        return WiredManager.getGson()
+                .toJson(new JsonData(
+                        this.items.stream().map(HabboItem::getId).collect(Collectors.toList()),
+                        this.secondaryItems.stream().map(HabboItem::getId).collect(Collectors.toList()),
+                        this.furniSource,
+                        this.compareFurniSource,
+                        this.quantifier));
     }
 
     @Override
@@ -177,10 +186,16 @@ public class WiredConditionFurniTypeMatch extends InteractionWiredCondition {
             }
 
             List<Integer> primaryIds = (data.primaryItemIds != null) ? data.primaryItemIds : new ArrayList<>();
-            List<Integer> compareIds = (data.secondaryItemIds != null) ? data.secondaryItemIds : ((data.itemIds != null) ? data.itemIds : new ArrayList<>());
+            List<Integer> compareIds = (data.secondaryItemIds != null)
+                    ? data.secondaryItemIds
+                    : ((data.itemIds != null) ? data.itemIds : new ArrayList<>());
 
-            this.furniSource = this.normalizeFurniSource((data.furniSource != null) ? data.furniSource : WiredSourceUtil.SOURCE_TRIGGER);
-            this.compareFurniSource = this.normalizeFurniSource((data.compareFurniSource != null) ? data.compareFurniSource : (compareIds.isEmpty() ? WiredSourceUtil.SOURCE_TRIGGER : SOURCE_SECONDARY_SELECTED));
+            this.furniSource = this.normalizeFurniSource(
+                    (data.furniSource != null) ? data.furniSource : WiredSourceUtil.SOURCE_TRIGGER);
+            this.compareFurniSource = this.normalizeFurniSource(
+                    (data.compareFurniSource != null)
+                            ? data.compareFurniSource
+                            : (compareIds.isEmpty() ? WiredSourceUtil.SOURCE_TRIGGER : SOURCE_SECONDARY_SELECTED));
             this.quantifier = this.normalizeQuantifier((data.quantifier != null) ? data.quantifier : QUANTIFIER_ANY);
 
             this.loadItems(room, primaryIds, this.items);
@@ -195,11 +210,17 @@ public class WiredConditionFurniTypeMatch extends InteractionWiredCondition {
             try {
                 compareIds.add(Integer.parseInt(value));
             } catch (NumberFormatException ignored) {
+                WiredCompatibilityDiagnostics.record(
+                        WiredCompatibilityDiagnostics.FailurePoint.CONDITION_FURNI_TYPE_ID,
+                        this.getRoomId(),
+                        this.getId(),
+                        ignored);
             }
         }
 
         this.loadItems(room, compareIds, this.secondaryItems);
-        this.compareFurniSource = this.secondaryItems.isEmpty() ? WiredSourceUtil.SOURCE_TRIGGER : SOURCE_SECONDARY_SELECTED;
+        this.compareFurniSource =
+                this.secondaryItems.isEmpty() ? WiredSourceUtil.SOURCE_TRIGGER : SOURCE_SECONDARY_SELECTED;
         this.quantifier = QUANTIFIER_ANY;
     }
 
@@ -212,6 +233,8 @@ public class WiredConditionFurniTypeMatch extends InteractionWiredCondition {
     public void serializeWiredData(ServerMessage message, Room room) {
         this.refresh();
 
+        // Official layout (StuffTypeMatches): no int params, the furni checked and the furni whose types they
+        // must have in the two source slots (100 = the picks, stuffIds; 101 = the other picks, stuffIds2).
         message.appendBoolean(false);
         message.appendInt(WiredManager.MAXIMUM_FURNI_SELECTION);
         message.appendInt(this.items.size());
@@ -222,11 +245,8 @@ public class WiredConditionFurniTypeMatch extends InteractionWiredCondition {
 
         message.appendInt(this.getBaseItem().getSpriteId());
         message.appendInt(this.getId());
-        message.appendString(this.serializeIds(this.secondaryItems));
-        message.appendInt(3);
-        message.appendInt(this.furniSource);
-        message.appendInt(this.compareFurniSource);
-        message.appendInt(this.quantifier);
+        message.appendString("");
+        message.appendInt(0);
         message.appendInt(0);
         message.appendInt(this.getType().code);
         message.appendInt(0);
@@ -234,48 +254,69 @@ public class WiredConditionFurniTypeMatch extends InteractionWiredCondition {
     }
 
     @Override
+    public int[] officialFurniSources() {
+        return new int[] {this.furniSource, this.compareFurniSource};
+    }
+
+    @Override
+    public int[] officialUserSources() {
+        return new int[0];
+    }
+
+    @Override
+    public int[] officialFurniIds2() {
+        return this.secondaryItems.stream().mapToInt(HabboItem::getId).toArray();
+    }
+
+    @Override
     public boolean saveData(WiredSettings settings) {
         int count = settings.getFurniIds().length;
-        if (count > Emulator.getConfig().getInt("hotel.wired.furni.selection.count")) return false;
+        int maxFurni = Emulator.getConfig().getInt("hotel.wired.furni.selection.count");
+        if (count > maxFurni) return false;
+        if (settings.getFurniIds2().length > maxFurni) return false;
 
         int[] params = settings.getIntParams();
-        String stringParam = (settings.getStringParam() != null) ? settings.getStringParam().trim() : "";
-        boolean legacyData = (params.length <= 1) && stringParam.isEmpty();
+        int[] sources = settings.getFurniSourceTypes();
+        String stringParam =
+                (settings.getStringParam() != null) ? settings.getStringParam().trim() : "";
 
         this.onPickUp();
 
-        if (legacyData) {
-            this.furniSource = (params.length > 0) ? this.normalizeFurniSource(params[0]) : WiredSourceUtil.SOURCE_TRIGGER;
-            this.quantifier = QUANTIFIER_ANY;
-        } else {
-            this.furniSource = (params.length > 0) ? this.normalizeFurniSource(params[0]) : WiredSourceUtil.SOURCE_TRIGGER;
-            this.compareFurniSource = (params.length > 1) ? this.normalizeFurniSource(params[1]) : WiredSourceUtil.SOURCE_TRIGGER;
-            this.quantifier = (params.length > 2) ? this.normalizeQuantifier(params[2]) : QUANTIFIER_ALL;
-        }
+        // The official save names both slots; an older client sent only the checked furni's source, the type
+        // source as its int and the checked furni in the string.
+        boolean official = sources.length >= 2;
 
-        if (count > 0 && this.furniSource == WiredSourceUtil.SOURCE_TRIGGER) {
-            this.furniSource = WiredSourceUtil.SOURCE_SELECTED;
+        this.furniSource = sources.length > 0 ? this.normalizeFurniSource(sources[0]) : WiredSourceUtil.SOURCE_TRIGGER;
+        if (official) {
+            this.compareFurniSource = this.normalizeFurniSource(sources[1]);
+        } else {
+            this.compareFurniSource =
+                    (params.length > 0) ? this.normalizeFurniSource(params[0]) : SOURCE_SECONDARY_SELECTED;
         }
+        // A fresh box opens on "any": officially one match is enough.
+        this.quantifier = this.normalizeQuantifier(settings.getQuantifierCode());
 
         Room room = Emulator.getGameEnvironment().getRoomManager().getRoom(this.getRoomId());
         if (room == null) {
             return false;
         }
 
-        if (legacyData) {
-            for (int itemId : settings.getFurniIds()) {
-                HabboItem item = room.getHabboItem(itemId);
-                if (item != null) {
-                    this.secondaryItems.add(item);
-                }
+        if (official) {
+            if (this.usesSource(WiredSourceUtil.SOURCE_SELECTED)) {
+                this.addItems(room, settings.getFurniIds(), this.items);
             }
-
-            this.compareFurniSource = this.secondaryItems.isEmpty() ? WiredSourceUtil.SOURCE_TRIGGER : SOURCE_SECONDARY_SELECTED;
+            if (this.usesSource(SOURCE_SECONDARY_SELECTED)) {
+                this.addItems(room, settings.getFurniIds2(), this.secondaryItems);
+            }
             return true;
         }
 
+        if (this.compareFurniSource == SOURCE_SECONDARY_SELECTED) {
+            this.addItems(room, settings.getFurniIds(), this.secondaryItems);
+        }
+
         if (this.furniSource == WiredSourceUtil.SOURCE_SELECTED) {
-            for (int itemId : settings.getFurniIds()) {
+            for (Integer itemId : this.parseIds(stringParam)) {
                 HabboItem item = room.getHabboItem(itemId);
                 if (item != null) {
                     this.items.add(item);
@@ -283,16 +324,20 @@ public class WiredConditionFurniTypeMatch extends InteractionWiredCondition {
             }
         }
 
-        if (this.compareFurniSource == SOURCE_SECONDARY_SELECTED) {
-            for (Integer itemId : this.parseIds(stringParam)) {
-                HabboItem item = room.getHabboItem(itemId);
-                if (item != null) {
-                    this.secondaryItems.add(item);
-                }
+        return true;
+    }
+
+    private boolean usesSource(int source) {
+        return this.furniSource == source || this.compareFurniSource == source;
+    }
+
+    private void addItems(Room room, int[] itemIds, Set<HabboItem> target) {
+        for (int itemId : itemIds) {
+            HabboItem item = room.getHabboItem(itemId);
+            if (item != null) {
+                target.add(item);
             }
         }
-
-        return true;
     }
 
     protected int getQuantifier() {
@@ -307,7 +352,12 @@ public class WiredConditionFurniTypeMatch extends InteractionWiredCondition {
     private void refreshSelection(Set<HabboItem> selection) {
         Set<HabboItem> remove = new HashSet<>();
 
-        Room room = Emulator.getGameEnvironment().getRoomManager().getRoom(this.getRoomId());
+        if (WiredPlatform.gameEnvironment() == null
+                || WiredPlatform.gameEnvironment().getRoomManager() == null) {
+            return;
+        }
+
+        Room room = WiredPlatform.gameEnvironment().getRoomManager().getRoom(this.getRoomId());
         if (room == null) {
             remove.addAll(selection);
         } else {
@@ -340,14 +390,6 @@ public class WiredConditionFurniTypeMatch extends InteractionWiredCondition {
         }
     }
 
-    private String serializeIds(Set<HabboItem> source) {
-        return source.stream()
-                .map(HabboItem::getId)
-                .filter(id -> id > 0)
-                .map(String::valueOf)
-                .collect(Collectors.joining(";"));
-    }
-
     List<Integer> parseIds(String value) {
         List<Integer> result = new ArrayList<>();
         if (value == null || value.isEmpty()) {
@@ -362,6 +404,11 @@ public class WiredConditionFurniTypeMatch extends InteractionWiredCondition {
             try {
                 result.add(Integer.parseInt(part.trim()));
             } catch (NumberFormatException ignored) {
+                WiredCompatibilityDiagnostics.record(
+                        WiredCompatibilityDiagnostics.FailurePoint.CONDITION_FURNI_TYPE_ID,
+                        this.getRoomId(),
+                        this.getId(),
+                        ignored);
             }
         }
 
@@ -393,12 +440,22 @@ public class WiredConditionFurniTypeMatch extends InteractionWiredCondition {
         Integer compareFurniSource;
         Integer quantifier;
 
-        public JsonData(List<Integer> primaryItemIds, List<Integer> secondaryItemIds, int furniSource, int compareFurniSource, int quantifier) {
+        public JsonData(
+                List<Integer> primaryItemIds,
+                List<Integer> secondaryItemIds,
+                int furniSource,
+                int compareFurniSource,
+                int quantifier) {
             this.primaryItemIds = primaryItemIds;
             this.secondaryItemIds = secondaryItemIds;
             this.furniSource = furniSource;
             this.compareFurniSource = compareFurniSource;
             this.quantifier = quantifier;
         }
+    }
+
+    @Override
+    public int officialQuantifierCode() {
+        return this.getQuantifier();
     }
 }

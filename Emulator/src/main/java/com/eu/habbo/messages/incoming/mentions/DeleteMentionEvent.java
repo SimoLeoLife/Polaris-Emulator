@@ -18,10 +18,6 @@ public class DeleteMentionEvent extends MessageHandler {
 
         MentionManager manager = Emulator.getGameEnvironment().getMentionManager();
 
-        if (!manager.tryAcquireDelete(userId)) {
-            return;
-        }
-
         manager.delete(userId, mentionId);
     }
 }

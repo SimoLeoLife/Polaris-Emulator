@@ -1,19 +1,5 @@
 package com.eu.habbo.networking.gameserver.auth;
 
-import com.eu.habbo.Emulator;
-import com.google.gson.JsonObject;
-import io.netty.channel.ChannelHandlerContext;
-import io.netty.handler.codec.http.FullHttpRequest;
-import io.netty.handler.codec.http.HttpHeaderNames;
-import io.netty.handler.codec.http.HttpResponseStatus;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
-
 import static com.eu.habbo.networking.gameserver.auth.AuthHttpUtil.EMAIL_RE;
 import static com.eu.habbo.networking.gameserver.auth.AuthHttpUtil.USERNAME_RE;
 import static com.eu.habbo.networking.gameserver.auth.AuthHttpUtil.checkPassword;
@@ -21,47 +7,59 @@ import static com.eu.habbo.networking.gameserver.auth.AuthHttpUtil.errorPayload;
 import static com.eu.habbo.networking.gameserver.auth.AuthHttpUtil.readString;
 import static com.eu.habbo.networking.gameserver.auth.AuthHttpUtil.sendJson;
 
+import com.eu.habbo.Emulator;
+import com.eu.habbo.messages.outgoing.handshake.DisconnectReasonComposer;
+import com.google.gson.JsonObject;
+import io.netty.channel.ChannelHandlerContext;
+import io.netty.handler.codec.http.FullHttpRequest;
+import io.netty.handler.codec.http.HttpHeaderNames;
+import io.netty.handler.codec.http.HttpResponseStatus;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 final class AccountChangeEndpoints {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(AccountChangeEndpoints.class);
 
-    private AccountChangeEndpoints() {
-    }
+    private AccountChangeEndpoints() {}
 
     static void handleChangePassword(ChannelHandlerContext ctx, FullHttpRequest req, JsonObject body, String ip) {
         int userId = verifyBearer(req, ip, ctx);
         if (userId <= 0) return;
 
         String currentPassword = readString(body, "currentPassword");
-        String newPassword     = readString(body, "newPassword");
+        String newPassword = readString(body, "newPassword");
         String confirmPassword = readString(body, "confirmPassword");
 
         if (currentPassword.isEmpty() || newPassword.isEmpty() || confirmPassword.isEmpty()) {
-            sendJson(ctx, req, HttpResponseStatus.BAD_REQUEST,
-                    errorPayload("All fields are required."));
+            sendJson(ctx, req, HttpResponseStatus.BAD_REQUEST, errorPayload("All fields are required."));
             return;
         }
 
         if (currentPassword.length() > 256 || newPassword.length() > 256) {
-            sendJson(ctx, req, HttpResponseStatus.BAD_REQUEST,
-                    errorPayload("Password too long."));
+            sendJson(ctx, req, HttpResponseStatus.BAD_REQUEST, errorPayload("Password too long."));
             return;
         }
 
         if (!newPassword.equals(confirmPassword)) {
-            sendJson(ctx, req, HttpResponseStatus.BAD_REQUEST,
-                    errorPayload("New passwords do not match."));
+            sendJson(ctx, req, HttpResponseStatus.BAD_REQUEST, errorPayload("New passwords do not match."));
             return;
         }
 
         if (newPassword.length() < 8) {
-            sendJson(ctx, req, HttpResponseStatus.BAD_REQUEST,
-                    errorPayload("Password must be at least 8 characters."));
+            sendJson(ctx, req, HttpResponseStatus.BAD_REQUEST, errorPayload("Password must be at least 8 characters."));
             return;
         }
 
         if (newPassword.equals(currentPassword)) {
-            sendJson(ctx, req, HttpResponseStatus.BAD_REQUEST,
+            sendJson(
+                    ctx,
+                    req,
+                    HttpResponseStatus.BAD_REQUEST,
                     errorPayload("New password must be different from the current password."));
             return;
         }
@@ -69,8 +67,8 @@ final class AccountChangeEndpoints {
         try (Connection conn = Emulator.getDatabase().getDataSource().getConnection()) {
             String storedHash = null;
             String username = null;
-            try (PreparedStatement lookup = conn.prepareStatement(
-                    "SELECT username, password FROM users WHERE id = ? LIMIT 1")) {
+            try (PreparedStatement lookup =
+                    conn.prepareStatement("SELECT username, password FROM users WHERE id = ? LIMIT 1")) {
                 lookup.setInt(1, userId);
                 try (ResultSet rs = lookup.executeQuery()) {
                     if (rs.next()) {
@@ -86,11 +84,24 @@ final class AccountChangeEndpoints {
                 return;
             }
 
+            // The account's own counter, as at login: a stolen token could guess the current password from many IPs.
+            if (AuthRateLimiter.isAccountLocked(username)) {
+                sendJson(
+                        ctx,
+                        req,
+                        HttpResponseStatus.TOO_MANY_REQUESTS,
+                        errorPayload("Too many attempts. Try again later."));
+                return;
+            }
+
             if (!checkPassword(currentPassword, storedHash)) {
                 AuthRateLimiter.recordFailure(ip);
-                LOGGER.info("[auth/change-password] current password mismatch for user id={} username='{}'", userId, username);
-                sendJson(ctx, req, HttpResponseStatus.UNAUTHORIZED,
-                        errorPayload("Current password is incorrect."));
+                AuthRateLimiter.recordAccountFailure(username);
+                LOGGER.info(
+                        "[auth/change-password] current password mismatch for user id={} username='{}'",
+                        userId,
+                        username);
+                sendJson(ctx, req, HttpResponseStatus.UNAUTHORIZED, errorPayload("Current password is incorrect."));
                 return;
             }
 
@@ -98,10 +109,9 @@ final class AccountChangeEndpoints {
             boolean previousAutoCommit = conn.getAutoCommit();
             conn.setAutoCommit(false);
             try {
-                try (PreparedStatement upd = conn.prepareStatement(
-                        "UPDATE users SET password = ?, auth_ticket = '', "
-                                + "access_token_version = access_token_version + 1 "
-                                + "WHERE id = ? LIMIT 1")) {
+                try (PreparedStatement upd = conn.prepareStatement("UPDATE users SET password = ?, auth_ticket = '', "
+                        + "access_token_version = access_token_version + 1 "
+                        + "WHERE id = ? LIMIT 1")) {
                     upd.setString(1, hashed);
                     upd.setInt(2, userId);
                     upd.executeUpdate();
@@ -109,14 +119,21 @@ final class AccountChangeEndpoints {
                 RememberJwtService.revokeAllForUser(conn, userId);
                 conn.commit();
             } catch (SQLException transactionError) {
-                try { conn.rollback(); } catch (SQLException ignored) { }
+                try {
+                    conn.rollback();
+                } catch (SQLException ignored) {
+                }
                 throw transactionError;
             } finally {
                 conn.setAutoCommit(previousAutoCommit);
             }
 
             AuthRateLimiter.recordSuccess(ip);
-            LOGGER.info("[auth/change-password] password updated for user id={} username='{}' ip='{}'", userId, username, ip);
+            LOGGER.info(
+                    "[auth/change-password] password updated for user id={} username='{}' ip='{}'",
+                    userId,
+                    username,
+                    ip);
 
             JsonObject ok = new JsonObject();
             ok.addProperty("message", "Password updated successfully.");
@@ -130,7 +147,10 @@ final class AccountChangeEndpoints {
                 ok.addProperty("accessToken", reissued.token);
                 ok.addProperty("accessTokenExpiresAt", reissued.expiresAt);
             } catch (SQLException reissueError) {
-                LOGGER.warn("[auth/change-password] could not reissue access token for user id={}; client must log in again", userId, reissueError);
+                LOGGER.warn(
+                        "[auth/change-password] could not reissue access token for user id={}; client must log in again",
+                        userId,
+                        reissueError);
             }
 
             sendJson(ctx, req, HttpResponseStatus.OK, ok);
@@ -145,23 +165,20 @@ final class AccountChangeEndpoints {
         if (userId <= 0) return;
 
         String currentPassword = readString(body, "currentPassword");
-        String newEmail        = readString(body, "newEmail").trim();
+        String newEmail = readString(body, "newEmail").trim();
 
         if (currentPassword.isEmpty() || newEmail.isEmpty()) {
-            sendJson(ctx, req, HttpResponseStatus.BAD_REQUEST,
-                    errorPayload("All fields are required."));
+            sendJson(ctx, req, HttpResponseStatus.BAD_REQUEST, errorPayload("All fields are required."));
             return;
         }
 
         if (currentPassword.length() > 256 || newEmail.length() > 254) {
-            sendJson(ctx, req, HttpResponseStatus.BAD_REQUEST,
-                    errorPayload("Field too long."));
+            sendJson(ctx, req, HttpResponseStatus.BAD_REQUEST, errorPayload("Field too long."));
             return;
         }
 
         if (!EMAIL_RE.matcher(newEmail).matches()) {
-            sendJson(ctx, req, HttpResponseStatus.BAD_REQUEST,
-                    errorPayload("Invalid email address."));
+            sendJson(ctx, req, HttpResponseStatus.BAD_REQUEST, errorPayload("Invalid email address."));
             return;
         }
 
@@ -169,8 +186,8 @@ final class AccountChangeEndpoints {
             String storedHash = null;
             String username = null;
             String currentEmail = null;
-            try (PreparedStatement lookup = conn.prepareStatement(
-                    "SELECT username, password, mail FROM users WHERE id = ? LIMIT 1")) {
+            try (PreparedStatement lookup =
+                    conn.prepareStatement("SELECT username, password, mail FROM users WHERE id = ? LIMIT 1")) {
                 lookup.setInt(1, userId);
                 try (ResultSet rs = lookup.executeQuery()) {
                     if (rs.next()) {
@@ -187,35 +204,50 @@ final class AccountChangeEndpoints {
                 return;
             }
 
+            // The account's own counter, as at login: a stolen token could guess the current password from many IPs.
+            if (AuthRateLimiter.isAccountLocked(username)) {
+                sendJson(
+                        ctx,
+                        req,
+                        HttpResponseStatus.TOO_MANY_REQUESTS,
+                        errorPayload("Too many attempts. Try again later."));
+                return;
+            }
+
             if (!checkPassword(currentPassword, storedHash)) {
                 AuthRateLimiter.recordFailure(ip);
+                AuthRateLimiter.recordAccountFailure(username);
                 LOGGER.info("[auth/change-email] password mismatch for user id={} username='{}'", userId, username);
-                sendJson(ctx, req, HttpResponseStatus.UNAUTHORIZED,
-                        errorPayload("Current password is incorrect."));
+                sendJson(ctx, req, HttpResponseStatus.UNAUTHORIZED, errorPayload("Current password is incorrect."));
                 return;
             }
 
             if (currentEmail != null && currentEmail.equalsIgnoreCase(newEmail)) {
-                sendJson(ctx, req, HttpResponseStatus.BAD_REQUEST,
+                sendJson(
+                        ctx,
+                        req,
+                        HttpResponseStatus.BAD_REQUEST,
                         errorPayload("New email must be different from the current email."));
                 return;
             }
 
-            try (PreparedStatement check = conn.prepareStatement(
-                    "SELECT id FROM users WHERE mail = ? AND id <> ? LIMIT 1")) {
+            try (PreparedStatement check =
+                    conn.prepareStatement("SELECT id FROM users WHERE mail = ? AND id <> ? LIMIT 1")) {
                 check.setString(1, newEmail);
                 check.setInt(2, userId);
                 try (ResultSet rs = check.executeQuery()) {
                     if (rs.next()) {
-                        sendJson(ctx, req, HttpResponseStatus.CONFLICT,
+                        sendJson(
+                                ctx,
+                                req,
+                                HttpResponseStatus.CONFLICT,
                                 errorPayload("That email address is already in use."));
                         return;
                     }
                 }
             }
 
-            try (PreparedStatement upd = conn.prepareStatement(
-                    "UPDATE users SET mail = ? WHERE id = ? LIMIT 1")) {
+            try (PreparedStatement upd = conn.prepareStatement("UPDATE users SET mail = ? WHERE id = ? LIMIT 1")) {
                 upd.setString(1, newEmail);
                 upd.setInt(2, userId);
                 upd.executeUpdate();
@@ -242,28 +274,28 @@ final class AccountChangeEndpoints {
         if (userId <= 0) return;
 
         String currentPassword = readString(body, "currentPassword");
-        String newUsername     = readString(body, "newUsername").trim();
+        String newUsername = readString(body, "newUsername").trim();
 
         if (currentPassword.isEmpty() || newUsername.isEmpty()) {
-            sendJson(ctx, req, HttpResponseStatus.BAD_REQUEST,
-                    errorPayload("All fields are required."));
+            sendJson(ctx, req, HttpResponseStatus.BAD_REQUEST, errorPayload("All fields are required."));
             return;
         }
 
         if (currentPassword.length() > 256) {
-            sendJson(ctx, req, HttpResponseStatus.BAD_REQUEST,
-                    errorPayload("Field too long."));
+            sendJson(ctx, req, HttpResponseStatus.BAD_REQUEST, errorPayload("Field too long."));
             return;
         }
 
         if (newUsername.length() > 25) {
-            sendJson(ctx, req, HttpResponseStatus.BAD_REQUEST,
-                    errorPayload("Username can be at most 25 characters."));
+            sendJson(ctx, req, HttpResponseStatus.BAD_REQUEST, errorPayload("Username can be at most 25 characters."));
             return;
         }
 
         if (!USERNAME_RE.matcher(newUsername).matches()) {
-            sendJson(ctx, req, HttpResponseStatus.BAD_REQUEST,
+            sendJson(
+                    ctx,
+                    req,
+                    HttpResponseStatus.BAD_REQUEST,
                     errorPayload("Username must be 3-25 characters (letters, numbers, . _ -)."));
             return;
         }
@@ -272,249 +304,96 @@ final class AccountChangeEndpoints {
         long cooldownSeconds = cooldownDays * 86400L;
 
         try (Connection conn = Emulator.getDatabase().getDataSource().getConnection()) {
-            String storedHash = null;
-            String currentUsername = null;
-            int lastChange = 0;
-            boolean cooldownColumnExists = true;
+            RenameAccount account = lookupRenameAccount(conn, userId);
 
-            try (PreparedStatement lookup = conn.prepareStatement(
-                    "SELECT username, password, last_username_change FROM users WHERE id = ? LIMIT 1")) {
-                lookup.setInt(1, userId);
-                try (ResultSet rs = lookup.executeQuery()) {
-                    if (rs.next()) {
-                        currentUsername = rs.getString("username");
-                        storedHash = rs.getString("password");
-                        lastChange = rs.getInt("last_username_change");
-                    }
-                }
-            } catch (SQLException missingColumn) {
-                cooldownColumnExists = false;
-                LOGGER.warn("[auth/change-username] users.last_username_change column missing — cooldown disabled. Run the migration in config/Database.sql.");
-                try (PreparedStatement lookup = conn.prepareStatement(
-                        "SELECT username, password FROM users WHERE id = ? LIMIT 1")) {
-                    lookup.setInt(1, userId);
-                    try (ResultSet rs = lookup.executeQuery()) {
-                        if (rs.next()) {
-                            currentUsername = rs.getString("username");
-                            storedHash = rs.getString("password");
-                        }
-                    }
-                }
-            }
-
-            if (storedHash == null || storedHash.isEmpty()) {
+            if (account.storedHash() == null || account.storedHash().isEmpty()) {
                 AuthRateLimiter.recordFailure(ip);
                 sendJson(ctx, req, HttpResponseStatus.UNAUTHORIZED, errorPayload("Account not found."));
                 return;
             }
 
-            if (!checkPassword(currentPassword, storedHash)) {
-                AuthRateLimiter.recordFailure(ip);
-                LOGGER.info("[auth/change-username] password mismatch for user id={} username='{}'", userId, currentUsername);
-                sendJson(ctx, req, HttpResponseStatus.UNAUTHORIZED,
-                        errorPayload("Current password is incorrect."));
+            // The account's own counter, as at login: a stolen token could guess the current password from many IPs.
+            if (AuthRateLimiter.isAccountLocked(account.username())) {
+                sendJson(
+                        ctx,
+                        req,
+                        HttpResponseStatus.TOO_MANY_REQUESTS,
+                        errorPayload("Too many attempts. Try again later."));
                 return;
             }
 
-            if (currentUsername != null && currentUsername.equals(newUsername)) {
-                sendJson(ctx, req, HttpResponseStatus.BAD_REQUEST,
+            if (!checkPassword(currentPassword, account.storedHash())) {
+                AuthRateLimiter.recordFailure(ip);
+                AuthRateLimiter.recordAccountFailure(account.username());
+                LOGGER.info(
+                        "[auth/change-username] password mismatch for user id={} username='{}'",
+                        userId,
+                        account.username());
+                sendJson(ctx, req, HttpResponseStatus.UNAUTHORIZED, errorPayload("Current password is incorrect."));
+                return;
+            }
+
+            if (account.username() != null && account.username().equals(newUsername)) {
+                sendJson(
+                        ctx,
+                        req,
+                        HttpResponseStatus.BAD_REQUEST,
                         errorPayload("New username must be different from the current username."));
                 return;
             }
 
             int now = Emulator.getIntUnixTimestamp();
-            if (cooldownColumnExists && cooldownSeconds > 0 && lastChange > 0) {
-                long allowedAt = (long) lastChange + cooldownSeconds;
+            if (account.cooldownColumnExists() && cooldownSeconds > 0 && account.lastChange() > 0) {
+                long allowedAt = (long) account.lastChange() + cooldownSeconds;
                 if (now < allowedAt) {
-                    long remaining = allowedAt - now;
-                    long days = remaining / 86400L;
-                    long hours = (remaining % 86400L) / 3600L;
-                    String wait = days > 0 ? (days + " day" + (days == 1 ? "" : "s")) : (hours + " hour" + (hours == 1 ? "" : "s"));
-                    sendJson(ctx, req, HttpResponseStatus.TOO_MANY_REQUESTS,
-                            errorPayload("You can rename again in " + wait + "."));
+                    sendJson(
+                            ctx,
+                            req,
+                            HttpResponseStatus.TOO_MANY_REQUESTS,
+                            errorPayload("You can rename again in " + renameWaitText(allowedAt - now) + "."));
                     return;
                 }
             }
 
-            try (PreparedStatement banned = conn.prepareStatement(
-                    "SELECT 1 FROM banned_usernames WHERE LOWER(username) = LOWER(?) LIMIT 1")) {
-                banned.setString(1, newUsername);
-                try (ResultSet rs = banned.executeQuery()) {
-                    if (rs.next()) {
-                        sendJson(ctx, req, HttpResponseStatus.CONFLICT,
-                                errorPayload("That username is not allowed."));
-                        return;
-                    }
-                }
-            } catch (SQLException bannedTableError) {
-                if (bannedTableError.getErrorCode() != 1146
-                        && !"42S02".equals(bannedTableError.getSQLState())) {
-                    throw bannedTableError;
-                }
-            }
-
-            try (PreparedStatement check = conn.prepareStatement(
-                    "SELECT id FROM users WHERE LOWER(username) = LOWER(?) AND id <> ? LIMIT 1")) {
-                check.setString(1, newUsername);
-                check.setInt(2, userId);
-                try (ResultSet rs = check.executeQuery()) {
-                    if (rs.next()) {
-                        sendJson(ctx, req, HttpResponseStatus.CONFLICT,
-                                errorPayload("That username is already taken."));
-                        return;
-                    }
-                }
-            }
-
-            boolean previousAutoCommit = conn.getAutoCommit();
-            conn.setAutoCommit(false);
-
-            boolean cooldownRace = false;
-            boolean duplicateName = false;
-
-            try {
-                int rowsUpdated = 0;
-
-                try (PreparedStatement upd = conn.prepareStatement(
-                        cooldownColumnExists
-                                ? "UPDATE users SET username = ?, last_username_change = ? "
-                                + "WHERE id = ? "
-                                + "  AND (last_username_change = 0 OR last_username_change + ? <= ?) "
-                                + "LIMIT 1"
-                                : "UPDATE users SET username = ? WHERE id = ? LIMIT 1")) {
-                    upd.setString(1, newUsername);
-                    if (cooldownColumnExists) {
-                        upd.setInt(2, now);
-                        upd.setInt(3, userId);
-                        upd.setLong(4, cooldownSeconds);
-                        upd.setInt(5, now);
-                    } else {
-                        upd.setInt(2, userId);
-                    }
-                    try {
-                        rowsUpdated = upd.executeUpdate();
-                    } catch (SQLException dup) {
-                        if (dup.getErrorCode() == 1062 || "23000".equals(dup.getSQLState())) {
-                            duplicateName = true;
-                        } else {
-                            throw dup;
-                        }
-                    }
-                }
-
-                if (duplicateName || (cooldownColumnExists && rowsUpdated == 0)) {
-                    if (!duplicateName) cooldownRace = true;
-                    conn.rollback();
-                } else {
-                    try (PreparedStatement upd = conn.prepareStatement(
-                            "UPDATE rooms SET owner_name = ? WHERE owner_id = ?")) {
-                        upd.setString(1, newUsername);
-                        upd.setInt(2, userId);
-                        upd.executeUpdate();
-                    }
-
-                    try (PreparedStatement upd = conn.prepareStatement(
-                            "UPDATE rooms_for_sale SET owner_name = ? WHERE user_id = ?")) {
-                        upd.setString(1, newUsername);
-                        upd.setInt(2, userId);
-                        upd.executeUpdate();
-                    } catch (SQLException roomsForSale) {
-                        if (roomsForSale.getErrorCode() != 1146
-                                && !"42S02".equals(roomsForSale.getSQLState())) {
-                            throw roomsForSale;
-                        }
-                    }
-
-                    conn.commit();
-                }
-            } catch (SQLException txError) {
-                try { conn.rollback(); } catch (SQLException ignore) {}
-                throw txError;
-            } finally {
-                conn.setAutoCommit(previousAutoCommit);
-            }
-
-            if (duplicateName) {
-                LOGGER.info("[auth/change-username] dup-entry race for user id={} wanted='{}'", userId, newUsername);
-                sendJson(ctx, req, HttpResponseStatus.CONFLICT,
-                        errorPayload("That username is already taken."));
+            if (isUsernameBanned(conn, newUsername)) {
+                sendJson(ctx, req, HttpResponseStatus.CONFLICT, errorPayload("That username is not allowed."));
                 return;
             }
 
-            if (cooldownRace) {
+            if (isUsernameTaken(conn, newUsername, userId)) {
+                sendJson(ctx, req, HttpResponseStatus.CONFLICT, errorPayload("That username is already taken."));
+                return;
+            }
+
+            RenameOutcome outcome =
+                    applyRename(conn, userId, newUsername, now, account.cooldownColumnExists(), cooldownSeconds);
+
+            if (outcome == RenameOutcome.DUPLICATE_NAME) {
+                LOGGER.info("[auth/change-username] dup-entry race for user id={} wanted='{}'", userId, newUsername);
+                sendJson(ctx, req, HttpResponseStatus.CONFLICT, errorPayload("That username is already taken."));
+                return;
+            }
+
+            if (outcome == RenameOutcome.COOLDOWN_RACE) {
                 LOGGER.info("[auth/change-username] cooldown race for user id={} (concurrent rename rejected)", userId);
-                sendJson(ctx, req, HttpResponseStatus.TOO_MANY_REQUESTS,
+                sendJson(
+                        ctx,
+                        req,
+                        HttpResponseStatus.TOO_MANY_REQUESTS,
                         errorPayload("Rename already in progress — please wait."));
                 return;
             }
 
-            try {
-                if (Emulator.getGameServer() != null && Emulator.getGameServer().getGameClientManager() != null
-                        && Emulator.getGameEnvironment() != null && Emulator.getGameEnvironment().getHabboManager() != null) {
-                    com.eu.habbo.habbohotel.users.Habbo habbo =
-                            Emulator.getGameServer().getGameClientManager().getHabbo(userId);
-                    if (habbo != null) {
-                        Emulator.getGameEnvironment().getHabboManager().removeHabbo(habbo);
-                        habbo.getHabboInfo().setUsername(newUsername);
-                        Emulator.getGameEnvironment().getHabboManager().addHabbo(habbo);
-                    }
-                }
-            } catch (Exception cacheError) {
-                LOGGER.warn("[auth/change-username] failed to refresh HabboManager cache", cacheError);
-            }
-
-            try {
-                if (Emulator.getGameEnvironment() != null && Emulator.getGameEnvironment().getRoomManager() != null) {
-                    for (com.eu.habbo.habbohotel.rooms.Room room : Emulator.getGameEnvironment().getRoomManager().getActiveRooms()) {
-                        if (room.getOwnerId() == userId) {
-                            room.setOwnerName(newUsername);
-                        }
-                    }
-                }
-            } catch (Exception cacheError) {
-                LOGGER.warn("[auth/change-username] failed to refresh Room.ownerName cache", cacheError);
-            }
-
-            try {
-                com.eu.habbo.messages.incoming.catalog.marketplace.RequestOffersEvent.cachedResults.clear();
-            } catch (Exception cacheError) {
-                LOGGER.warn("[auth/change-username] failed to clear marketplace cache", cacheError);
-            }
-
-            // Bump the token version and revoke remember families atomically: a
-            // username change does not alter the password, so if the family revoke
-            // failed after the version bump committed, surviving families could still
-            // mint fresh tokens under the new version and defeat the forced relogin.
-            boolean revocationAutoCommit = conn.getAutoCommit();
-            conn.setAutoCommit(false);
-            try {
-                try (PreparedStatement clear = conn.prepareStatement(
-                        "UPDATE users SET auth_ticket = '', online = '0', "
-                                + "access_token_version = access_token_version + 1 WHERE id = ? LIMIT 1")) {
-                    clear.setInt(1, userId);
-                    clear.executeUpdate();
-                }
-                RememberJwtService.revokeAllForUser(conn, userId);
-                conn.commit();
-            } catch (SQLException revokeError) {
-                try { conn.rollback(); } catch (SQLException ignore) {}
-                throw revokeError;
-            } finally {
-                conn.setAutoCommit(revocationAutoCommit);
-            }
-
-            if (Emulator.getGameServer() != null
-                    && Emulator.getGameServer().getGameClientManager() != null) {
-                com.eu.habbo.habbohotel.users.Habbo habbo =
-                        Emulator.getGameServer().getGameClientManager().getHabbo(userId);
-                if (habbo != null && habbo.getClient() != null) {
-                    Emulator.getGameServer().getGameClientManager().forceDisposeClient(habbo.getClient());
-                }
-            }
+            refreshRenameCaches(userId, account.username(), newUsername);
+            revokeSessionsAfterRename(conn, userId);
 
             AuthRateLimiter.recordSuccess(ip);
-            LOGGER.info("[auth/change-username] '{}' -> '{}' (user id={}, ip='{}')",
-                    currentUsername, newUsername, userId, ip);
+            LOGGER.info(
+                    "[auth/change-username] '{}' -> '{}' (user id={}, ip='{}')",
+                    account.username(),
+                    newUsername,
+                    userId,
+                    ip);
 
             JsonObject ok = new JsonObject();
             ok.addProperty("message", "Username updated. Please log in again with your new name.");
@@ -524,6 +403,243 @@ final class AccountChangeEndpoints {
         } catch (Exception e) {
             LOGGER.error("[auth/change-username] failed for user id=" + userId, e);
             sendJson(ctx, req, HttpResponseStatus.INTERNAL_SERVER_ERROR, errorPayload("Server error."));
+        }
+    }
+
+    /** The account row a rename is judged against; the cooldown column is absent on databases that never added it. */
+    private record RenameAccount(String username, String storedHash, int lastChange, boolean cooldownColumnExists) {}
+
+    private static RenameAccount lookupRenameAccount(Connection conn, int userId) throws SQLException {
+        try (PreparedStatement lookup = conn.prepareStatement(
+                "SELECT username, password, last_username_change FROM users WHERE id = ? LIMIT 1")) {
+            lookup.setInt(1, userId);
+            try (ResultSet rs = lookup.executeQuery()) {
+                if (rs.next()) {
+                    return new RenameAccount(
+                            rs.getString("username"),
+                            rs.getString("password"),
+                            rs.getInt("last_username_change"),
+                            true);
+                }
+                return new RenameAccount(null, null, 0, true);
+            }
+        } catch (SQLException missingColumn) {
+            LOGGER.warn(
+                    "[auth/change-username] users.last_username_change column missing — cooldown disabled. Run the migration in config/Database.sql.");
+            try (PreparedStatement lookup =
+                    conn.prepareStatement("SELECT username, password FROM users WHERE id = ? LIMIT 1")) {
+                lookup.setInt(1, userId);
+                try (ResultSet rs = lookup.executeQuery()) {
+                    if (rs.next()) {
+                        return new RenameAccount(rs.getString("username"), rs.getString("password"), 0, false);
+                    }
+                    return new RenameAccount(null, null, 0, false);
+                }
+            }
+        }
+    }
+
+    /** How long a player still has to wait: whole days, else whole hours, else "less than an hour". */
+    static String renameWaitText(long remainingSeconds) {
+        long days = remainingSeconds / 86400L;
+        long hours = (remainingSeconds % 86400L) / 3600L;
+        if (days > 0) return days + " day" + (days == 1 ? "" : "s");
+        if (hours > 0) return hours + " hour" + (hours == 1 ? "" : "s");
+        return "less than an hour";
+    }
+
+    static boolean isUsernameBanned(Connection conn, String username) throws SQLException {
+        try (PreparedStatement banned =
+                conn.prepareStatement("SELECT 1 FROM banned_usernames WHERE LOWER(username) = LOWER(?) LIMIT 1")) {
+            banned.setString(1, username);
+            try (ResultSet rs = banned.executeQuery()) {
+                return rs.next();
+            }
+        } catch (SQLException bannedTableError) {
+            if (bannedTableError.getErrorCode() != 1146 && !"42S02".equals(bannedTableError.getSQLState())) {
+                throw bannedTableError;
+            }
+            return false;
+        }
+    }
+
+    private static boolean isUsernameTaken(Connection conn, String username, int exceptUserId) throws SQLException {
+        try (PreparedStatement check =
+                conn.prepareStatement("SELECT id FROM users WHERE LOWER(username) = LOWER(?) AND id <> ? LIMIT 1")) {
+            check.setString(1, username);
+            check.setInt(2, exceptUserId);
+            try (ResultSet rs = check.executeQuery()) {
+                return rs.next();
+            }
+        }
+    }
+
+    private enum RenameOutcome {
+        RENAMED,
+        DUPLICATE_NAME,
+        COOLDOWN_RACE
+    }
+
+    /** Writes the new name on the user and on the rooms they own, in one transaction. */
+    private static RenameOutcome applyRename(
+            Connection conn,
+            int userId,
+            String newUsername,
+            int now,
+            boolean cooldownColumnExists,
+            long cooldownSeconds)
+            throws SQLException {
+        boolean previousAutoCommit = conn.getAutoCommit();
+        conn.setAutoCommit(false);
+
+        RenameOutcome outcome = RenameOutcome.RENAMED;
+
+        try {
+            boolean duplicateName = false;
+            int rowsUpdated = 0;
+
+            try (PreparedStatement upd = conn.prepareStatement(
+                    cooldownColumnExists
+                            ? "UPDATE users SET username = ?, last_username_change = ? "
+                                    + "WHERE id = ? "
+                                    + "  AND (last_username_change = 0 OR last_username_change + ? <= ?) "
+                                    + "LIMIT 1"
+                            : "UPDATE users SET username = ? WHERE id = ? LIMIT 1")) {
+                upd.setString(1, newUsername);
+                if (cooldownColumnExists) {
+                    upd.setInt(2, now);
+                    upd.setInt(3, userId);
+                    upd.setLong(4, cooldownSeconds);
+                    upd.setInt(5, now);
+                } else {
+                    upd.setInt(2, userId);
+                }
+                try {
+                    rowsUpdated = upd.executeUpdate();
+                } catch (SQLException dup) {
+                    if (dup.getErrorCode() == 1062 || "23000".equals(dup.getSQLState())) {
+                        duplicateName = true;
+                    } else {
+                        throw dup;
+                    }
+                }
+            }
+
+            if (duplicateName || (cooldownColumnExists && rowsUpdated == 0)) {
+                outcome = duplicateName ? RenameOutcome.DUPLICATE_NAME : RenameOutcome.COOLDOWN_RACE;
+                conn.rollback();
+            } else {
+                try (PreparedStatement upd =
+                        conn.prepareStatement("UPDATE rooms SET owner_name = ? WHERE owner_id = ?")) {
+                    upd.setString(1, newUsername);
+                    upd.setInt(2, userId);
+                    upd.executeUpdate();
+                }
+
+                try (PreparedStatement upd =
+                        conn.prepareStatement("UPDATE rooms_for_sale SET owner_name = ? WHERE user_id = ?")) {
+                    upd.setString(1, newUsername);
+                    upd.setInt(2, userId);
+                    upd.executeUpdate();
+                } catch (SQLException roomsForSale) {
+                    if (roomsForSale.getErrorCode() != 1146 && !"42S02".equals(roomsForSale.getSQLState())) {
+                        throw roomsForSale;
+                    }
+                }
+
+                conn.commit();
+            }
+        } catch (SQLException txError) {
+            try {
+                conn.rollback();
+            } catch (SQLException ignore) {
+            }
+            throw txError;
+        } finally {
+            conn.setAutoCommit(previousAutoCommit);
+        }
+
+        return outcome;
+    }
+
+    /** The name lives in a few in-memory copies too; a failure to refresh one is logged and does not undo the rename. */
+    private static void refreshRenameCaches(int userId, String oldUsername, String newUsername) {
+        // The registration form caches whether a name is free: the old name is free now and the new one is taken.
+        AvailabilityCache.invalidateUsername(oldUsername);
+        AvailabilityCache.invalidateUsername(newUsername);
+
+        try {
+            if (Emulator.getGameServer() != null
+                    && Emulator.getGameServer().getGameClientManager() != null
+                    && Emulator.getGameEnvironment() != null
+                    && Emulator.getGameEnvironment().getHabboManager() != null) {
+                com.eu.habbo.habbohotel.users.Habbo habbo =
+                        Emulator.getGameServer().getGameClientManager().getHabbo(userId);
+                if (habbo != null) {
+                    Emulator.getGameEnvironment().getHabboManager().removeHabbo(habbo);
+                    habbo.getHabboInfo().setUsername(newUsername);
+                    Emulator.getGameEnvironment().getHabboManager().addHabbo(habbo);
+                }
+            }
+        } catch (Exception cacheError) {
+            LOGGER.warn("[auth/change-username] failed to refresh HabboManager cache", cacheError);
+        }
+
+        try {
+            if (Emulator.getGameEnvironment() != null
+                    && Emulator.getGameEnvironment().getRoomManager() != null) {
+                for (com.eu.habbo.habbohotel.rooms.Room room :
+                        Emulator.getGameEnvironment().getRoomManager().getActiveRooms()) {
+                    if (room.getOwnerId() == userId) {
+                        room.setOwnerName(newUsername);
+                    }
+                }
+            }
+        } catch (Exception cacheError) {
+            LOGGER.warn("[auth/change-username] failed to refresh Room.ownerName cache", cacheError);
+        }
+
+        try {
+            com.eu.habbo.messages.incoming.catalog.marketplace.RequestOffersEvent.cachedResults.clear();
+        } catch (Exception cacheError) {
+            LOGGER.warn("[auth/change-username] failed to clear marketplace cache", cacheError);
+        }
+    }
+
+    /** Forces a new login: the token version moves, every remember family goes, and a connected client is logged out. */
+    private static void revokeSessionsAfterRename(Connection conn, int userId) throws SQLException {
+        // Bump the token version and revoke remember families atomically: a
+        // username change does not alter the password, so if the family revoke
+        // failed after the version bump committed, surviving families could still
+        // mint fresh tokens under the new version and defeat the forced relogin.
+        boolean revocationAutoCommit = conn.getAutoCommit();
+        conn.setAutoCommit(false);
+        try {
+            try (PreparedStatement clear = conn.prepareStatement("UPDATE users SET auth_ticket = '', online = '0', "
+                    + "access_token_version = access_token_version + 1 WHERE id = ? LIMIT 1")) {
+                clear.setInt(1, userId);
+                clear.executeUpdate();
+            }
+            RememberJwtService.revokeAllForUser(conn, userId);
+            conn.commit();
+        } catch (SQLException revokeError) {
+            try {
+                conn.rollback();
+            } catch (SQLException ignore) {
+            }
+            throw revokeError;
+        } finally {
+            conn.setAutoCommit(revocationAutoCommit);
+        }
+
+        if (Emulator.getGameServer() != null && Emulator.getGameServer().getGameClientManager() != null) {
+            com.eu.habbo.habbohotel.users.Habbo habbo =
+                    Emulator.getGameServer().getGameClientManager().getHabbo(userId);
+            if (habbo != null && habbo.getClient() != null) {
+                Emulator.getGameServer()
+                        .getGameClientManager()
+                        .disconnectWithReason(habbo.getClient(), DisconnectReasonComposer.LOGOUT);
+            }
         }
     }
 

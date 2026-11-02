@@ -7,7 +7,6 @@ import com.eu.habbo.habbohotel.users.HabboItem;
 import com.eu.habbo.habbohotel.users.subscriptions.SubscriptionHabboClub;
 import com.eu.habbo.messages.outgoing.inventory.AddHabboItemComposer;
 import com.eu.habbo.messages.outgoing.inventory.InventoryRefreshComposer;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 
@@ -24,6 +23,8 @@ public class CalendarRewardObject {
     private final int itemId;
     private final String subscription_type;
     private final int subscription_days;
+    /** The calendar day this reward belongs to, counted from 1; 0 (NULL in the database) for any day. */
+    private final int day;
 
     public CalendarRewardObject(ResultSet set) throws SQLException {
         this.id = set.getInt("id");
@@ -33,10 +34,14 @@ public class CalendarRewardObject {
         this.pixels = set.getInt("pixels");
         this.points = set.getInt("points");
         this.pointsType = set.getInt("points_type");
-        this.badge = set.getString("badge");
+        // A reward without a badge holds NULL: give() and the product composer used to throw on it after the day
+        // was already claimed.
+        String badge = set.getString("badge");
+        this.badge = badge == null ? "" : badge;
         this.itemId = set.getInt("item_id");
         this.subscription_type = set.getString("subscription_type");
         this.subscription_days = set.getInt("subscription_days");
+        this.day = Math.max(0, set.getInt("day"));
     }
 
     public void give(Habbo habbo) {
@@ -45,7 +50,8 @@ public class CalendarRewardObject {
         }
 
         if (this.pixels > 0) {
-            habbo.givePixels((int)(this.pixels * (habbo.getHabboStats().hasActiveClub() ? CalendarManager.HC_MODIFIER : 1.0)));
+            habbo.givePixels(
+                    (int) (this.pixels * (habbo.getHabboStats().hasActiveClub() ? CalendarManager.HC_MODIFIER : 1.0)));
         }
 
         if (this.points > 0) {
@@ -56,9 +62,10 @@ public class CalendarRewardObject {
             habbo.addBadge(this.badge);
         }
 
-        if(this.subscription_type != null && !this.subscription_type.isEmpty()) {
+        if (this.subscription_type != null && !this.subscription_type.isEmpty()) {
             if ("HABBO_CLUB".equals(this.subscription_type)) {
-                habbo.getHabboStats().createSubscription(SubscriptionHabboClub.HABBO_CLUB, this.subscription_days * 86400);
+                habbo.getHabboStats()
+                        .createSubscription(SubscriptionHabboClub.HABBO_CLUB, this.subscription_days * 86400);
             } else {
                 habbo.getHabboStats().createSubscription(this.subscription_type, this.subscription_days * 86400);
             }
@@ -68,12 +75,10 @@ public class CalendarRewardObject {
             Item item = getItem();
 
             if (item != null) {
-                HabboItem habboItem = Emulator.getGameEnvironment().getItemManager().createItem(
-                        habbo.getHabboInfo().getId(),
-                        item,
-                        0,
-                        0,
-                        "");
+                HabboItem habboItem = Emulator.getGameEnvironment()
+                        .getItemManager()
+                        .createItem(habbo.getHabboInfo().getId(), item, 0, 0, "");
+                if (habboItem == null) return;
                 habbo.getInventory().getItemsComponent().addItem(habboItem);
                 habbo.getClient().sendResponse(new AddHabboItemComposer(habboItem));
                 habbo.getClient().sendResponse(new InventoryRefreshComposer());
@@ -83,6 +88,11 @@ public class CalendarRewardObject {
 
     public int getId() {
         return this.id;
+    }
+
+    /** The calendar day this reward belongs to, counted from 1; 0 when it can be given on any day. */
+    public int getDay() {
+        return this.day;
     }
 
     public String getCustomImage() {
@@ -96,6 +106,7 @@ public class CalendarRewardObject {
     public int getPixels() {
         return this.pixels;
     }
+
     public int getPoints() {
         return this.points;
     }
@@ -121,7 +132,7 @@ public class CalendarRewardObject {
     }
 
     public Item getItem() {
+        if (this.itemId <= 0) return null;
         return Emulator.getGameEnvironment().getItemManager().getItem(this.itemId);
     }
-
 }

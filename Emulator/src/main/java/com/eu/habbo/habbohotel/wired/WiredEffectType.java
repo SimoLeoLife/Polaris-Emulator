@@ -65,16 +65,30 @@ public enum WiredEffectType {
     // Phase-2 chest/storage + transactions + place/remove-furni (action/selector codes).
     GIVE_CURRENCY_FROM_CHEST(99),
     GIVE_FURNI_FROM_CHEST(102),
+    /** @deprecated the custom chest scanner selector, replaced by the official add-on (addon code 18). */
+    @Deprecated
     SCAN_CHEST_FURNI_BY_TYPE(103),
     INIT_TRANSACTION(104),
     CANCEL_TRANSACTION(105),
     PLACE_FURNI(106),
+    /** Ours: mint a new furni by base item id (formerly "place furni"); the official one places copies. */
+    SPAWN_FURNI(155),
     REMOVE_FURNI(107),
+    /** Ours: pick the furni up into its owner's inventory (formerly "remove furni"); the official one removes copies. */
+    PICKUP_FURNI(156),
     MOVE_FURNI_AS_GROUP(95),
+    /** Ours: the selected furni step one tile in a compass direction (formerly "move as group"). */
+    MOVE_FURNI_GROUP_STEP(154),
     REMOTE_SELECTOR(96),
-    // Negative-branch effects that reuse the SHOW_MESSAGE(7) client dialog (text). Distinct enum
-    // constants so WiredEngine.isNegativeConditionEffect runs them only when conditions FAIL.
+    // Negative-branch effect that reuses the SHOW_MESSAGE(7) client dialog (text). A distinct enum
+    // constant so WiredEffectPlanner.isNegativeConditionEffect runs it only when conditions FAIL.
     NEG_SHOW_MESSAGE(7),
+    /**
+     * No longer answered by any box: the negative log reports {@link #EFFECT_MESSAGE} like the positive
+     * log, and WiredEffectPlanner recognises it by class. Kept so plugins that link against it keep
+     * loading and the ordinals of the constants after it stay put.
+     */
+    @Deprecated
     NEG_LOG(7),
     SET_ROLLER_SPEED(88),
     BOT_DANCE(89),
@@ -82,7 +96,61 @@ public enum WiredEffectType {
     GIVE_OR_TAKE_FURNI(91),
     PLAY_YOUTUBE(92),
     QUICK_BOPPER(93),
-    SET_ROOM_AD(94);
+    SET_ROOM_AD(94),
+    CHANGE_OPACITY(114),
+    // Walking to a furni borrowed TELEPORT, whose dialog offers a "teleport instantly" checkbox. This
+    // effect calls setGoalLocation and walks: the flag is stored, serialized and never consulted.
+    WALK_TO_FURNI(115),
+    // Sitting, lying and fast-walking borrowed KICK_USER, whose dialog asks for the message shown to
+    // the person being kicked. These three store it and never read it: nobody is being kicked.
+    USER_TARGET(116),
+    // Moving a user several tiles borrowed MOVE_ROTATE_USER, whose dialog sends three slots. This
+    // effect reads a fourth, the tile count, so it was stuck at one tile whatever the box was for.
+    MOVE_USER_TILES(117),
+    // Nineteen effects borrowed SHOW_MESSAGE, whose dialog is a chat composer: a message textarea, a
+    // bubble style and a visibility choice. Only the three that actually make someone speak read the
+    // last two. The rest kept the textarea for something that is not a message at all — an amount, a
+    // badge code, a tag, a room or effect id, a figure, a link, a command.
+    EFFECT_AMOUNT(118),
+    EFFECT_BADGE(119),
+    EFFECT_TAG(120),
+    EFFECT_ID(121),
+    EFFECT_MESSAGE(122),
+    EFFECT_TEXT(123),
+    // Everyone in the room leaves their game, so there is no set of users to pick. It borrowed
+    // LEAVE_TEAM, whose dialog offers a user source that this effect never consults when choosing
+    // targets - execute() walks getCurrentHabbos(). The stored value still decides
+    // requiresTriggeringUser(), so it keeps its slot and is simply no longer asked for.
+    ALL_USERS_LEAVE_TEAM(124),
+    // The official OVERRIDE_HEIGHT: a two-way choice and a 0..8000 thousandths slider. Its dialog is
+    // its own, so it takes the next free code rather than borrowing one.
+    OVERRIDE_HEIGHT(125),
+    MODIFY_ARRAY(126),
+    // The official click-settings action: what the selected users' clicks on avatars and furni do,
+    // sent to their clients as WiredClickSettings. 126 is the array box and 127 its capture extra,
+    // 128 is the web API extra, so this takes the next seat.
+    CLICK_SETTINGS(129),
+    // Habbo's "write to logs" action: a message at a log level, into the room's wired log. It had
+    // borrowed EFFECT_MESSAGE's chat composer, which has no level. 130-136 are the variable fx and
+    // projectile extras, so this takes the next seat.
+    WRITE_TO_LOGS(137),
+    // Habbo's "teleport to room": a typed room id, or the room a picked room link or teleporter
+    // leads to. It had borrowed EFFECT_ID's text box, which cannot pick furni.
+    TELEPORT_TO_ROOM(138),
+    // Habbo's achievement and reward-track actions. They get their own dialogs; 151 is the
+    // achievement enabler add-on between them.
+    PROGRESS_ACHIEVEMENT(150),
+    PROGRESS_REWARD_TRACK(152),
+    RESET_REWARD_TRACK(153),
+    /** Ours: give a hand item; it shared the official give effect's code (52) and the text editor. */
+    GIVE_HAND_ITEM(157),
+    // Habbo's "set furni highlight": a style, strength, colour and animation on furni and avatars,
+    // drawn by the client. Its dialog is its own, so it takes the next free code.
+    SET_HIGHLIGHT(158),
+    // Habbo's WIRED Link actions: send a message / a dataframe through the picked Links. They sit at
+    // 170 so the seats right after 158 stay free for the other official boxes.
+    SEND_LINK_MESSAGE(170),
+    SEND_LINK_DATAFRAME(171);
 
     public final int code;
 

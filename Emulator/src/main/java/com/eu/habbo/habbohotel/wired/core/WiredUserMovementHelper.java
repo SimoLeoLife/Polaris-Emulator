@@ -2,10 +2,11 @@ package com.eu.habbo.habbohotel.wired.core;
 
 import com.eu.habbo.Emulator;
 import com.eu.habbo.habbohotel.items.Item;
+import com.eu.habbo.habbohotel.items.interactions.InteractionRoller;
 import com.eu.habbo.habbohotel.items.interactions.InteractionStackWalkHelper;
 import com.eu.habbo.habbohotel.items.interactions.InteractionTileWalkMagic;
 import com.eu.habbo.habbohotel.items.interactions.interfaces.ConditionalGate;
-import com.eu.habbo.habbohotel.items.interactions.InteractionRoller;
+import com.eu.habbo.habbohotel.pets.RideablePet;
 import com.eu.habbo.habbohotel.rooms.Room;
 import com.eu.habbo.habbohotel.rooms.RoomLayout;
 import com.eu.habbo.habbohotel.rooms.RoomTile;
@@ -16,18 +17,18 @@ import com.eu.habbo.habbohotel.users.Habbo;
 import com.eu.habbo.habbohotel.users.HabboItem;
 import com.eu.habbo.messages.outgoing.rooms.WiredMovementsComposer;
 import com.eu.habbo.messages.outgoing.rooms.users.RoomUserStatusComposer;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Comparator;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.WeakHashMap;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public final class WiredUserMovementHelper {
     public static final int DEFAULT_ANIMATION_DURATION = WiredMovementsComposer.DEFAULT_DURATION;
@@ -37,31 +38,162 @@ public final class WiredUserMovementHelper {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(WiredUserMovementHelper.class);
     private static final ThreadLocal<Set<Integer>> SUPPRESSED_STATUS_ROOM_UNIT_IDS = new ThreadLocal<>();
-    private static final ConcurrentHashMap<Integer, Long> SUPPRESSED_STATUS_COMPOSER_UNTIL = new ConcurrentHashMap<>();
+    /** A Move/Rotate User box is running: its moves and turns join the firing's one WiredMovements. */
+    private static final ThreadLocal<Boolean> JOIN_FIRING = new ThreadLocal<>();
 
-    private WiredUserMovementHelper() {
+    /**
+     * Runs a Move/Rotate User box: all its users' moves, then their turns, go out in the firing's one WiredMovements
+     * with its furni moves (observed on AIR). Other avatar moves keep their own packet.
+     */
+    public static void joiningFiringMovements(Runnable box) {
+        Boolean previous = JOIN_FIRING.get();
+        JOIN_FIRING.set(Boolean.TRUE);
+        try {
+            box.run();
+        } finally {
+            if (previous == null) JOIN_FIRING.remove();
+            else JOIN_FIRING.set(previous);
+        }
     }
+
+    private static void sendMovements(Room room, List<WiredMovementsComposer.MovementData> movements) {
+        if (Boolean.TRUE.equals(JOIN_FIRING.get()) && WiredMoveCarryHelper.collectIfOpen(movements)) {
+            return;
+        }
+        room.sendComposer(new WiredMovementsComposer(movements).compose());
+    }
+    // Keyed by the unit itself: a unit id is only unique inside its room, so two rooms would share an integer key.
+    private static final Map<RoomUnit, Long> SUPPRESSED_STATUS_COMPOSER_UNTIL =
+            Collections.synchronizedMap(new WeakHashMap<>());
+
+    private WiredUserMovementHelper() {}
 
     public static boolean moveUser(Room room, RoomUnit roomUnit, RoomTile targetTile, double targetZ, int duration) {
-        return moveUser(room, roomUnit, targetTile, targetZ, roomUnit == null ? null : roomUnit.getBodyRotation(),
-                roomUnit == null ? null : roomUnit.getHeadRotation(), duration, false, WiredMovementPhysics.NONE);
+        return moveUser(
+                room,
+                roomUnit,
+                targetTile,
+                targetZ,
+                roomUnit == null ? null : roomUnit.getBodyRotation(),
+                roomUnit == null ? null : roomUnit.getHeadRotation(),
+                duration,
+                false,
+                WiredMovementPhysics.NONE);
     }
 
-    public static boolean moveUser(Room room, RoomUnit roomUnit, RoomTile targetTile, double targetZ, RoomUserRotation bodyRotation, RoomUserRotation headRotation, int duration) {
-        return moveUser(room, roomUnit, targetTile, targetZ, bodyRotation, headRotation, duration, false, WiredMovementPhysics.NONE);
+    public static boolean moveUser(
+            Room room,
+            RoomUnit roomUnit,
+            RoomTile targetTile,
+            double targetZ,
+            RoomUserRotation bodyRotation,
+            RoomUserRotation headRotation,
+            int duration) {
+        return moveUser(
+                room,
+                roomUnit,
+                targetTile,
+                targetZ,
+                bodyRotation,
+                headRotation,
+                duration,
+                false,
+                WiredMovementPhysics.NONE);
     }
 
-    public static boolean moveUser(Room room, RoomUnit roomUnit, RoomTile targetTile, double targetZ, RoomUserRotation bodyRotation, RoomUserRotation headRotation, int duration, boolean noAnimation) {
-        return moveUser(room, roomUnit, targetTile, targetZ, bodyRotation, headRotation, duration, noAnimation, WiredMovementPhysics.NONE);
+    public static boolean moveUser(
+            Room room,
+            RoomUnit roomUnit,
+            RoomTile targetTile,
+            double targetZ,
+            RoomUserRotation bodyRotation,
+            RoomUserRotation headRotation,
+            int duration,
+            boolean noAnimation) {
+        return moveUser(
+                room,
+                roomUnit,
+                targetTile,
+                targetZ,
+                bodyRotation,
+                headRotation,
+                duration,
+                noAnimation,
+                WiredMovementPhysics.NONE);
     }
 
-    public static boolean moveUser(Room room, RoomUnit roomUnit, RoomTile targetTile, double targetZ, RoomUserRotation bodyRotation, RoomUserRotation headRotation, int duration, boolean noAnimation, WiredMovementPhysics movementPhysics) {
+    public static boolean moveUser(
+            Room room,
+            RoomUnit roomUnit,
+            RoomTile targetTile,
+            double targetZ,
+            RoomUserRotation bodyRotation,
+            RoomUserRotation headRotation,
+            int duration,
+            boolean noAnimation,
+            WiredMovementPhysics movementPhysics) {
+        return moveUser(
+                room,
+                roomUnit,
+                targetTile,
+                targetZ,
+                bodyRotation,
+                headRotation,
+                duration,
+                noAnimation,
+                movementPhysics,
+                0);
+    }
+
+    /** As the others, and a non-zero jump strength makes the avatar hop to its tile in an arc. */
+    public static boolean moveUser(
+            Room room,
+            RoomUnit roomUnit,
+            RoomTile targetTile,
+            double targetZ,
+            RoomUserRotation bodyRotation,
+            RoomUserRotation headRotation,
+            int duration,
+            boolean noAnimation,
+            WiredMovementPhysics movementPhysics,
+            int jumpStrength) {
+        return moveUser(
+                room,
+                roomUnit,
+                null,
+                targetTile,
+                targetZ,
+                bodyRotation,
+                headRotation,
+                duration,
+                noAnimation,
+                movementPhysics,
+                jumpStrength);
+    }
+
+    /**
+     * As the others, sliding from {@code fromTile} (the start of a step in progress) instead of the
+     * user's tile when it is given.
+     */
+    public static boolean moveUser(
+            Room room,
+            RoomUnit roomUnit,
+            RoomTile fromTile,
+            RoomTile targetTile,
+            double targetZ,
+            RoomUserRotation bodyRotation,
+            RoomUserRotation headRotation,
+            int duration,
+            boolean noAnimation,
+            WiredMovementPhysics movementPhysics,
+            int jumpStrength) {
         if (room == null || roomUnit == null || targetTile == null || room.getLayout() == null) {
             return false;
         }
 
-        RoomTile oldLocation = roomUnit.getCurrentLocation();
-        WiredMovementPhysics resolvedMovementPhysics = movementPhysics == null ? WiredMovementPhysics.NONE : movementPhysics;
+        RoomTile oldLocation = fromTile != null ? fromTile : roomUnit.getCurrentLocation();
+        WiredMovementPhysics resolvedMovementPhysics =
+                movementPhysics == null ? WiredMovementPhysics.NONE : movementPhysics;
 
         if (oldLocation == null || !canMoveTo(room, roomUnit, targetTile, resolvedMovementPhysics)) {
             return false;
@@ -123,7 +255,44 @@ public final class WiredUserMovementHelper {
                 resolvedHeadRotation.getValue(),
                 animationDuration));
         suppressStatusComposer(roomUnit, animationDuration);
-        room.sendComposer(new WiredMovementsComposer(movements).compose());
+
+        // A rider and its horse move together, in the same movement packet (the horse one lower).
+        // Behaviour observed in plus-emulator/PlusEMU 03a32a5d, reimplemented.
+        RidingPartner partner = ridingPartner(room, roomUnit);
+        if (partner != null) {
+            RoomUnit partnerUnit = partner.unit();
+            RoomTile partnerFrom =
+                    partnerUnit.getCurrentLocation() != null ? partnerUnit.getCurrentLocation() : oldLocation;
+            double partnerOldZ = partnerUnit.getZ();
+            double partnerZ = roomUnit.getZ() + partner.zOffset();
+            runWithSuppressedStatusUpdates(Collections.singletonList(partnerUnit), () -> {
+                partnerUnit.removeStatus(RoomUnitStatus.MOVE);
+                partnerUnit.setZ(partnerZ);
+                partnerUnit.setLocation(targetTile);
+                partnerUnit.setPath(new LinkedList<>());
+                partnerUnit.setBodyRotation(resolvedBodyRotation);
+                partnerUnit.setHeadRotation(resolvedHeadRotation);
+                partnerUnit.statusUpdate(false);
+            });
+            movements.add(WiredMovementsComposer.userSlideMovement(
+                    partnerUnit.getId(),
+                    partnerFrom.x,
+                    partnerFrom.y,
+                    targetTile.x,
+                    targetTile.y,
+                    partnerOldZ,
+                    partnerZ,
+                    resolvedBodyRotation.getValue(),
+                    resolvedHeadRotation.getValue(),
+                    animationDuration));
+            suppressStatusComposer(partnerUnit, animationDuration);
+        }
+
+        if (jumpStrength != 0) {
+            WiredMoveStyleHelper.sendUnitsNow(
+                    room, List.of(roomUnit.getId()), WiredMoveStyleHelper.STYLE_JUMP, jumpStrength);
+        }
+        sendMovements(room, movements);
 
         scheduleTileCallbacks(room, roomUnit, oldLocation, targetTile, oldTopItem, newTopItem, animationDuration);
         scheduleFinalStatusSync(room, roomUnit, targetTile, animationDuration);
@@ -136,7 +305,8 @@ public final class WiredUserMovementHelper {
             return;
         }
 
-        roomUnit.getCacheable().put(SUPPRESS_NEXT_WALK_CACHE_KEY, System.currentTimeMillis() + SUPPRESS_NEXT_WALK_WINDOW_MS);
+        roomUnit.getCacheable()
+                .put(SUPPRESS_NEXT_WALK_CACHE_KEY, System.currentTimeMillis() + SUPPRESS_NEXT_WALK_WINDOW_MS);
     }
 
     public static boolean consumeSuppressedWalkCommand(RoomUnit roomUnit) {
@@ -153,9 +323,18 @@ public final class WiredUserMovementHelper {
         return ((Long) value) >= System.currentTimeMillis();
     }
 
-    private static boolean moveUserInstant(Room room, RoomUnit roomUnit, RoomTile oldLocation, RoomTile targetTile, double oldZ, double targetZ,
-                                           RoomUserRotation bodyRotation, RoomUserRotation headRotation, HabboItem oldTopItem,
-                                           HabboItem newTopItem, Habbo habbo) {
+    private static boolean moveUserInstant(
+            Room room,
+            RoomUnit roomUnit,
+            RoomTile oldLocation,
+            RoomTile targetTile,
+            double oldZ,
+            double targetZ,
+            RoomUserRotation bodyRotation,
+            RoomUserRotation headRotation,
+            HabboItem oldTopItem,
+            HabboItem newTopItem,
+            Habbo habbo) {
         suppressNextWalkCommand(roomUnit);
         roomUnit.removeStatus(RoomUnitStatus.MOVE);
         roomUnit.setPath(new LinkedList<>());
@@ -183,10 +362,87 @@ public final class WiredUserMovementHelper {
         processTileCallbacks(room, roomUnit, oldLocation, targetTile, oldTopItem, newTopItem);
         clearStatusComposerSuppression(roomUnit);
         room.sendComposer(new RoomUserStatusComposer(roomUnit).compose());
+
+        // The rider's horse (or the horse's rider) goes along.
+        RidingPartner partner = ridingPartner(room, roomUnit);
+        if (partner != null) {
+            RoomUnit partnerUnit = partner.unit();
+            partnerUnit.removeStatus(RoomUnitStatus.MOVE);
+            partnerUnit.setPath(new LinkedList<>());
+            partnerUnit.setBodyRotation(bodyRotation);
+            partnerUnit.setHeadRotation(headRotation);
+            partnerUnit.setPreviousLocation(partnerUnit.getCurrentLocation());
+            partnerUnit.setCurrentLocation(targetTile);
+            partnerUnit.setGoalLocation(targetTile);
+            partnerUnit.setZ(targetZ + partner.zOffset());
+            room.sendComposer(new RoomUserStatusComposer(partnerUnit).compose());
+        }
         return true;
     }
 
-    public static boolean updateUserDirection(Room room, RoomUnit roomUnit, RoomUserRotation bodyRotation, RoomUserRotation headRotation) {
+    /** The unit that moves along with {@code roomUnit}: a rider's horse (z - 1) or a horse's rider (z + 1). */
+    record RidingPartner(RoomUnit unit, double zOffset) {}
+
+    static RidingPartner ridingPartner(Room room, RoomUnit roomUnit) {
+        if (room == null || roomUnit == null) return null;
+
+        Habbo habbo = room.getHabbo(roomUnit);
+        if (habbo != null
+                && habbo.getHabboInfo() != null
+                && habbo.getHabboInfo().getRiding() != null) {
+            RoomUnit horse = habbo.getHabboInfo().getRiding().getRoomUnit();
+            return horse != null && horse != roomUnit ? new RidingPartner(horse, -1.0D) : null;
+        }
+
+        if (room.getPet(roomUnit) instanceof RideablePet horse && horse.getRider() != null) {
+            RoomUnit rider = horse.getRider().getRoomUnit();
+            return rider != null && rider != roomUnit ? new RidingPartner(rider, 1.0D) : null;
+        }
+        return null;
+    }
+
+    /**
+     * A hop on the spot: the avatar stays on its tile and turns, and a client that understands
+     * avatar jumps draws it lifting off and landing again.
+     */
+    public static boolean hopInPlace(
+            Room room,
+            RoomUnit roomUnit,
+            RoomUserRotation bodyRotation,
+            RoomUserRotation headRotation,
+            int strength,
+            int duration) {
+        RoomTile tile = (roomUnit == null) ? null : roomUnit.getCurrentLocation();
+
+        if (room == null || tile == null || roomUnit.isWalking()) {
+            return false;
+        }
+
+        RoomUserRotation resolvedBodyRotation = bodyRotation == null ? roomUnit.getBodyRotation() : bodyRotation;
+        RoomUserRotation resolvedHeadRotation = headRotation == null ? roomUnit.getHeadRotation() : headRotation;
+        int animationDuration = (duration > 0) ? duration : DEFAULT_ANIMATION_DURATION;
+
+        roomUnit.setBodyRotation(resolvedBodyRotation);
+        roomUnit.setHeadRotation(resolvedHeadRotation);
+        suppressStatusComposer(roomUnit, animationDuration);
+        WiredMoveStyleHelper.sendUnitsNow(room, List.of(roomUnit.getId()), WiredMoveStyleHelper.STYLE_JUMP, strength);
+        room.sendComposer(new WiredMovementsComposer(List.of(WiredMovementsComposer.userSlideMovement(
+                        roomUnit.getId(),
+                        tile.x,
+                        tile.y,
+                        tile.x,
+                        tile.y,
+                        roomUnit.getZ(),
+                        roomUnit.getZ(),
+                        resolvedBodyRotation.getValue(),
+                        resolvedHeadRotation.getValue(),
+                        animationDuration)))
+                .compose());
+        return true;
+    }
+
+    public static boolean updateUserDirection(
+            Room room, RoomUnit roomUnit, RoomUserRotation bodyRotation, RoomUserRotation headRotation) {
         if (room == null || roomUnit == null) {
             return false;
         }
@@ -194,13 +450,19 @@ public final class WiredUserMovementHelper {
         RoomUserRotation resolvedBodyRotation = bodyRotation == null ? roomUnit.getBodyRotation() : bodyRotation;
         RoomUserRotation resolvedHeadRotation = headRotation == null ? roomUnit.getHeadRotation() : headRotation;
 
-        roomUnit.setBodyRotation(resolvedBodyRotation);
-        roomUnit.setHeadRotation(resolvedHeadRotation);
-        room.sendComposer(new WiredMovementsComposer(Collections.singletonList(
-                WiredMovementsComposer.userDirectionUpdate(
-                        roomUnit.getId(),
-                        resolvedHeadRotation.getValue(),
-                        resolvedBodyRotation.getValue()))).compose());
+        // A box turning a user who lies down or sits on a seat sends the turn, but the user keeps the furni's
+        // direction (observed on AIR); one sitting on the floor turns.
+        boolean keepsSeatDirection = Boolean.TRUE.equals(JOIN_FIRING.get())
+                && (roomUnit.hasStatus(RoomUnitStatus.LAY)
+                        || (roomUnit.hasStatus(RoomUnitStatus.SIT) && !roomUnit.cmdSit));
+        if (!keepsSeatDirection) {
+            roomUnit.setBodyRotation(resolvedBodyRotation);
+            roomUnit.setHeadRotation(resolvedHeadRotation);
+        }
+        sendMovements(
+                room,
+                Collections.singletonList(WiredMovementsComposer.userDirectionUpdate(
+                        roomUnit.getId(), resolvedHeadRotation.getValue(), resolvedBodyRotation.getValue())));
         return true;
     }
 
@@ -218,14 +480,14 @@ public final class WiredUserMovementHelper {
             return false;
         }
 
-        Long suppressedUntil = SUPPRESSED_STATUS_COMPOSER_UNTIL.get(roomUnit.getId());
+        Long suppressedUntil = SUPPRESSED_STATUS_COMPOSER_UNTIL.get(roomUnit);
 
         if (suppressedUntil == null) {
             return false;
         }
 
         if (suppressedUntil <= System.currentTimeMillis()) {
-            SUPPRESSED_STATUS_COMPOSER_UNTIL.remove(roomUnit.getId(), suppressedUntil);
+            SUPPRESSED_STATUS_COMPOSER_UNTIL.remove(roomUnit, suppressedUntil);
             return false;
         }
 
@@ -237,15 +499,22 @@ public final class WiredUserMovementHelper {
             return;
         }
 
-        SUPPRESSED_STATUS_COMPOSER_UNTIL.remove(roomUnit.getId());
+        SUPPRESSED_STATUS_COMPOSER_UNTIL.remove(roomUnit);
     }
 
-    public static boolean canMoveTo(Room room, RoomUnit roomUnit, RoomTile targetTile, WiredMovementPhysics movementPhysics) {
+    static void clearThreadLocalsForCurrentThread() {
+        JOIN_FIRING.remove();
+        SUPPRESSED_STATUS_ROOM_UNIT_IDS.remove();
+    }
+
+    public static boolean canMoveTo(
+            Room room, RoomUnit roomUnit, RoomTile targetTile, WiredMovementPhysics movementPhysics) {
         if (room == null || roomUnit == null || targetTile == null) {
             return false;
         }
 
-        WiredMovementPhysics resolvedMovementPhysics = movementPhysics == null ? WiredMovementPhysics.NONE : movementPhysics;
+        WiredMovementPhysics resolvedMovementPhysics =
+                movementPhysics == null ? WiredMovementPhysics.NONE : movementPhysics;
 
         if (targetTile.state == null || targetTile.state == com.eu.habbo.habbohotel.rooms.RoomTileState.INVALID) {
             return false;
@@ -265,7 +534,8 @@ public final class WiredUserMovementHelper {
         return !hasBlockingUnits(room, roomUnit, targetTile, resolvedMovementPhysics);
     }
 
-    private static boolean hasBlockingUnits(Room room, RoomUnit roomUnit, RoomTile targetTile, WiredMovementPhysics movementPhysics) {
+    private static boolean hasBlockingUnits(
+            Room room, RoomUnit roomUnit, RoomTile targetTile, WiredMovementPhysics movementPhysics) {
         Collection<RoomUnit> units = room.getRoomUnitsAt(targetTile);
 
         if (units == null || units.isEmpty()) {
@@ -273,9 +543,7 @@ public final class WiredUserMovementHelper {
         }
 
         for (RoomUnit targetUnit : units) {
-            if (targetUnit != null
-                    && targetUnit != roomUnit
-                    && !movementPhysics.shouldIgnoreUser(targetUnit)) {
+            if (targetUnit != null && targetUnit != roomUnit && !movementPhysics.shouldIgnoreUser(targetUnit)) {
                 return true;
             }
         }
@@ -319,13 +587,29 @@ public final class WiredUserMovementHelper {
         return hasIgnoredFurni;
     }
 
-    private static void scheduleTileCallbacks(Room room, RoomUnit roomUnit, RoomTile oldLocation, RoomTile targetTile, HabboItem oldTopItem, HabboItem newTopItem, int delay) {
-        Emulator.getThreading().run(() -> {
-            processTileCallbacks(room, roomUnit, oldLocation, targetTile, oldTopItem, newTopItem);
-        }, Math.max(delay, 1));
+    private static void scheduleTileCallbacks(
+            Room room,
+            RoomUnit roomUnit,
+            RoomTile oldLocation,
+            RoomTile targetTile,
+            HabboItem oldTopItem,
+            HabboItem newTopItem,
+            int delay) {
+        Emulator.getThreading()
+                .run(
+                        () -> {
+                            processTileCallbacks(room, roomUnit, oldLocation, targetTile, oldTopItem, newTopItem);
+                        },
+                        Math.max(delay, 1));
     }
 
-    private static void processTileCallbacks(Room room, RoomUnit roomUnit, RoomTile oldLocation, RoomTile targetTile, HabboItem oldTopItem, HabboItem newTopItem) {
+    private static void processTileCallbacks(
+            Room room,
+            RoomUnit roomUnit,
+            RoomTile oldLocation,
+            RoomTile targetTile,
+            HabboItem oldTopItem,
+            HabboItem newTopItem) {
         if (room == null || !room.isLoaded() || roomUnit == null || roomUnit.getCurrentLocation() == null) {
             return;
         }
@@ -344,7 +628,7 @@ public final class WiredUserMovementHelper {
 
         if (oldTopItem != null && (oldTopItem != resolvedNewTopItem || !occupiesTile(oldTopItem, targetTile))) {
             try {
-                oldTopItem.onWalkOff(roomUnit, room, new Object[]{oldLocation, targetTile});
+                oldTopItem.onWalkOff(roomUnit, room, new Object[] {oldLocation, targetTile});
             } catch (Exception exception) {
                 LOGGER.error("Failed to process wired user walk off callback", exception);
             }
@@ -356,7 +640,7 @@ public final class WiredUserMovementHelper {
             }
 
             try {
-                additionalOldItem.onWalkOff(roomUnit, room, new Object[]{oldLocation, targetTile});
+                additionalOldItem.onWalkOff(roomUnit, room, new Object[] {oldLocation, targetTile});
             } catch (Exception exception) {
                 LOGGER.error("Failed to process additional wired user walk off callback", exception);
             }
@@ -375,10 +659,10 @@ public final class WiredUserMovementHelper {
                             return;
                         }
                     } else {
-                        resolvedNewTopItem.onWalkOn(roomUnit, room, new Object[]{oldLocation, targetTile});
+                        resolvedNewTopItem.onWalkOn(roomUnit, room, new Object[] {oldLocation, targetTile});
                     }
                 } else {
-                    resolvedNewTopItem.onWalk(roomUnit, room, new Object[]{oldLocation, targetTile});
+                    resolvedNewTopItem.onWalk(roomUnit, room, new Object[] {oldLocation, targetTile});
                 }
             } catch (Exception exception) {
                 LOGGER.error("Failed to process wired user walk on callback", exception);
@@ -388,9 +672,9 @@ public final class WiredUserMovementHelper {
         for (HabboItem additionalNewItem : resolveAdditionalTileItems(room, targetTile, resolvedNewTopItem)) {
             try {
                 if (occupiesTile(additionalNewItem, oldLocation)) {
-                    additionalNewItem.onWalk(roomUnit, room, new Object[]{oldLocation, targetTile});
+                    additionalNewItem.onWalk(roomUnit, room, new Object[] {oldLocation, targetTile});
                 } else {
-                    additionalNewItem.onWalkOn(roomUnit, room, new Object[]{oldLocation, targetTile});
+                    additionalNewItem.onWalkOn(roomUnit, room, new Object[] {oldLocation, targetTile});
                 }
             } catch (Exception exception) {
                 LOGGER.error("Failed to process additional wired user walk on callback", exception);
@@ -450,7 +734,8 @@ public final class WiredUserMovementHelper {
         if (targetItem != null) {
             targetZ = targetItem.getZ();
 
-            if (!targetItem.getBaseItem().allowSit() && !targetItem.getBaseItem().allowLay()) {
+            if (!targetItem.getBaseItem().allowSit()
+                    && !targetItem.getBaseItem().allowLay()) {
                 targetZ += Item.getCurrentHeight(targetItem);
             }
         }
@@ -494,8 +779,7 @@ public final class WiredUserMovementHelper {
             items.add(item);
         }
 
-        items.sort(Comparator
-                .comparingDouble((HabboItem item) -> item.getZ() + Item.getCurrentHeight(item))
+        items.sort(Comparator.comparingDouble((HabboItem item) -> item.getZ() + Item.getCurrentHeight(item))
                 .thenComparingInt(HabboItem::getId)
                 .reversed());
         return items;
@@ -506,17 +790,24 @@ public final class WiredUserMovementHelper {
             return;
         }
 
-        Emulator.getThreading().run(() -> {
-            if (room == null || !room.isLoaded() || roomUnit == null || roomUnit.getCurrentLocation() == null) {
-                return;
-            }
+        Emulator.getThreading()
+                .run(
+                        () -> {
+                            if (room == null
+                                    || !room.isLoaded()
+                                    || roomUnit == null
+                                    || roomUnit.getCurrentLocation() == null) {
+                                return;
+                            }
 
-            if (roomUnit.getCurrentLocation().x != targetTile.x || roomUnit.getCurrentLocation().y != targetTile.y) {
-                return;
-            }
+                            if (roomUnit.getCurrentLocation().x != targetTile.x
+                                    || roomUnit.getCurrentLocation().y != targetTile.y) {
+                                return;
+                            }
 
-            room.sendComposer(new RoomUserStatusComposer(roomUnit).compose());
-        }, delay + STATUS_SUPPRESSION_GRACE_MS + 25);
+                            room.sendComposer(new RoomUserStatusComposer(roomUnit).compose());
+                        },
+                        delay + STATUS_SUPPRESSION_GRACE_MS + 25);
     }
 
     private static void scheduleFinalStatusSync(Room room, RoomUnit roomUnit, RoomTile targetTile, int delay) {
@@ -524,22 +815,28 @@ public final class WiredUserMovementHelper {
             return;
         }
 
-        Emulator.getThreading().run(() -> {
-            if (room == null || !room.isLoaded() || roomUnit == null || roomUnit.getCurrentLocation() == null) {
-                return;
-            }
+        Emulator.getThreading()
+                .run(
+                        () -> {
+                            if (room == null
+                                    || !room.isLoaded()
+                                    || roomUnit == null
+                                    || roomUnit.getCurrentLocation() == null) {
+                                return;
+                            }
 
-            if (roomUnit.isWalking()
-                    || roomUnit.getCurrentLocation().x != targetTile.x
-                    || roomUnit.getCurrentLocation().y != targetTile.y) {
-                return;
-            }
+                            if (roomUnit.isWalking()
+                                    || roomUnit.getCurrentLocation().x != targetTile.x
+                                    || roomUnit.getCurrentLocation().y != targetTile.y) {
+                                return;
+                            }
 
-            clearStatusComposerSuppression(roomUnit);
-            roomUnit.setPreviousLocation(roomUnit.getCurrentLocation());
-            roomUnit.setPreviousLocationZ(roomUnit.getZ());
-            room.sendComposer(new RoomUserStatusComposer(roomUnit).compose());
-        }, Math.max(delay, 1) + 25);
+                            clearStatusComposerSuppression(roomUnit);
+                            roomUnit.setPreviousLocation(roomUnit.getCurrentLocation());
+                            roomUnit.setPreviousLocationZ(roomUnit.getZ());
+                            room.sendComposer(new RoomUserStatusComposer(roomUnit).compose());
+                        },
+                        Math.max(delay, 1) + 25);
     }
 
     private static void suppressStatusComposer(RoomUnit roomUnit, int duration) {
@@ -547,8 +844,9 @@ public final class WiredUserMovementHelper {
             return;
         }
 
-        long suppressedUntil = System.currentTimeMillis() + Math.max(duration, InteractionRoller.DELAY) + STATUS_SUPPRESSION_GRACE_MS;
-        SUPPRESSED_STATUS_COMPOSER_UNTIL.put(roomUnit.getId(), suppressedUntil);
+        long suppressedUntil =
+                System.currentTimeMillis() + Math.max(duration, InteractionRoller.DELAY) + STATUS_SUPPRESSION_GRACE_MS;
+        SUPPRESSED_STATUS_COMPOSER_UNTIL.put(roomUnit, suppressedUntil);
     }
 
     private static void runWithSuppressedStatusUpdates(Collection<RoomUnit> roomUnits, Runnable action) {
@@ -557,9 +855,8 @@ public final class WiredUserMovementHelper {
         }
 
         Set<Integer> previousSuppressedRoomUnitIds = SUPPRESSED_STATUS_ROOM_UNIT_IDS.get();
-        HashSet<Integer> suppressedRoomUnitIds = previousSuppressedRoomUnitIds == null
-                ? new HashSet<>()
-                : new HashSet<>(previousSuppressedRoomUnitIds);
+        HashSet<Integer> suppressedRoomUnitIds =
+                previousSuppressedRoomUnitIds == null ? new HashSet<>() : new HashSet<>(previousSuppressedRoomUnitIds);
 
         if (roomUnits != null) {
             for (RoomUnit roomUnit : roomUnits) {
@@ -589,7 +886,7 @@ public final class WiredUserMovementHelper {
 
     public static void cleanupRoomUnit(RoomUnit roomUnit) {
         if (roomUnit != null) {
-            SUPPRESSED_STATUS_COMPOSER_UNTIL.remove(roomUnit.getId());
+            SUPPRESSED_STATUS_COMPOSER_UNTIL.remove(roomUnit);
         }
     }
 }

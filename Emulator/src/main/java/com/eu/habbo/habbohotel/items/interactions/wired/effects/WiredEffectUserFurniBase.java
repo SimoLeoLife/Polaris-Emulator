@@ -1,10 +1,12 @@
 package com.eu.habbo.habbohotel.items.interactions.wired.effects;
 
 import com.eu.habbo.Emulator;
+import com.eu.habbo.WiredCompatibilityDiagnostics;
 import com.eu.habbo.habbohotel.gameclients.GameClient;
 import com.eu.habbo.habbohotel.items.Item;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredEffect;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredTrigger;
+import com.eu.habbo.habbohotel.items.interactions.wired.WiredInputGuard;
 import com.eu.habbo.habbohotel.items.interactions.wired.WiredSettings;
 import com.eu.habbo.habbohotel.rooms.Room;
 import com.eu.habbo.habbohotel.rooms.RoomTile;
@@ -12,7 +14,6 @@ import com.eu.habbo.habbohotel.rooms.RoomUnit;
 import com.eu.habbo.habbohotel.rooms.RoomUnitStatus;
 import com.eu.habbo.habbohotel.users.Habbo;
 import com.eu.habbo.habbohotel.users.HabboItem;
-import com.eu.habbo.habbohotel.wired.WiredEffectType;
 import com.eu.habbo.habbohotel.wired.core.WiredContext;
 import com.eu.habbo.habbohotel.wired.core.WiredManager;
 import com.eu.habbo.habbohotel.wired.core.WiredMoveCarryHelper;
@@ -20,7 +21,6 @@ import com.eu.habbo.habbohotel.wired.core.WiredSourceUtil;
 import com.eu.habbo.messages.ServerMessage;
 import com.eu.habbo.messages.incoming.wired.WiredSaveException;
 import com.eu.habbo.messages.outgoing.rooms.WiredMovementsComposer;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
@@ -36,7 +36,8 @@ public abstract class WiredEffectUserFurniBase extends InteractionWiredEffect {
         super(set, baseItem);
     }
 
-    public WiredEffectUserFurniBase(int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
+    public WiredEffectUserFurniBase(
+            int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
         super(id, userId, item, extradata, limitedStack, limitedSells);
     }
 
@@ -45,9 +46,8 @@ public abstract class WiredEffectUserFurniBase extends InteractionWiredEffect {
         List<HabboItem> effectiveItems = WiredSourceUtil.resolveItems(ctx, this.furniSource, this.items);
 
         if (this.furniSource == WiredSourceUtil.SOURCE_SELECTED && room != null) {
-            this.items.removeIf(item -> item == null
-                    || item.getRoomId() != this.getRoomId()
-                    || room.getHabboItem(item.getId()) == null);
+            this.items.removeIf(item ->
+                    item == null || item.getRoomId() != this.getRoomId() || room.getHabboItem(item.getId()) == null);
         }
 
         return effectiveItems;
@@ -63,7 +63,8 @@ public abstract class WiredEffectUserFurniBase extends InteractionWiredEffect {
         for (int index = effectiveItems.size() - 1; index >= 0; index--) {
             HabboItem item = effectiveItems.get(index);
 
-            if (item != null) {
+            // A pick picked up or placed in another room is no target: the user was sent to its old coordinates.
+            if (item != null && (ctx.room() == null || ctx.room().getHabboItem(item.getId()) == item)) {
                 return item;
             }
         }
@@ -124,10 +125,15 @@ public abstract class WiredEffectUserFurniBase extends InteractionWiredEffect {
             String[] parts = moveStatus.split(",");
             if (parts.length >= 2) {
                 try {
-                    return roomUnit.getRoom().getLayout().getTile(
-                            Short.parseShort(parts[0]),
-                            Short.parseShort(parts[1]));
+                    return roomUnit.getRoom()
+                            .getLayout()
+                            .getTile(Short.parseShort(parts[0]), Short.parseShort(parts[1]));
                 } catch (NumberFormatException ignored) {
+                    WiredCompatibilityDiagnostics.record(
+                            WiredCompatibilityDiagnostics.FailurePoint.EFFECT_USER_FURNI_MOVE_STATUS,
+                            roomUnit.getRoom().getId(),
+                            this.getId(),
+                            ignored);
                 }
             }
         }
@@ -150,19 +156,23 @@ public abstract class WiredEffectUserFurniBase extends InteractionWiredEffect {
             return null;
         }
 
-        int configuredDuration = WiredMoveCarryHelper.getAnimationDuration(room, stackItem, WiredMovementsComposer.DEFAULT_DURATION);
-        int remainingStepDuration = (int) Math.max(50L, WiredMovementsComposer.DEFAULT_DURATION - Math.max(0L, System.currentTimeMillis() - moveStatusTimestamp));
+        int configuredDuration =
+                WiredMoveCarryHelper.getAnimationDuration(room, stackItem, WiredMovementsComposer.DEFAULT_DURATION);
+        int remainingStepDuration = (int) Math.max(
+                50L,
+                WiredMovementsComposer.DEFAULT_DURATION
+                        - Math.max(0L, System.currentTimeMillis() - moveStatusTimestamp));
         return Math.min(configuredDuration, remainingStepDuration);
     }
 
     @Override
     public String getWiredData() {
-        return WiredManager.getGson().toJson(new JsonData(
-                this.getDelay(),
-                this.items.stream().map(HabboItem::getId).collect(Collectors.toList()),
-                this.furniSource,
-                this.userSource
-        ));
+        return WiredManager.getGson()
+                .toJson(new JsonData(
+                        this.getDelay(),
+                        this.items.stream().map(HabboItem::getId).collect(Collectors.toList()),
+                        this.furniSource,
+                        this.userSource));
     }
 
     @Override
@@ -222,9 +232,8 @@ public abstract class WiredEffectUserFurniBase extends InteractionWiredEffect {
     @Override
     public void serializeWiredData(ServerMessage message, Room room) {
         List<HabboItem> itemsSnapshot = new ArrayList<>(this.items);
-        itemsSnapshot.removeIf(item -> item == null
-                || item.getRoomId() != this.getRoomId()
-                || room.getHabboItem(item.getId()) == null);
+        itemsSnapshot.removeIf(item ->
+                item == null || item.getRoomId() != this.getRoomId() || room.getHabboItem(item.getId()) == null);
         this.items.clear();
         this.items.addAll(itemsSnapshot);
 
@@ -238,9 +247,7 @@ public abstract class WiredEffectUserFurniBase extends InteractionWiredEffect {
         message.appendInt(this.getBaseItem().getSpriteId());
         message.appendInt(this.getId());
         message.appendString("");
-        message.appendInt(2);
-        message.appendInt(this.furniSource);
-        message.appendInt(this.userSource);
+        message.appendInt(0);
         message.appendInt(0);
         message.appendInt(this.getType().code);
         message.appendInt(this.getDelay());
@@ -263,8 +270,9 @@ public abstract class WiredEffectUserFurniBase extends InteractionWiredEffect {
 
     @Override
     public boolean saveData(WiredSettings settings, GameClient gameClient) throws WiredSaveException {
-        this.furniSource = (settings.getIntParams().length > 0) ? settings.getIntParams()[0] : WiredSourceUtil.SOURCE_TRIGGER;
-        this.userSource = (settings.getIntParams().length > 1) ? settings.getIntParams()[1] : WiredSourceUtil.SOURCE_TRIGGER;
+        // Official: no int params; the furni and user sources are the official source slots.
+        this.furniSource = settings.furniSource(0, WiredSourceUtil.SOURCE_TRIGGER);
+        this.userSource = settings.userSource(0, WiredSourceUtil.SOURCE_TRIGGER);
 
         if (settings.getFurniIds().length > Emulator.getConfig().getInt("hotel.wired.furni.selection.count")) {
             throw new WiredSaveException("Too many furni selected");
@@ -293,7 +301,7 @@ public abstract class WiredEffectUserFurniBase extends InteractionWiredEffect {
         }
 
         int delay = settings.getDelay();
-        if (delay > Emulator.getConfig().getInt("hotel.wired.max_delay", 20)) {
+        if (delay > Emulator.getConfig().getInt("hotel.wired.max_delay", WiredInputGuard.DEFAULT_MAX_DELAY)) {
             throw new WiredSaveException("Delay too long");
         }
 

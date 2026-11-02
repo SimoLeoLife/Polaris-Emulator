@@ -1,6 +1,5 @@
 package com.eu.habbo.habbohotel.items.interactions.wired.conditions;
 
-import com.eu.habbo.Emulator;
 import com.eu.habbo.habbohotel.items.Item;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredCondition;
 import com.eu.habbo.habbohotel.items.interactions.wired.WiredSettings;
@@ -9,8 +8,8 @@ import com.eu.habbo.habbohotel.rooms.RoomUnit;
 import com.eu.habbo.habbohotel.wired.WiredConditionType;
 import com.eu.habbo.habbohotel.wired.core.WiredContext;
 import com.eu.habbo.habbohotel.wired.core.WiredManager;
+import com.eu.habbo.habbohotel.wired.core.WiredRoomTime;
 import com.eu.habbo.messages.ServerMessage;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 
@@ -23,13 +22,22 @@ public class WiredConditionLessTimeElapsed extends InteractionWiredCondition {
         super(set, baseItem);
     }
 
-    public WiredConditionLessTimeElapsed(int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
+    public WiredConditionLessTimeElapsed(
+            int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
         super(id, userId, item, extradata, limitedStack, limitedSells);
     }
 
     @Override
     public boolean evaluate(WiredContext ctx) {
-        return (Emulator.getIntUnixTimestamp() - ctx.room().getLastTimerReset()) / 0.5 < this.cycles;
+        // AIR counts whole pulses since the reset and compares them with the value the editor sent
+        // (Less Than: <=); the box stores that value minus one.
+        return pulsesSinceReset(WiredRoomTime.millisSinceTimerReset(ctx.room(), System.currentTimeMillis()))
+                <= this.cycles + 1;
+    }
+
+    /** Whole 500 ms pulses in an elapsed time; a negative time counts as none. */
+    static long pulsesSinceReset(long millis) {
+        return Math.max(0L, millis) / 500L;
     }
 
     @Deprecated
@@ -40,9 +48,7 @@ public class WiredConditionLessTimeElapsed extends InteractionWiredCondition {
 
     @Override
     public String getWiredData() {
-        return WiredManager.getGson().toJson(new JsonData(
-                this.cycles
-        ));
+        return WiredManager.getGson().toJson(new JsonData(this.cycles));
     }
 
     @Override
@@ -80,8 +86,10 @@ public class WiredConditionLessTimeElapsed extends InteractionWiredCondition {
         message.appendInt(this.getBaseItem().getSpriteId());
         message.appendInt(this.getId());
         message.appendString("");
+        // AIR stores the slider value plus one ([value + 1], read back as param - 1); ours keeps the
+        // half-seconds the slider shows, so saved boxes keep their meaning.
         message.appendInt(1);
-        message.appendInt(this.cycles);
+        message.appendInt(toOfficial(this.cycles));
         message.appendInt(0);
         message.appendInt(this.getType().code);
         message.appendInt(0);
@@ -90,9 +98,19 @@ public class WiredConditionLessTimeElapsed extends InteractionWiredCondition {
 
     @Override
     public boolean saveData(WiredSettings settings) {
-        if(settings.getIntParams().length < 1) return false;
-        this.cycles = WiredConditionInputGuard.normalizeTimerCycles(settings.getIntParams()[0]);
+        if (settings.getIntParams().length < 1) return false;
+        this.cycles = fromOfficial(settings.getIntParams()[0]);
         return true;
+    }
+
+    /** The official param of the half-seconds the slider shows: the value plus one. */
+    static int toOfficial(int cycles) {
+        return cycles + 1;
+    }
+
+    /** The half-seconds of an official param (the slider value plus one); never below 0. */
+    static int fromOfficial(int param) {
+        return WiredConditionInputGuard.normalizeTimerCycles(param - 1);
     }
 
     int normalizeCycles(int value) {

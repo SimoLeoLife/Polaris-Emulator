@@ -1,10 +1,12 @@
 package com.eu.habbo.habbohotel.items.interactions.wired.effects;
 
 import com.eu.habbo.Emulator;
+import com.eu.habbo.WiredPlatform;
 import com.eu.habbo.habbohotel.gameclients.GameClient;
 import com.eu.habbo.habbohotel.items.Item;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWired;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredEffect;
+import com.eu.habbo.habbohotel.items.interactions.wired.WiredInputGuard;
 import com.eu.habbo.habbohotel.items.interactions.wired.WiredSettings;
 import com.eu.habbo.habbohotel.rooms.BuildersClubRoomSupport;
 import com.eu.habbo.habbohotel.rooms.Room;
@@ -19,7 +21,6 @@ import com.eu.habbo.messages.ServerMessage;
 import com.eu.habbo.messages.incoming.wired.WiredSaveException;
 import com.eu.habbo.messages.outgoing.inventory.AddHabboItemComposer;
 import com.eu.habbo.messages.outgoing.inventory.InventoryRefreshComposer;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
@@ -28,16 +29,17 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * Removes the resolved furni from the room when the stack fires — the inverse of {@link WiredEffectPlaceFurni}.
+ * Ours ({@code wf_act_pickup_furni}, custom code 1156; formerly "remove furni", which is now the official
+ * element that removes temporary furni): removes the resolved furni from the room when the stack fires — the inverse of {@link WiredEffectPlaceFurni}.
  * Targets are the builder-selected furni (resolved through {@link WiredSourceUtil#resolveItems}); two modes:
  * RETURN_TO_INVENTORY (default, non-destructive — picks the item up to its owner's inventory) or DELETE
  * (permanently destroys it). It never removes WIRED furni or itself (stack-safety) and is bounded per fire.
  *
  * <p>Carries two ints — {@code [mode, furniSource]} — plus the furni-id selection block, so it needs the matching
- * Nitro {@code WiredActionLayoutCode.REMOVE_FURNI} (107) dialog with the room-furni picker.</p>
+ * Nitro {@code WiredActionLayoutCode.PICKUP_FURNI} (1156) dialog with the room-furni picker.</p>
  */
 public class WiredEffectRemoveFurni extends InteractionWiredEffect {
-    public static final WiredEffectType type = WiredEffectType.REMOVE_FURNI;
+    public static final WiredEffectType type = WiredEffectType.PICKUP_FURNI;
 
     public static final int MODE_RETURN = 0;
     public static final int MODE_DELETE = 1;
@@ -75,26 +77,23 @@ public class WiredEffectRemoveFurni extends InteractionWiredEffect {
         int removed = 0;
         for (HabboItem target : targets) {
             if (target == null) continue;
-            if (target.getId() == this.getId()) continue;       // never remove self
-            if (target instanceof InteractionWired) continue;   // never remove other wired furni (stack-safety)
-            if (target.getRoomId() != room.getId()) continue;   // only items currently in this room
+            if (target.getId() == this.getId()) continue; // never remove self
+            if (target instanceof InteractionWired) continue; // never remove other wired furni (stack-safety)
+            if (target.getRoomId() != room.getId()) continue; // only items currently in this room
             if (removed >= MAX_REMOVE_PER_FIRE) break;
 
-            if (this.mode == MODE_DELETE) {
-                room.pickUpItem(target, null);
-                Emulator.getGameEnvironment().getItemManager().deleteItem(target);
-            } else {
-                int ownerId = target.getUserId();
-                Habbo ownerHabbo = Emulator.getGameEnvironment().getHabboManager().getHabbo(ownerId);
-                boolean tracked = BuildersClubRoomSupport.isTrackedItem(target.getId());
+            // Habbo's remove furni never destroys anything: both modes hand the furni back to whoever owns
+            // it, so a wired builder with modify rights cannot wipe the room owner's furni for good.
+            int ownerId = target.getUserId();
+            Habbo ownerHabbo = Emulator.getGameEnvironment().getHabboManager().getHabbo(ownerId);
+            boolean tracked = BuildersClubRoomSupport.isTrackedItem(target.getId());
 
-                room.pickUpItem(target, ownerHabbo);
+            room.pickUpItem(target, ownerHabbo);
 
-                if (ownerHabbo != null && ownerHabbo.getClient() != null && !tracked) {
-                    ownerHabbo.getInventory().getItemsComponent().addItem(target);
-                    ownerHabbo.getClient().sendResponse(new AddHabboItemComposer(target));
-                    ownerHabbo.getClient().sendResponse(new InventoryRefreshComposer());
-                }
+            if (ownerHabbo != null && ownerHabbo.getClient() != null && !tracked) {
+                ownerHabbo.getInventory().getItemsComponent().addItem(target);
+                ownerHabbo.getClient().sendResponse(new AddHabboItemComposer(target));
+                ownerHabbo.getClient().sendResponse(new InventoryRefreshComposer());
             }
 
             removed++;
@@ -122,9 +121,8 @@ public class WiredEffectRemoveFurni extends InteractionWiredEffect {
         message.appendInt(this.getBaseItem().getSpriteId());
         message.appendInt(this.getId());
         message.appendString("");
-        message.appendInt(2);
+        message.appendInt(1);
         message.appendInt(this.mode);
-        message.appendInt(this.furniSource);
         message.appendInt(0);
         message.appendInt(this.getType().code);
         message.appendInt(this.getDelay());
@@ -135,7 +133,8 @@ public class WiredEffectRemoveFurni extends InteractionWiredEffect {
     public boolean saveData(WiredSettings settings, GameClient gameClient) throws WiredSaveException {
         int[] params = settings.getIntParams();
         this.mode = (params.length > 0 && params[0] == MODE_DELETE) ? MODE_DELETE : MODE_RETURN;
-        this.furniSource = (params.length > 1) ? params[1] : WiredSourceUtil.SOURCE_SELECTED;
+        // Ours: [mode]; the furni source is the official source slot.
+        this.furniSource = settings.furniSource(0, WiredSourceUtil.SOURCE_SELECTED);
 
         Room room = Emulator.getGameEnvironment().getRoomManager().getRoom(this.getRoomId());
         if (room == null) {
@@ -158,7 +157,7 @@ public class WiredEffectRemoveFurni extends InteractionWiredEffect {
         }
 
         int delay = settings.getDelay();
-        if (delay > Emulator.getConfig().getInt("hotel.wired.max_delay", 20)) {
+        if (delay > Emulator.getConfig().getInt("hotel.wired.max_delay", WiredInputGuard.DEFAULT_MAX_DELAY)) {
             throw new WiredSaveException("Delay too long");
         }
         this.setDelay(delay);
@@ -167,7 +166,12 @@ public class WiredEffectRemoveFurni extends InteractionWiredEffect {
     }
 
     private void refresh() {
-        Room room = Emulator.getGameEnvironment().getRoomManager().getRoom(this.getRoomId());
+        if (WiredPlatform.gameEnvironment() == null
+                || WiredPlatform.gameEnvironment().getRoomManager() == null) {
+            return;
+        }
+
+        Room room = WiredPlatform.gameEnvironment().getRoomManager().getRoom(this.getRoomId());
         if (room != null && room.isLoaded()) {
             this.selectedItemIds.removeIf(id -> room.getHabboItem(id) == null);
         }
@@ -176,7 +180,9 @@ public class WiredEffectRemoveFurni extends InteractionWiredEffect {
     @Override
     public String getWiredData() {
         this.refresh();
-        return WiredManager.getGson().toJson(new JsonData(new ArrayList<>(this.selectedItemIds), this.mode, this.furniSource, this.getDelay()));
+        return WiredManager.getGson()
+                .toJson(new JsonData(
+                        new ArrayList<>(this.selectedItemIds), this.mode, this.furniSource, this.getDelay()));
     }
 
     @Override

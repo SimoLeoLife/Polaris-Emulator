@@ -11,11 +11,19 @@ db.pool.idle_timeout_ms=600000
 db.pool.max_lifetime_ms=1800000
 db.pool.validation_timeout_ms=5000
 db.pool.leak_detection_ms=0
+runtime.operational.profile=custom
+persistence.executor.threads=0
+db.persistence.queue.capacity=0
 
 game.host=127.0.0.1
 game.port=${E2E_RAW_PORT}
 rcon.host=127.0.0.1
 rcon.port=${E2E_RCON_PORT}
+# The emulator_settings overlay is applied after the database connects and wins
+# over this file, so ws.*, enc.enabled, crypto.ws.enabled, client.release.allowed
+# and session.reconnect.grace.seconds are really set by e2e/seed.sql. They are
+# repeated here so a run against a database without those rows still works —
+# keep both copies in sync.
 ws.enabled=true
 ws.host=127.0.0.1
 ws.port=${E2E_GAME_PORT}

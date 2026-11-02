@@ -2,19 +2,24 @@ package com.eu.habbo.habbohotel.items.interactions.wired.chest;
 
 import com.eu.habbo.habbohotel.rooms.Room;
 import com.eu.habbo.habbohotel.users.Habbo;
-
 import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Validates and applies wired contract terms atomically for {@code WiredEffectInitTransaction}.
+ * The old instant settlement of wired contract terms (wallet payments, copied furni).
+ *
+ * <p>Refused under the AIR chest model: contract payments go through the wired trade and rewards
+ * come out of chests ({@link WiredTradingManager}, {@link WiredChestPayouts}). Kept for callers
+ * compiled against it; {@link #execute} always answers false and changes nothing.
  */
 public final class WiredTransactionExecutor {
-    private WiredTransactionExecutor() {
-    }
+    /** The AIR model settles contracts through the wired trade only. */
+    static final boolean AIR_TRADES_ONLY = true;
+
+    private WiredTransactionExecutor() {}
 
     public static boolean execute(Habbo habbo, Room room, List<InteractionWiredContract> contracts) {
-        if (habbo == null || room == null) {
+        if (AIR_TRADES_ONLY || habbo == null || room == null) {
             return false;
         }
         if (contracts == null || contracts.isEmpty()) {
@@ -60,7 +65,8 @@ public final class WiredTransactionExecutor {
         return true;
     }
 
-    private static boolean validateCurrency(Habbo habbo, InteractionWiredChest chest, ContractTerm term, List<PendingChange> pending) {
+    private static boolean validateCurrency(
+            Habbo habbo, InteractionWiredChest chest, ContractTerm term, List<PendingChange> pending) {
         if (term.direction == ContractTerm.DIR_PAY) {
             if (!ChestWiredCurrencyUtil.has(habbo, term.currencyType, term.amount)) {
                 return false;
@@ -82,13 +88,15 @@ public final class WiredTransactionExecutor {
         return true;
     }
 
-    private static boolean validateFurni(Habbo habbo, InteractionWiredChest chest, ContractTerm term, List<PendingChange> pending) {
+    private static boolean validateFurni(
+            Habbo habbo, InteractionWiredChest chest, ContractTerm term, List<PendingChange> pending) {
         if (term.baseItemId <= 0) {
             return false;
         }
 
         if (term.direction == ContractTerm.DIR_PAY) {
-            if (ChestWiredFurniUtil.countInInventory(habbo, term.wallItem, term.baseItemId, term.legacyPosterId) < term.amount) {
+            if (ChestWiredFurniUtil.countInInventory(habbo, term.wallItem, term.baseItemId, term.legacyPosterId)
+                    < term.amount) {
                 return false;
             }
             pending.add(PendingChange.userFurniTake(habbo, chest, term));
@@ -109,8 +117,13 @@ public final class WiredTransactionExecutor {
 
     private static final class PendingChange {
         private enum Kind {
-            USER_TAKE, USER_GIVE, CHEST_TAKE, CHEST_ADD,
-            USER_FURNI_TAKE, CHEST_FURNI_GIVE, USER_FURNI_MINT
+            USER_TAKE,
+            USER_GIVE,
+            CHEST_TAKE,
+            CHEST_ADD,
+            USER_FURNI_TAKE,
+            CHEST_FURNI_GIVE,
+            USER_FURNI_MINT
         }
 
         private final Kind kind;
@@ -121,7 +134,13 @@ public final class WiredTransactionExecutor {
         private final ContractTerm furniTerm;
         private List<ChestFurniStoredItem> furniItems;
 
-        private PendingChange(Kind kind, Habbo habbo, InteractionWiredChest chest, int currencyType, int amount, ContractTerm furniTerm) {
+        private PendingChange(
+                Kind kind,
+                Habbo habbo,
+                InteractionWiredChest chest,
+                int currencyType,
+                int amount,
+                ContractTerm furniTerm) {
             this.kind = kind;
             this.habbo = habbo;
             this.chest = chest;
@@ -174,8 +193,11 @@ public final class WiredTransactionExecutor {
                     break;
                 case USER_FURNI_TAKE:
                     this.furniItems = ChestWiredFurniUtil.takeFromInventory(
-                            this.habbo, this.furniTerm.wallItem, this.furniTerm.baseItemId,
-                            this.furniTerm.legacyPosterId, this.furniTerm.amount);
+                            this.habbo,
+                            this.furniTerm.wallItem,
+                            this.furniTerm.baseItemId,
+                            this.furniTerm.legacyPosterId,
+                            this.furniTerm.amount);
                     if (this.chest != null && this.furniItems != null && !this.furniItems.isEmpty()) {
                         ChestWiredFurniUtil.depositToChest(this.chest, this.furniItems);
                     }
@@ -183,8 +205,12 @@ public final class WiredTransactionExecutor {
                 case CHEST_FURNI_GIVE:
                     if (this.furniTerm != null) {
                         ChestWiredFurniUtil.giveFromChestByType(
-                                this.habbo, this.chest, this.furniTerm.wallItem, this.furniTerm.baseItemId,
-                                this.furniTerm.legacyPosterId, this.furniTerm.amount);
+                                this.habbo,
+                                this.chest,
+                                this.furniTerm.wallItem,
+                                this.furniTerm.baseItemId,
+                                this.furniTerm.legacyPosterId,
+                                this.furniTerm.amount);
                     }
                     break;
                 case USER_FURNI_MINT:

@@ -1,13 +1,10 @@
 package com.eu.habbo.habbohotel.items.interactions.wired.chest;
 
-import com.eu.habbo.Emulator;
 import com.eu.habbo.habbohotel.gameclients.GameClient;
 import com.eu.habbo.habbohotel.items.Item;
 import com.eu.habbo.habbohotel.items.interactions.wired.WiredSettings;
 import com.eu.habbo.habbohotel.rooms.Room;
 import com.eu.habbo.messages.ServerMessage;
-import com.eu.habbo.habbohotel.items.interactions.wired.chest.ChestOpenHelper;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 
@@ -25,33 +22,43 @@ public class InteractionWiredChestFurni extends InteractionWiredChest {
         super(set, baseItem);
     }
 
-    public InteractionWiredChestFurni(int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
+    public InteractionWiredChestFurni(
+            int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
         super(id, userId, item, extradata, limitedStack, limitedSells);
     }
 
     /**
      * Player-first: clicking the furni chest opens the player Scrigno UI (item grid + withdraw) instead of
-     * the wired-config dialog. Anyone can open if accessOpen; withdraw is gated to room rights server-side
-     * (see ChestWithdrawFurniEvent).
+     * the wired-config dialog. Who may look inside is {@link ChestOpenHelper#mayOpen} (AIR: everyone when
+     * the chest says so, else its owner and players with rights, so an owner without rights in the room
+     * still reaches their own chest); withdrawing is checked again server-side (see ChestWithdrawFurniEvent).
      */
     @Override
     public void onClick(GameClient client, Room room, Object[] objects) throws Exception {
         if (client == null || room == null) return;
-        if (!this.contents.isAccessOpen() && !room.hasRights(client.getHabbo())) return;
         ChestOpenHelper.open(client, this, room);
+    }
+
+    /**
+     * A furni chest has a lid: its sprite is closed or open, and the owner decides which.
+     *
+     * <p>The default mode opens it while someone is looking inside, which is why the base class tracks
+     * who has the window open.
+     */
+    @Override
+    protected int visualState() {
+        return this.showsOpen() ? 1 : 0;
+    }
+
+    @Override
+    protected int storedCount() {
+        return this.getContents().furniItemCount();
     }
 
     @Override
     public boolean saveData(WiredSettings settings, GameClient gameClient) {
-        int[] params = settings.getIntParams();
-        int baseItemId = (params.length > 0) ? params[0] : 0;
-        int quantity = (params.length > 1) ? Math.max(0, params[1]) : 0;
-
-        this.contents = new ChestStorage();
-        // Only stock a valid, existing base item.
-        if (baseItemId > 0 && quantity > 0 && Emulator.getGameEnvironment().getItemManager().getItem(baseItemId) != null) {
-            this.contents.add(ChestStorage.KIND_FURNI, baseItemId, quantity);
-        }
+        // A chest is filled by deposits only (AIR model). The wired editor used to be able to set its
+        // contents outright, which created coins and furni out of nothing; it no longer touches them.
         return true;
     }
 
@@ -59,7 +66,7 @@ public class InteractionWiredChestFurni extends InteractionWiredChest {
     public void serializeWiredData(ServerMessage message, Room room) {
         int baseItemId = 0;
         int quantity = 0;
-        for (ChestStorage.Entry e : this.contents.entries()) {
+        for (ChestStorage.Entry e : this.getContents().entries()) {
             if (e.kind == ChestStorage.KIND_FURNI) {
                 baseItemId = e.type;
                 quantity = e.quantity;

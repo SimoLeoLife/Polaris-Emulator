@@ -1,14 +1,17 @@
 package com.eu.habbo.networking.gameserver;
 
 import com.eu.habbo.Emulator;
+import com.eu.habbo.core.ConfigurationManager;
 import com.eu.habbo.messages.PacketManager;
 import com.eu.habbo.networking.gameserver.auth.AuthHttpHandler;
 import com.eu.habbo.networking.gameserver.auth.NitroSecureApiHandler;
 import com.eu.habbo.networking.gameserver.auth.NitroSecureAssetHandler;
 import com.eu.habbo.networking.gameserver.badges.BadgeHttpHandler;
 import com.eu.habbo.networking.gameserver.badges.BadgeLeaderboardHttpHandler;
+import com.eu.habbo.networking.gameserver.cms.CmsApiHandler;
 import com.eu.habbo.networking.gameserver.codec.WebSocketCodec;
 import com.eu.habbo.networking.gameserver.crypto.WsHandshakeHandler;
+import com.eu.habbo.networking.gameserver.crypto.WsSessionCrypto;
 import com.eu.habbo.networking.gameserver.decoders.GameByteDecoder;
 import com.eu.habbo.networking.gameserver.decoders.GameByteFrameDecoder;
 import com.eu.habbo.networking.gameserver.decoders.GameClientMessageLogger;
@@ -20,11 +23,13 @@ import com.eu.habbo.networking.gameserver.decoders.PacketDispatchMarker;
 import com.eu.habbo.networking.gameserver.encoders.GameServerMessageEncoder;
 import com.eu.habbo.networking.gameserver.encoders.GameServerMessageLogger;
 import com.eu.habbo.networking.gameserver.handlers.IdleTimeoutHandler;
+import com.eu.habbo.networking.gameserver.handlers.PreUpgradeConnectionLimit;
 import com.eu.habbo.networking.gameserver.handlers.SustainedUnwritableHandler;
 import com.eu.habbo.networking.gameserver.handlers.WebSocketHttpCleanupHandler;
 import com.eu.habbo.networking.gameserver.handlers.WebSocketHttpHandler;
 import com.eu.habbo.networking.gameserver.ssl.SSLCertificateLoader;
 import com.eu.habbo.networking.gameserver.stats.EmuStatsHttpHandler;
+import com.eu.habbo.networking.gameserver.wired.WiredVariableApiHandler;
 import io.netty.channel.ChannelInitializer;
 import io.netty.channel.socket.SocketChannel;
 import io.netty.handler.codec.http.HttpObjectAggregator;
@@ -35,6 +40,7 @@ import io.netty.handler.codec.http.websocketx.WebSocketServerProtocolHandler;
 import io.netty.handler.logging.LoggingHandler;
 import io.netty.handler.ssl.SslContext;
 import io.netty.handler.ssl.SslHandler;
+import io.netty.handler.timeout.ReadTimeoutHandler;
 import io.netty.util.concurrent.EventExecutorGroup;
 import java.util.concurrent.TimeUnit;
 import javax.net.ssl.SSLEngine;
@@ -44,6 +50,13 @@ import org.slf4j.LoggerFactory;
 public class WebSocketChannelInitializer extends ChannelInitializer<SocketChannel> {
     private static final Logger LOGGER = LoggerFactory.getLogger(WebSocketChannelInitializer.class);
     private static final int MAX_FRAME_SIZE = 500000;
+    // A connection that has not upgraded to WebSocket is closed after this many seconds without a read: before, an
+    // HTTP connection could hold its aggregation buffer open for as long as it liked. 0 turns it off.
+    static final String HTTP_READ_TIMEOUT_SETTING = "ws.http.read_timeout_sec";
+    private static final int DEFAULT_HTTP_READ_TIMEOUT_SECONDS = 30;
+    // Connections one client may hold before the upgrade; a trusted proxy is not counted. 0 turns it off.
+    static final String HTTP_CONNECTIONS_SETTING = "ws.http.connections.per_ip";
+    private static final int DEFAULT_HTTP_CONNECTIONS = 32;
 
     private final SslContext sslContext;
     private final boolean sslEnabled;
@@ -71,6 +84,8 @@ public class WebSocketChannelInitializer extends ChannelInitializer<SocketChanne
                 .websocketPath("/")
                 .checkStartsWith(true)
                 .maxFramePayloadLength(MAX_FRAME_SIZE)
+                // Offered only to a client that asks for it; see WsDirectionalSession.
+                .subprotocols(WsSessionCrypto.SUBPROTOCOL_V2)
                 .build();
     }
 
@@ -87,22 +102,65 @@ public class WebSocketChannelInitializer extends ChannelInitializer<SocketChanne
             ch.pipeline().addLast(new SslHandler(engine));
         }
 
+        ConfigurationManager configuration = Emulator.getConfig();
+        int httpReadTimeout = configuration == null
+                ? DEFAULT_HTTP_READ_TIMEOUT_SECONDS
+                : configuration.getInt(HTTP_READ_TIMEOUT_SETTING, DEFAULT_HTTP_READ_TIMEOUT_SECONDS);
+        if (httpReadTimeout > 0) {
+            ch.pipeline().addLast("httpReadTimeout", new ReadTimeoutHandler(httpReadTimeout, TimeUnit.SECONDS));
+        }
+        int httpConnections = configuration == null
+                ? DEFAULT_HTTP_CONNECTIONS
+                : configuration.getInt(HTTP_CONNECTIONS_SETTING, DEFAULT_HTTP_CONNECTIONS);
+        if (httpConnections > 0) {
+            ch.pipeline().addLast("httpConnectionLimit", new PreUpgradeConnectionLimit(httpConnections));
+        }
+
         ch.pipeline().addLast("httpCodec", new HttpServerCodec());
         ch.pipeline().addLast("httpAggregator", new HttpObjectAggregator(MAX_FRAME_SIZE));
         ch.pipeline().addLast("wsHttpHandler", new WebSocketHttpHandler());
-        EventExecutorGroup blockingHttp = BlockingHttpExecutionGroup.get(this.blockingHttpThreads);
+        ExecutionBackpressureSettings backpressureSettings = configuration == null
+                ? ExecutionBackpressureSettings.defaults()
+                : ExecutionBackpressureSettings.from(configuration);
+        EventExecutorGroup blockingHttp =
+                BlockingHttpExecutionGroup.get(this.blockingHttpThreads, backpressureSettings);
+        ch.pipeline()
+                .addLast(
+                        "blockingHttpAdmissionAssets",
+                        BlockingHttpExecutionGroup.admissionHandler("nitroSecureAssetHandler"));
         ch.pipeline().addLast(blockingHttp, "nitroSecureAssetHandler", new NitroSecureAssetHandler());
-        ch.pipeline().addLast("nitroSecureApiHandler", new NitroSecureApiHandler());
+        // The secure API derives a key for every request: on the socket event loop that stalled every other
+        // connection of the loop, so it runs on the blocking HTTP executor like the asset handler.
+        ch.pipeline()
+                .addLast(
+                        "blockingHttpAdmissionApi",
+                        BlockingHttpExecutionGroup.admissionHandler("nitroSecureApiHandler"));
+        ch.pipeline().addLast(blockingHttp, "nitroSecureApiHandler", new NitroSecureApiHandler());
         ch.pipeline().addLast("authHttpHandler", new AuthHttpHandler());
+        ch.pipeline().addLast("blockingHttpAdmissionCms", BlockingHttpExecutionGroup.admissionHandler("cmsApiHandler"));
+        ch.pipeline().addLast(blockingHttp, "cmsApiHandler", new CmsApiHandler());
+        ch.pipeline()
+                .addLast("blockingHttpAdmissionWired", BlockingHttpExecutionGroup.admissionHandler("wiredApiHandler"));
+        ch.pipeline().addLast(blockingHttp, "wiredApiHandler", new WiredVariableApiHandler());
+        ch.pipeline()
+                .addLast("blockingHttpAdmissionBadge", BlockingHttpExecutionGroup.admissionHandler("badgeHttpHandler"));
         ch.pipeline().addLast(blockingHttp, "badgeHttpHandler", new BadgeHttpHandler());
+        ch.pipeline()
+                .addLast(
+                        "blockingHttpAdmissionBadgeLeaderboard",
+                        BlockingHttpExecutionGroup.admissionHandler("badgeLeaderboardHttpHandler"));
         ch.pipeline().addLast(blockingHttp, "badgeLeaderboardHttpHandler", new BadgeLeaderboardHttpHandler());
+        ch.pipeline()
+                .addLast(
+                        "blockingHttpAdmissionStats",
+                        BlockingHttpExecutionGroup.admissionHandler("emuStatsHttpHandler"));
         ch.pipeline().addLast(blockingHttp, "emuStatsHttpHandler", new EmuStatsHttpHandler());
         ch.pipeline().addLast("wsProtocolHandler", new WebSocketServerProtocolHandler(this.wsConfig));
         ch.pipeline().addLast("wsHttpCleanup", new WebSocketHttpCleanupHandler());
         ch.pipeline().addLast("wsFrameAggregator", new WebSocketFrameAggregator(MAX_FRAME_SIZE));
         ch.pipeline().addLast("wsCodec", new WebSocketCodec());
 
-        if (Emulator.getConfig().getBoolean("crypto.ws.enabled", false)) {
+        if (configuration != null && configuration.getBoolean("crypto.ws.enabled", false)) {
             ch.pipeline().addLast(WsHandshakeHandler.HANDLER_NAME, new WsHandshakeHandler());
         }
 
@@ -115,8 +173,12 @@ public class WebSocketChannelInitializer extends ChannelInitializer<SocketChanne
         }
 
         ch.pipeline().addLast("idleEventHandler", new IdleTimeoutHandler(30, 60));
+        ch.pipeline().addLast("gameClientRegistrar", new GameMessageHandler.ClientRegistrar());
         ch.pipeline().addLast(new GameMessageRateLimit());
         ch.pipeline().addLast("packetDispatchMarker", new PacketDispatchMarker());
+        ch.pipeline()
+                .addLast(
+                        "packetExecutionAdmission", GamePacketExecutionGroup.admissionHandler("packetDispatchLatency"));
         ch.pipeline()
                 .addLast(GamePacketExecutionGroup.get(), "packetDispatchLatency", new PacketDispatchLatencyHandler());
         ch.pipeline().addLast(GamePacketExecutionGroup.get(), "gameMessageHandler", new GameMessageHandler());

@@ -1,14 +1,14 @@
 package com.eu.habbo.habbohotel.items;
 
 import com.eu.habbo.Emulator;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * In-memory index of furnidata display names, keyed by the lowercased base
@@ -26,6 +26,7 @@ public class FurnitureTextProvider {
 
     private final boolean enabled;
     private volatile Map<String, FurniText> index = Map.of();
+    private volatile Map<String, Integer> defaultDirections = Map.of();
     private volatile Path source;
     private volatile String sourceDescription = "unknown";
     private FurnidataWatcher watcher;
@@ -47,8 +48,13 @@ public class FurnitureTextProvider {
                 LOGGER.warn("FurnitureTextProvider: no furnidata source resolved - names fall back to public_name");
                 return;
             }
-            reindex(new FurnidataReader(this.source, DEFAULT_MAX_BYTES).read());
-            LOGGER.info("Furniture Text Provider -> Indexed! ({} names, source: {})", this.index.size(), this.sourceDescription);
+            FurnidataReader reader = new FurnidataReader(this.source, DEFAULT_MAX_BYTES);
+            reindex(reader.read());
+            indexDefaultDirections(reader.defaultDirections());
+            LOGGER.info(
+                    "Furniture Text Provider -> Indexed! ({} names, source: {})",
+                    this.index.size(),
+                    this.sourceDescription);
 
             if (Boolean.parseBoolean(Emulator.getConfig().getValue("items.furnidata.watch.enabled", "true"))) {
                 if (this.watcher != null) this.watcher.stop();
@@ -64,6 +70,11 @@ public class FurnitureTextProvider {
         return this.source;
     }
 
+    /** Furnidata downloaded from a URL is a local copy: edits belong on the web server, not here. */
+    public boolean isSourceReadOnly() {
+        return FurnidataDownloader.isDownloadedCopy(this.source);
+    }
+
     /** Returns {@code true} when the resolved source is a directory (split-tier layout). */
     public boolean isSourceDirectory() {
         return this.source != null && Files.isDirectory(this.source);
@@ -71,7 +82,8 @@ public class FurnitureTextProvider {
 
     /** Returns the byte cap used when reading furnidata files. */
     public long getMaxBytes() {
-        return Long.parseLong(com.eu.habbo.Emulator.getConfig().getValue("items.furnidata.max.bytes", String.valueOf(DEFAULT_MAX_BYTES)));
+        return Long.parseLong(com.eu.habbo.Emulator.getConfig()
+                .getValue("items.furnidata.max.bytes", String.valueOf(DEFAULT_MAX_BYTES)));
     }
 
     /**
@@ -82,7 +94,10 @@ public class FurnitureTextProvider {
     public java.util.List<FurnidataEntry> reindexFromSource() {
         try {
             if (this.source == null) return java.util.List.of();
-            return reindex(new FurnidataReader(this.source, DEFAULT_MAX_BYTES).read());
+            FurnidataReader reader = new FurnidataReader(this.source, DEFAULT_MAX_BYTES);
+            java.util.List<FurnidataEntry> delta = reindex(reader.read());
+            indexDefaultDirections(reader.defaultDirections());
+            return delta;
         } catch (Exception e) {
             LOGGER.warn("FurnitureTextProvider.reindexFromSource failed", e);
             return java.util.List.of();
@@ -95,7 +110,11 @@ public class FurnitureTextProvider {
             this.sourceDescription = source.message();
             return source.path();
         }
-        LOGGER.warn("FurnitureTextProvider: no furnidata source resolved ({}) - {}", source.status(), source.message());
+        LOGGER.warn(
+                "FurnitureTextProvider: no furnidata source resolved ({}) - {} [path: {}]",
+                source.status(),
+                source.message(),
+                source.path());
         return null;
     }
 
@@ -116,13 +135,30 @@ public class FurnitureTextProvider {
         for (Map.Entry<String, FurniText> en : next.entrySet()) {
             FurniText cur = en.getValue();
             FurniText old = prev.get(en.getKey());
-            if (old == null || !old.name().equals(cur.name()) || !old.description().equals(cur.description())) {
+            if (old == null
+                    || !old.name().equals(cur.name())
+                    || !old.description().equals(cur.description())) {
                 delta.add(new FurnidataEntry(cur.id(), en.getKey(), cur.type(), cur.name(), cur.description()));
             }
         }
 
         this.index = next; // atomic reference swap
         return delta;
+    }
+
+    /** Replaces the floor furni {@code defaultdir} index (lowercased base classname to 0..7). */
+    public void indexDefaultDirections(Map<String, Integer> directions) {
+        this.defaultDirections = directions == null ? Map.of() : Map.copyOf(directions);
+    }
+
+    /**
+     * The furnidata {@code defaultdir} of a floor furni classname ({@code name*3} uses {@code
+     * name}), or -1 when the furnidata does not list one. Independent of the names toggle.
+     */
+    public int getDefaultDirection(String classname) {
+        String key = baseKey(classname);
+        Integer direction = key == null ? null : this.defaultDirections.get(key);
+        return direction == null ? -1 : direction;
     }
 
     /** Returns the sanitized display name for a DB classname, or null if absent/disabled. */
@@ -153,7 +189,10 @@ public class FurnitureTextProvider {
         StringBuilder sb = new StringBuilder(Math.min(value.length(), MAX_LEN));
         for (int i = 0; i < value.length() && sb.length() < MAX_LEN; i++) {
             char c = value.charAt(i);
-            if (c == '%') { sb.append('％'); continue; } // fullwidth percent — not a placeholder token
+            if (c == '%') {
+                sb.append('％');
+                continue;
+            } // fullwidth percent — not a placeholder token
             if (c == '\n' || c == '\r' || Character.isISOControl(c)) continue;
             sb.append(c);
         }
@@ -173,7 +212,9 @@ public class FurnitureTextProvider {
         Map<String, FurniText> idx = this.index; // local ref (volatile)
         for (Map.Entry<String, FurniText> e : idx.entrySet()) {
             FurniText t = e.getValue();
-            if (t != null && t.name() != null && t.name().toLowerCase(Locale.ROOT).contains(q)) {
+            if (t != null
+                    && t.name() != null
+                    && t.name().toLowerCase(Locale.ROOT).contains(q)) {
                 out.add(e.getKey()); // key is the lowercased base classname
                 if (out.size() >= 200) break; // bound IN-clause size
             }

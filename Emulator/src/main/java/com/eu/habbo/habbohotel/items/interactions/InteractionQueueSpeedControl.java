@@ -4,24 +4,31 @@ import com.eu.habbo.Emulator;
 import com.eu.habbo.habbohotel.gameclients.GameClient;
 import com.eu.habbo.habbohotel.items.Item;
 import com.eu.habbo.habbohotel.rooms.Room;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 
 public class InteractionQueueSpeedControl extends InteractionRemoteSwitchControl {
-    private static final int[] MODE_STATES = new int[]{0, 3, 6, 9};
+    private static final int[] MODE_STATES = new int[] {0, 3, 6, 9};
     private static final int MODE_FRAME_COUNT = 3;
+    /** The speed modes a click steps through (states 0, 3, 6 and 9). */
+    public static final int MODE_COUNT = MODE_STATES.length;
+    /** Every state the furni shows: each mode plus its animation frames, 0 to 11. */
+    public static final int STATE_COUNT = MODE_COUNT * MODE_FRAME_COUNT;
+
     private static final int BASE_FRAME_DURATION_MS = 500;
 
     private transient volatile int animationRevision = 0;
     private transient volatile int animationRoomId = 0;
     private transient volatile int animationModeState = Integer.MIN_VALUE;
+    /** The mode the rollers step at; {@code MIN_VALUE} follows the shown mode. Only a click changes it. */
+    private transient volatile int rollerModeState = Integer.MIN_VALUE;
 
     public InteractionQueueSpeedControl(ResultSet set, Item baseItem) throws SQLException {
         super(set, baseItem);
     }
 
-    public InteractionQueueSpeedControl(int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
+    public InteractionQueueSpeedControl(
+            int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
         super(id, userId, item, extradata, limitedStack, limitedSells);
     }
 
@@ -86,17 +93,48 @@ public class InteractionQueueSpeedControl extends InteractionRemoteSwitchControl
             }
 
             if (!this.canToggle(client.getHabbo(), room)) {
-                super.onClick(client, room, new Object[]{"QUEUE_SPEED_USE"});
+                super.onClick(client, room, new Object[] {"QUEUE_SPEED_USE"});
                 return;
             }
         }
 
-        int nextModeState = getNextModeState(this.getExtradata());
-        applyModeState(room, nextModeState, true);
+        this.stepMode(room, true);
 
         if (client != null) {
-            super.onClick(client, room, new Object[]{"TOGGLE_OVERRIDE"});
+            super.onClick(client, room, new Object[] {"TOGGLE_OVERRIDE"});
         }
+    }
+
+    /** Moves to the next (or previous) speed mode and saves it; the rollers follow (a user's click). */
+    public void stepMode(Room room, boolean forward) {
+        if (room == null) {
+            return;
+        }
+
+        this.rollerModeState = Integer.MIN_VALUE;
+        applyModeState(room, getNextModeState(this.getExtradata(), forward), true);
+    }
+
+    /**
+     * Toggle State on the controller, as AIR does: it shows the next mode group (frames restarting), but the
+     * rollers and the animation keep the step time of the mode a user last chose.
+     */
+    public void wiredStepMode(Room room, boolean forward) {
+        if (room == null) {
+            return;
+        }
+
+        if (this.rollerModeState == Integer.MIN_VALUE) {
+            this.rollerModeState = toModeState(this.getExtradata());
+        }
+
+        applyModeState(room, getNextModeState(this.getExtradata(), forward), true);
+    }
+
+    /** The mode state whose speed the rollers use. */
+    public int getRollerModeState() {
+        int held = this.rollerModeState;
+        return held == Integer.MIN_VALUE ? toModeState(this.getExtradata()) : held;
     }
 
     @Override
@@ -144,7 +182,7 @@ public class InteractionQueueSpeedControl extends InteractionRemoteSwitchControl
 
         int revision = this.animationRevision;
         int nextFrame = modeState + 1;
-        long delay = toRollerIntervalMs(Integer.toString(modeState));
+        long delay = this.animationDelay(modeState);
 
         Emulator.getThreading().run(() -> this.animateNextFrame(room, modeState, nextFrame, revision), delay);
     }
@@ -165,20 +203,26 @@ public class InteractionQueueSpeedControl extends InteractionRemoteSwitchControl
         room.updateItemState(this);
 
         int followingFrame = (frame >= maxFrame) ? modeState : (frame + 1);
-        long delay = toRollerIntervalMs(Integer.toString(modeState));
+        long delay = this.animationDelay(modeState);
 
         Emulator.getThreading().run(() -> this.animateNextFrame(room, modeState, followingFrame, revision), delay);
     }
 
-    private static int getNextModeState(String extradata) {
+    private long animationDelay(int modeState) {
+        int held = this.rollerModeState;
+        return toRollerIntervalMs(Integer.toString(held == Integer.MIN_VALUE ? modeState : held));
+    }
+
+    static int getNextModeState(String extradata, boolean forward) {
         int currentModeState = toModeState(extradata);
+        int step = forward ? 1 : (MODE_STATES.length - 1);
 
         for (int index = 0; index < MODE_STATES.length; index++) {
             if (MODE_STATES[index] != currentModeState) {
                 continue;
             }
 
-            return MODE_STATES[(index + 1) % MODE_STATES.length];
+            return MODE_STATES[(index + step) % MODE_STATES.length];
         }
 
         return MODE_STATES[0];

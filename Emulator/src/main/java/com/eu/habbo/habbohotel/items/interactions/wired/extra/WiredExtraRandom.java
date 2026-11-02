@@ -11,7 +11,6 @@ import com.eu.habbo.habbohotel.rooms.RoomUnit;
 import com.eu.habbo.habbohotel.wired.api.IWiredEffect;
 import com.eu.habbo.habbohotel.wired.core.WiredManager;
 import com.eu.habbo.messages.ServerMessage;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayDeque;
@@ -28,8 +27,10 @@ public class WiredExtraRandom extends InteractionWiredExtra {
     public static final int CODE = 63;
     private static final int DEFAULT_PICK_AMOUNT = 1;
     private static final int DEFAULT_SKIP_EXECUTIONS = 0;
-    private static final int MAX_PICK_AMOUNT = 1000;
-    private static final int MAX_SKIP_EXECUTIONS = 1000;
+    /** AIR's sliders: picks 1..100, skips 0..100. */
+    private static final int MAX_PICK_AMOUNT = 100;
+
+    private static final int MAX_SKIP_EXECUTIONS = 100;
 
     private final Deque<List<Integer>> recentExecutionEffectIds = new ArrayDeque<>();
 
@@ -51,8 +52,10 @@ public class WiredExtraRandom extends InteractionWiredExtra {
 
     @Override
     public boolean saveData(WiredSettings settings, GameClient gameClient) {
-        int resolvedPickAmount = (settings.getIntParams().length > 0) ? settings.getIntParams()[0] : DEFAULT_PICK_AMOUNT;
-        int resolvedSkipExecutions = (settings.getIntParams().length > 1) ? settings.getIntParams()[1] : DEFAULT_SKIP_EXECUTIONS;
+        // AIR layout: [skips (leave out what the last N firings picked), picks].
+        int[] params = settings.getIntParams();
+        int resolvedSkipExecutions = (params.length > 0) ? params[0] : DEFAULT_SKIP_EXECUTIONS;
+        int resolvedPickAmount = (params.length > 1) ? params[1] : DEFAULT_PICK_AMOUNT;
 
         this.pickAmount = normalizePickAmount(resolvedPickAmount);
         this.skipExecutions = normalizeSkipExecutions(resolvedSkipExecutions);
@@ -62,7 +65,8 @@ public class WiredExtraRandom extends InteractionWiredExtra {
 
     @Override
     public String getWiredData() {
-        return WiredManager.getGson().toJson(new JsonData(this.pickAmount, this.skipExecutions));
+        JsonData data = new JsonData(this.pickAmount, this.skipExecutions);
+        return WiredManager.getGson().toJson(data);
     }
 
     @Override
@@ -74,8 +78,8 @@ public class WiredExtraRandom extends InteractionWiredExtra {
         message.appendInt(this.getId());
         message.appendString("");
         message.appendInt(2);
-        message.appendInt(this.pickAmount);
         message.appendInt(this.skipExecutions);
+        message.appendInt(this.pickAmount);
         message.appendInt(0);
         message.appendInt(CODE);
         message.appendInt(0);
@@ -91,11 +95,13 @@ public class WiredExtraRandom extends InteractionWiredExtra {
             return;
         }
 
+        // A box saved before AIR's layout may hold up to 1000 and a "skip top" count AIR does not
+        // have: its amounts are clamped to AIR's 100 and the old count is ignored.
         if (wiredData.startsWith("{")) {
             JsonData data = WiredExtraPayloadGuard.fromJson(wiredData, JsonData.class);
             this.pickAmount = normalizePickAmount((data != null) ? data.pickAmount : DEFAULT_PICK_AMOUNT);
-            this.skipExecutions = normalizeSkipExecutions((data != null) ? data.skipExecutions : DEFAULT_SKIP_EXECUTIONS);
-            return;
+            this.skipExecutions =
+                    normalizeSkipExecutions((data != null) ? data.skipExecutions : DEFAULT_SKIP_EXECUTIONS);
         }
     }
 
@@ -107,9 +113,7 @@ public class WiredExtraRandom extends InteractionWiredExtra {
     }
 
     @Override
-    public void onWalk(RoomUnit roomUnit, Room room, Object[] objects) throws Exception {
-
-    }
+    public void onWalk(RoomUnit roomUnit, Room room, Object[] objects) throws Exception {}
 
     @Override
     public boolean hasConfiguration() {
@@ -117,7 +121,10 @@ public class WiredExtraRandom extends InteractionWiredExtra {
     }
 
     @Override
-    public void onMove(Room room, com.eu.habbo.habbohotel.rooms.RoomTile oldLocation, com.eu.habbo.habbohotel.rooms.RoomTile newLocation) {
+    public void onMove(
+            Room room,
+            com.eu.habbo.habbohotel.rooms.RoomTile oldLocation,
+            com.eu.habbo.habbohotel.rooms.RoomTile newLocation) {
         super.onMove(room, oldLocation, newLocation);
         this.clearRecentExecutions();
     }
@@ -153,49 +160,42 @@ public class WiredExtraRandom extends InteractionWiredExtra {
         Collections.shuffle(shuffledEffects, Emulator.getRandom());
 
         int desiredAmount = Math.min(this.pickAmount, shuffledEffects.size());
-        Set<Integer> recentEffectIds = this.getRecentEffectIds();
-        LinkedHashSet<T> selectedEffects = new LinkedHashSet<>();
+        List<List<Integer>> history =
+                this.skipExecutions > 0 ? new ArrayList<>(this.recentExecutionEffectIds) : List.of();
 
-        for (T effect : shuffledEffects) {
-            if (recentEffectIds.contains(idResolver.applyAsInt(effect))) {
-                continue;
-            }
-
-            selectedEffects.add(effect);
-            if (selectedEffects.size() >= desiredAmount) {
-                break;
-            }
+        // Too few actions left once the recent executions are avoided: Habbo stops avoiding the
+        // oldest execution first, so the top-up is the least recently used and two actions alternate.
+        List<T> candidates = notIn(shuffledEffects, history, 0, idResolver);
+        for (int forgotten = 1; candidates.size() < desiredAmount && forgotten <= history.size(); forgotten++) {
+            candidates = notIn(shuffledEffects, history, forgotten, idResolver);
         }
 
-        if (selectedEffects.size() < desiredAmount) {
-            for (T effect : shuffledEffects) {
-                selectedEffects.add(effect);
-                if (selectedEffects.size() >= desiredAmount) {
-                    break;
-                }
-            }
-        }
+        LinkedHashSet<T> selectedEffects =
+                new LinkedHashSet<>(candidates.subList(0, Math.min(desiredAmount, candidates.size())));
 
         this.recordExecution(selectedEffects, idResolver);
         return new ArrayList<>(selectedEffects);
     }
 
-    private synchronized void clearRecentExecutions() {
-        this.recentExecutionEffectIds.clear();
+    /** The actions not run in the recorded executions, leaving out the oldest {@code forgotten} ones. */
+    private static <T> List<T> notIn(
+            List<T> effects, List<List<Integer>> history, int forgotten, ToIntFunction<T> idResolver) {
+        Set<Integer> avoided = new LinkedHashSet<>();
+        for (List<Integer> execution : history.subList(Math.min(forgotten, history.size()), history.size())) {
+            avoided.addAll(execution);
+        }
+
+        List<T> remaining = new ArrayList<>();
+        for (T effect : effects) {
+            if (!avoided.contains(idResolver.applyAsInt(effect))) {
+                remaining.add(effect);
+            }
+        }
+        return remaining;
     }
 
-    private Set<Integer> getRecentEffectIds() {
-        LinkedHashSet<Integer> ids = new LinkedHashSet<>();
-
-        if (this.skipExecutions <= 0) {
-            return ids;
-        }
-
-        for (List<Integer> executionIds : this.recentExecutionEffectIds) {
-            ids.addAll(executionIds);
-        }
-
-        return ids;
+    private synchronized void clearRecentExecutions() {
+        this.recentExecutionEffectIds.clear();
     }
 
     private <T> void recordExecution(Collection<T> selectedEffects, ToIntFunction<T> idResolver) {

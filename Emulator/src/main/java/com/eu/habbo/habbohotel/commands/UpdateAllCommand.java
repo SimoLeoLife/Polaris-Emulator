@@ -4,19 +4,24 @@ import com.eu.habbo.Emulator;
 import com.eu.habbo.habbohotel.gameclients.GameClient;
 import com.eu.habbo.habbohotel.rooms.Room;
 import com.eu.habbo.habbohotel.rooms.RoomChatMessageBubbles;
-import com.eu.habbo.messages.outgoing.catalog.*;
+import com.eu.habbo.messages.outgoing.catalog.CatalogModeComposer;
+import com.eu.habbo.messages.outgoing.catalog.CatalogUpdatedComposer;
+import com.eu.habbo.messages.outgoing.catalog.DiscountComposer;
+import com.eu.habbo.messages.outgoing.catalog.GiftConfigurationComposer;
+import com.eu.habbo.messages.outgoing.catalog.RecyclerLogicComposer;
 import com.eu.habbo.messages.outgoing.catalog.marketplace.MarketplaceConfigComposer;
 import com.eu.habbo.messages.outgoing.rooms.RoomRelativeMapComposer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
 
 public class UpdateAllCommand extends Command {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(UpdateAllCommand.class);
 
     public UpdateAllCommand() {
-        super("cmd_update_all", Emulator.getTexts().getValue("commands.keys.cmd_update_all").split(";"));
+        super(
+                "cmd_update_all",
+                Emulator.getTexts().getValue("commands.keys.cmd_update_all").split(";"));
     }
 
     @Override
@@ -73,7 +78,11 @@ public class UpdateAllCommand extends Command {
         Emulator.getGameEnvironment().getRoomManager().loadPublicRooms();
 
         // Permissions
-        Emulator.getGameEnvironment().getPermissionsManager().reload();
+        com.eu.habbo.habbohotel.permissions.PermissionAuditLog.permissionChanges(
+                gameClient.getHabbo().getHabboInfo().getId(),
+                gameClient.getHabbo().getHabboInfo().getUsername(),
+                Emulator.getGameEnvironment().getPermissionsManager().reloadWithChanges(),
+                "update_all");
 
         // Pet Data
         Emulator.getGameEnvironment().getPetManager().reloadPetData();
@@ -81,12 +90,19 @@ public class UpdateAllCommand extends Command {
         // Polls
         Emulator.getGameEnvironment().getPollManager().loadPolls();
 
+        // Reward tracks
+        UpdateRewardTracksCommand.reloadAndBroadcast();
+
         // Texts & Commands
         try {
             Emulator.getTexts().reload();
             Emulator.getGameEnvironment().getCommandHandler().reloadCommands();
         } catch (Exception e) {
-            gameClient.getHabbo().whisper(Emulator.getTexts().getValue("commands.error.cmd_update_texts.failed"), RoomChatMessageBubbles.ALERT);
+            gameClient
+                    .getHabbo()
+                    .whisper(
+                            Emulator.getTexts().getValue("commands.error.cmd_update_texts.failed"),
+                            RoomChatMessageBubbles.ALERT);
         }
 
         // Word Filter
@@ -96,7 +112,9 @@ public class UpdateAllCommand extends Command {
         Emulator.getGameEnvironment().getItemManager().getYoutubeManager().load();
 
         LOGGER.info("[UpdateAll] All subsystems reloaded successfully!");
-        gameClient.getHabbo().whisper(Emulator.getTexts().getValue("commands.succes.cmd_update_all"), RoomChatMessageBubbles.ALERT);
+        gameClient
+                .getHabbo()
+                .whisper(Emulator.getTexts().getValue("commands.succes.cmd_update_all"), RoomChatMessageBubbles.ALERT);
         return true;
     }
 }

@@ -1,9 +1,9 @@
 package com.eu.habbo.messages.incoming.modtool;
 
-import org.junit.jupiter.api.Test;
-
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import org.junit.jupiter.api.Test;
 
 class ModToolTicketGuardTest {
     @Test
@@ -18,5 +18,13 @@ class ModToolTicketGuardTest {
         assertFalse(ModToolTicketGuard.isValidReleaseBatch(0));
         assertTrue(ModToolTicketGuard.isValidReleaseBatch(ModToolTicketGuard.MAX_RELEASE_BATCH));
         assertFalse(ModToolTicketGuard.isValidReleaseBatch(ModToolTicketGuard.MAX_RELEASE_BATCH + 1));
+    }
+
+    @Test
+    void groupedIdListMayBeEmptyButIsBounded() {
+        assertTrue(ModToolTicketGuard.isValidIdListSize(0));
+        assertTrue(ModToolTicketGuard.isValidIdListSize(ModToolTicketGuard.MAX_RELEASE_BATCH));
+        assertFalse(ModToolTicketGuard.isValidIdListSize(-1));
+        assertFalse(ModToolTicketGuard.isValidIdListSize(ModToolTicketGuard.MAX_RELEASE_BATCH + 1));
     }
 }

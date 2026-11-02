@@ -10,11 +10,11 @@ import com.eu.habbo.habbohotel.navigation.NavigatorSavedSearch;
 import com.eu.habbo.habbohotel.permissions.Rank;
 import com.eu.habbo.habbohotel.pets.PetTasks;
 import com.eu.habbo.habbohotel.pets.RideablePet;
+import com.eu.habbo.habbohotel.rooms.PendingRoomEntry;
 import com.eu.habbo.habbohotel.rooms.Room;
 import com.eu.habbo.habbohotel.rooms.RoomTile;
 import com.eu.habbo.habbohotel.rooms.RoomUnit;
 import com.eu.habbo.messages.outgoing.rooms.users.RoomUserStatusComposer;
-import it.unimi.dsi.fastutil.ints.Int2IntMap;
 import it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -36,6 +36,7 @@ public class HabboInfo implements Runnable {
     private String look;
     private HabboGender gender;
     private String mail;
+    private boolean mailVerified;
     private String sso;
     private String ipRegister;
     private String ipLogin;
@@ -55,22 +56,25 @@ public class HabboInfo implements Runnable {
     private Room currentRoom;
     private String roomEntryMethod = "door";
     private int roomEntryTeleportId = 0;
+    private PendingRoomEntry pendingRoomEntry;
+    private long lastRoomForwardAt;
+    private int roomForwardGlowRoomId;
+    private long roomForwardGlowExpiresAt;
     private int roomQueueId;
     private RideablePet riding;
     private Class<? extends Game> currentGame;
     private Int2IntOpenHashMap currencies;
-    // Serializes credits + currencies read-modify-write and the saveCurrencies
-    // snapshot so the credit-roller thread and purchase/trade handler threads
-    // can't lose updates or rehash the Trove map mid-iteration. Never held
-    // across run()'s DB I/O.
+    // Serializes in-memory wallet reads and writes. Durable wallet changes are
+    // committed through EconomyLedger and then published to this snapshot.
     private final Object currencyLock = new Object();
     private final Object ledgerMutationLock = new Object();
     private GamePlayer gamePlayer;
-    private int photoRoomId;
-    private int photoTimestamp;
-    private String photoURL;
-    private String photoJSON;
+    private volatile int photoRoomId;
+    private volatile int photoTimestamp;
+    private volatile String photoURL;
+    private volatile String photoJSON;
     private int webPublishTimestamp;
+    private int purchasedPhotoTimestamp;
     private String machineID;
     private List<NavigatorSavedSearch> savedSearches = new ArrayList<>();
     private List<MessengerCategory> messengerCategories = new ArrayList<>();
@@ -83,6 +87,7 @@ public class HabboInfo implements Runnable {
             this.look = set.getString("look");
             this.gender = HabboGender.valueOf(set.getString("gender"));
             this.mail = set.getString("mail");
+            this.mailVerified = set.getBoolean("mail_verified");
             this.sso = set.getString("auth_ticket");
             this.ipRegister = set.getString("ip_register");
             this.ipLogin = set.getString("ip_current");
@@ -139,32 +144,6 @@ public class HabboInfo implements Runnable {
                     this.id);
         } catch (SqlQueries.DataAccessException e) {
             LOGGER.error("Caught SQL exception", e);
-        }
-    }
-
-    private void saveCurrencies() {
-        // Snapshot under the lock so a concurrent adjustOrPutValue/put can't
-        // rehash the Trove map while we iterate; do the DB batch off-lock.
-        List<int[]> entries;
-        synchronized (this.currencyLock) {
-            entries = new ArrayList<>(this.currencies.size());
-            for (Int2IntMap.Entry entry : this.currencies.int2IntEntrySet()) {
-                entries.add(new int[] {entry.getIntKey(), entry.getIntValue()});
-            }
-        }
-
-        try {
-            SqlQueries.batchUpdate(
-                    "INSERT INTO users_currency (user_id, type, amount) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE amount = ?",
-                    entries,
-                    (ps, e) -> {
-                        ps.setInt(1, this.id);
-                        ps.setInt(2, e[0]);
-                        ps.setInt(3, e[1]);
-                        ps.setInt(4, e[1]);
-                    });
-        } catch (SqlQueries.DataAccessException ex) {
-            LOGGER.error("Caught SQL exception", ex);
         }
     }
 
@@ -498,6 +477,15 @@ public class HabboInfo implements Runnable {
         this.mail = mail;
     }
 
+    /** Official EmailStatus.isVerified (612). */
+    public boolean isMailVerified() {
+        return this.mailVerified;
+    }
+
+    public void setMailVerified(boolean mailVerified) {
+        this.mailVerified = mailVerified;
+    }
+
     public String getSso() {
         return this.sso;
     }
@@ -663,6 +651,42 @@ public class HabboInfo implements Runnable {
         this.roomEntryTeleportId = roomEntryTeleportId;
     }
 
+    public synchronized void setPendingRoomEntry(PendingRoomEntry entry) {
+        this.pendingRoomEntry = entry;
+    }
+
+    /** The arrival told for this room, if it is still fresh. Any pending arrival is cleared. */
+    public synchronized PendingRoomEntry takePendingRoomEntry(int roomId, long now) {
+        PendingRoomEntry entry = this.pendingRoomEntry;
+        this.pendingRoomEntry = null;
+        return (entry != null && entry.appliesTo(roomId, now)) ? entry : null;
+    }
+
+    /** Teleport to Room sent this user to that room: they arrive there still glowing. */
+    public synchronized void setRoomForwardGlow(int roomId, long expiresAt) {
+        this.roomForwardGlowRoomId = roomId;
+        this.roomForwardGlowExpiresAt = expiresAt;
+    }
+
+    /** Whether the user enters this room glowing from Teleport to Room; read once. */
+    public synchronized boolean takeRoomForwardGlow(int roomId, long now) {
+        boolean glows = this.roomForwardGlowRoomId != 0
+                && this.roomForwardGlowRoomId == roomId
+                && now <= this.roomForwardGlowExpiresAt;
+        this.roomForwardGlowRoomId = 0;
+        this.roomForwardGlowExpiresAt = 0;
+        return glows;
+    }
+
+    /** Admits one furni-driven room forward per interval for this user. */
+    public synchronized boolean tryAcquireRoomForward(long now, long intervalMs) {
+        if (this.lastRoomForwardAt != 0 && now - this.lastRoomForwardAt < intervalMs) {
+            return false;
+        }
+        this.lastRoomForwardAt = now;
+        return true;
+    }
+
     public int getRoomQueueId() {
         return this.roomQueueId;
     }
@@ -770,12 +794,46 @@ public class HabboInfo implements Runnable {
         this.photoJSON = photoJSON;
     }
 
-    public int getWebPublishTimestamp() {
+    /**
+     * Marks the photo taken at {@code timestamp} as bought. Returns false when that photo was bought
+     * already, so a repeated purchase packet for the same photo buys nothing.
+     */
+    public synchronized boolean claimPhotoPurchase(int timestamp) {
+        if (timestamp <= 0 || this.purchasedPhotoTimestamp == timestamp) return false;
+
+        this.purchasedPhotoTimestamp = timestamp;
+        return true;
+    }
+
+    /** Undoes {@link #claimPhotoPurchase(int)} when the purchase could not be completed. */
+    public synchronized void releasePhotoPurchase(int timestamp) {
+        if (this.purchasedPhotoTimestamp == timestamp) this.purchasedPhotoTimestamp = 0;
+    }
+
+    public synchronized int getWebPublishTimestamp() {
         return this.webPublishTimestamp;
     }
 
-    public void setWebPublishTimestamp(int webPublishTimestamp) {
+    public synchronized void setWebPublishTimestamp(int webPublishTimestamp) {
         this.webPublishTimestamp = webPublishTimestamp;
+    }
+
+    /**
+     * Takes the web publish slot at {@code now} when the last publish is at least {@code delay}
+     * seconds old. Returns the previous publish time, for {@link #releaseWebPublish(int, int)}, or -1
+     * when the slot is still taken.
+     */
+    public synchronized int claimWebPublish(int now, int delay) {
+        int previous = this.webPublishTimestamp;
+        if (now - previous < delay) return -1;
+
+        this.webPublishTimestamp = now;
+        return previous;
+    }
+
+    /** Gives back a publish slot taken at {@code now} that did not end in a publish. */
+    public synchronized void releaseWebPublish(int now, int previous) {
+        if (this.webPublishTimestamp == now) this.webPublishTimestamp = previous;
     }
 
     public String getMachineID() {
@@ -796,28 +854,19 @@ public class HabboInfo implements Runnable {
 
     @Override
     public void run() {
-        this.saveCurrencies();
-
-        // Read credits under the lock so the persisted value is consistent with
-        // concurrent addCredits/setCredits (matches the currencyLock invariant).
-        final int creditsForSave;
-        synchronized (this.currencyLock) {
-            creditsForSave = this.credits;
-        }
-
         try {
             SqlQueries.update(
-                    "UPDATE users SET motto = ?, online = ?, look = ?, gender = ?, credits = ?, last_login = ?, last_online = ?, home_room = ?, ip_current = ?, `rank` = ?, machine_id = ?, username = ?, background_id = ?, background_stand_id = ?, background_overlay_id = ?, background_card_id = ?, background_border_id = ? WHERE id = ?",
+                    // No `rank`: it is written where it changes (HabboManager.setRank), so a rank set in the
+                    // database (a CMS) while the user is online is not overwritten by this save.
+                    "UPDATE users SET motto = ?, online = ?, look = ?, gender = ?, last_login = ?, last_online = ?, home_room = ?, ip_current = ?, machine_id = ?, username = ?, background_id = ?, background_stand_id = ?, background_overlay_id = ?, background_card_id = ?, background_border_id = ? WHERE id = ?",
                     this.motto,
                     this.online ? "1" : "0",
                     this.look,
                     this.gender.name(),
-                    creditsForSave,
                     Emulator.getIntUnixTimestamp(),
                     this.lastOnline,
                     this.homeRoom,
                     this.ipLogin,
-                    this.rank != null ? this.rank.getId() : 1,
                     this.machineID,
                     this.username,
                     this.InfostandBg,

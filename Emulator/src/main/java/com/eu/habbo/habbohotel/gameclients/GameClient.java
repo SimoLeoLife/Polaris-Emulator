@@ -4,6 +4,7 @@ import com.eu.habbo.Emulator;
 import com.eu.habbo.crypto.HabboEncryption;
 import com.eu.habbo.habbohotel.LatencyTracker;
 import com.eu.habbo.habbohotel.users.Habbo;
+import com.eu.habbo.messages.PacketNames;
 import com.eu.habbo.messages.ServerMessage;
 import com.eu.habbo.messages.ServerMessageFrame;
 import com.eu.habbo.messages.incoming.MessageHandler;
@@ -22,6 +23,19 @@ import org.slf4j.LoggerFactory;
 
 public class GameClient {
 
+    // Client-advertised WIRED extension protocol version. This negotiates packet
+    // compatibility and is not a server-side feature flag.
+    public static final int WIRED_FEATURE_PROTOCOL_VERSION = 1;
+
+    // Bit 0 - the client understands per-furniture opacity updates.
+    public static final int WIRED_FEATURE_OPACITY = 1;
+    public static final int WIRED_FEATURE_MOVE_STYLE = 2;
+    /** The move-style hint's overshoot and avatar jumps (header 5110, trailing fields). */
+    public static final int WIRED_FEATURE_TRAJECTORY = 4;
+
+    private static final int WIRED_FEATURE_KNOWN_MASK =
+            WIRED_FEATURE_OPACITY | WIRED_FEATURE_MOVE_STYLE | WIRED_FEATURE_TRAJECTORY;
+
     private static final Logger LOGGER = LoggerFactory.getLogger(GameClient.class);
 
     private final Channel channel;
@@ -33,7 +47,13 @@ public class GameClient {
     private boolean handshakeFinished;
     private String machineId = "";
     private String ssoTicket = "";
+    private final AtomicBoolean ssoTicketExchanged = new AtomicBoolean();
     private String releaseVersion = "";
+
+    // These values are written during capability negotiation and read by packet
+    // and executor threads afterwards.
+    private volatile int wiredFeatureProtocolVersion;
+    private volatile int wiredFeatureCapabilities;
 
     public final ConcurrentHashMap<Integer, Integer> incomingPacketCounter = new ConcurrentHashMap<>(25);
     public final ConcurrentHashMap<Class<? extends MessageHandler>, Long> messageTimestamps = new ConcurrentHashMap<>();
@@ -71,6 +91,20 @@ public class GameClient {
         this.habbo = habbo;
     }
 
+    /** Stores only the WIRED capabilities understood by this emulator build. */
+    public void setWiredFeatureCapabilities(int protocolVersion, int capabilities) {
+        this.wiredFeatureProtocolVersion = Math.max(0, protocolVersion);
+        this.wiredFeatureCapabilities = Math.max(0, capabilities) & WIRED_FEATURE_KNOWN_MASK;
+    }
+
+    /** Returns whether this client advertised the required protocol and capability bit. */
+    public boolean supportsWiredFeature(int minimumProtocolVersion, int capability) {
+        return minimumProtocolVersion > 0
+                && capability > 0
+                && this.wiredFeatureProtocolVersion >= minimumProtocolVersion
+                && (this.wiredFeatureCapabilities & capability) == capability;
+    }
+
     public boolean isHandshakeFinished() {
         return handshakeFinished;
     }
@@ -95,7 +129,17 @@ public class GameClient {
         return this.ssoTicket;
     }
 
+    /**
+     * Claims the one exchange of this client's SSO ticket for an access token. The ticket is gone from
+     * the database once the client logs in, and the token endpoint then finds it here: answering every
+     * time turned a leaked ticket into unlimited access tokens.
+     */
+    public boolean claimSsoTicketExchange() {
+        return this.ssoTicketExchanged.compareAndSet(false, true);
+    }
+
     public void setSsoTicket(String ssoTicket) {
+        this.ssoTicketExchanged.set(false);
         this.ssoTicket = ssoTicket != null ? ssoTicket : "";
     }
 
@@ -196,7 +240,7 @@ public class GameClient {
 
     public void sendKeepAlive() {
         if (this.channel != null && this.channel.isOpen()) {
-            this.channel.writeAndFlush(new ServerMessage(-1));
+            this.channel.writeAndFlush(new ServerMessage(PacketNames.KEEP_ALIVE_HEADER));
         }
     }
 

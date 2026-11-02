@@ -1,6 +1,7 @@
 package com.eu.habbo.habbohotel.rooms;
 
 import com.eu.habbo.Emulator;
+import com.eu.habbo.habbohotel.items.interactions.wired.chest.InteractionWiredChest;
 import com.eu.habbo.habbohotel.users.Habbo;
 import com.eu.habbo.habbohotel.users.HabboItem;
 import com.eu.habbo.habbohotel.users.LedgerWalletMutation;
@@ -67,6 +68,9 @@ public class RoomTrade {
     }
 
     public synchronized void offerItem(Habbo habbo, HabboItem item) {
+        // A trade that was completed or cancelled takes no more offers or changes.
+        if (this.completed) return;
+
         RoomTradeUser user = this.getRoomTradeUserForHabbo(habbo);
 
         if (user == null
@@ -74,7 +78,8 @@ public class RoomTrade {
                 || user.getItems().contains(item)
                 || user.getItems().size() >= MAX_OFFERED_ITEMS) return;
 
-        habbo.getInventory().getItemsComponent().removeHabboItem(item);
+        if (!habbo.getInventory().getItemsComponent().takeHabboItemsAtomically(List.of(item))) return;
+
         user.getItems().add(item);
 
         this.clearAccepted();
@@ -82,6 +87,9 @@ public class RoomTrade {
     }
 
     public synchronized void offerMultipleItems(Habbo habbo, Set<HabboItem> items) {
+        // A trade that was completed or cancelled takes no more offers or changes.
+        if (this.completed) return;
+
         RoomTradeUser user = this.getRoomTradeUserForHabbo(habbo);
 
         if (user == null || items == null) return;
@@ -90,7 +98,8 @@ public class RoomTrade {
             if (user.getItems().size() >= MAX_OFFERED_ITEMS) break;
 
             if (!user.getItems().contains(item)) {
-                habbo.getInventory().getItemsComponent().removeHabboItem(item);
+                if (!habbo.getInventory().getItemsComponent().takeHabboItemsAtomically(List.of(item))) continue;
+
                 user.getItems().add(item);
             }
         }
@@ -100,6 +109,9 @@ public class RoomTrade {
     }
 
     public synchronized void removeItem(Habbo habbo, HabboItem item) {
+        // A trade that was completed or cancelled takes no more offers or changes.
+        if (this.completed) return;
+
         RoomTradeUser user = this.getRoomTradeUserForHabbo(habbo);
 
         if (user == null || item == null || !user.getItems().contains(item)) return;
@@ -112,6 +124,9 @@ public class RoomTrade {
     }
 
     public synchronized void accept(Habbo habbo, boolean value) {
+        // A trade that was completed or cancelled takes no more offers or changes.
+        if (this.completed) return;
+
         RoomTradeUser user = this.getRoomTradeUserForHabbo(habbo);
 
         if (user == null) return;
@@ -137,7 +152,9 @@ public class RoomTrade {
 
         RoomTradeUser user = this.getRoomTradeUserForHabbo(habbo);
 
-        if (user == null) return;
+        // Checked here, under the trade's lock: the handler checked "accepted" before taking it, so an offer changed
+        // in between (which clears every acceptance) could still be confirmed.
+        if (user == null || !user.getAccepted()) return;
 
         user.confirm();
 
@@ -308,7 +325,13 @@ public class RoomTrade {
         this.sendMessageToUsers(new TradeCloseWindowComposer());
     }
 
-    public void stopTrade(Habbo habbo) {
+    public synchronized void stopTrade(Habbo habbo) {
+        // Same lock and guard as confirm(): a cancel that lands while the trade is being completed must not
+        // hand the offered items back after they have changed owner.
+        if (this.completed) return;
+
+        this.completed = true;
+
         this.removeStatusses();
         this.clearAccepted();
         this.returnItems();
@@ -391,6 +414,9 @@ public class RoomTrade {
     }
 
     public static int getCreditsByItem(HabboItem item) {
+        // A wired chest is never credit furni, whatever it is named: it trades as itself, with what it
+        // holds, instead of being destroyed by RoomTradeTransaction's redeem delete.
+        if (item instanceof InteractionWiredChest) return 0;
         if (!Emulator.getConfig().getBoolean("redeem.currency.trade")) return 0;
 
         if (!item.getBaseItem().getName().startsWith("CF_")

@@ -83,7 +83,11 @@ public class AboutCommand extends Command {
         message.append("<b>Credits</b>\r")
                 .append("- The General\r")
                 .append("- Krews Team\r")
-                .append("- DuckieTM, simoleo89, Medievalshell, Lorenzo, Remco, Dennis (DennisObject)\r\n")
+                .append("- DuckieTM, simoleo89, Medievalshell, Lorenzo, Remco, Dennis (DennisObject)\r")
+                .append("- Dippy (Improved wired architecture base)\r")
+                .append("- Seth / iSetht (Opacity & Gravity wireds)\r")
+                .append("- bop (Easter egg exploit & Nitro Memory Leaks)\r")
+                .append("- DevHBB (Valentin \u00d7\u035c\u00d7)\r\n")
                 .append("Report issues at: ")
                 .append(REPORT_ISSUES_URL);
 

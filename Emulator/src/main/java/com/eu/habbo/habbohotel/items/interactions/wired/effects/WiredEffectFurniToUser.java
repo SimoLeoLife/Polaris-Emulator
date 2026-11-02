@@ -10,16 +10,19 @@ import com.eu.habbo.habbohotel.users.Habbo;
 import com.eu.habbo.habbohotel.users.HabboItem;
 import com.eu.habbo.habbohotel.wired.WiredEffectType;
 import com.eu.habbo.habbohotel.wired.core.WiredContext;
+import com.eu.habbo.habbohotel.wired.core.WiredFairDeal;
 import com.eu.habbo.habbohotel.wired.core.WiredMoveCarryHelper;
 import com.eu.habbo.messages.outgoing.rooms.WiredMovementsComposer;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ThreadLocalRandom;
 
 public class WiredEffectFurniToUser extends WiredEffectUserFurniBase {
     public static final WiredEffectType type = WiredEffectType.FURNI_TO_USER;
@@ -35,22 +38,35 @@ public class WiredEffectFurniToUser extends WiredEffectUserFurniBase {
     @Override
     public void execute(WiredContext ctx) {
         Room room = ctx.room();
+
+        if (room == null) {
+            return;
+        }
+
         List<HabboItem> items = new ArrayList<>(this.resolveItems(ctx));
-        Habbo habbo = this.resolveLastHabbo(room, ctx);
-
-        if (room == null || habbo == null || habbo.getRoomUnit() == null) {
-            return;
-        }
-
         items.removeIf(item -> item == null);
+        List<Habbo> habbos = this.resolveHabbos(room, ctx);
+        habbos.removeIf(habbo -> habbo.getRoomUnit() == null);
 
-        if (items.isEmpty()) {
+        if (items.isEmpty() || habbos.isEmpty()) {
             return;
         }
 
-        items.sort(Comparator
-                .comparingDouble(HabboItem::getZ)
-                .thenComparingInt(HabboItem::getId));
+        // AIR deals the furni evenly over the users (one each with as many furni as users, the extra ones to
+        // different users each firing) and moves them in a random order.
+        Collections.shuffle(items, ThreadLocalRandom.current());
+        List<Habbo> owners = WiredFairDeal.deal(habbos, items.size());
+        Map<Habbo, List<HabboItem>> dealt = new LinkedHashMap<>();
+
+        for (int i = 0; i < items.size(); i++) {
+            dealt.computeIfAbsent(owners.get(i), habbo -> new ArrayList<>()).add(items.get(i));
+        }
+
+        dealt.forEach((habbo, dealtItems) -> this.moveToUser(room, ctx, habbo, dealtItems));
+    }
+
+    private void moveToUser(Room room, WiredContext ctx, Habbo habbo, List<HabboItem> items) {
+        items.sort(Comparator.comparingDouble(HabboItem::getZ).thenComparingInt(HabboItem::getId));
 
         Map<Integer, Double> followerZOverrides = new HashMap<>();
 
@@ -68,7 +84,8 @@ public class WiredEffectFurniToUser extends WiredEffectUserFurniBase {
                     continue;
                 }
 
-                WiredMoveCarryHelper.registerUserFollower(room, this, item, roomUnit, followerZOverrides.get(item.getId()), ctx);
+                WiredMoveCarryHelper.registerUserFollower(
+                        room, this, item, roomUnit, followerZOverrides.get(item.getId()), ctx);
             }
 
             if (!hasActiveMoveStatus) {
@@ -84,7 +101,9 @@ public class WiredEffectFurniToUser extends WiredEffectUserFurniBase {
         Integer animationDurationOverride = WiredMoveCarryHelper.hasNoAnimationExtra(room, this)
                 ? null
                 : this.resolveFollowAnimationDuration(room, habbo, this);
-        int anchorType = hasActiveMoveStatus ? WiredMovementsComposer.FURNI_ANCHOR_USER : WiredMovementsComposer.FURNI_ANCHOR_NONE;
+        int anchorType = hasActiveMoveStatus
+                ? WiredMovementsComposer.FURNI_ANCHOR_USER
+                : WiredMovementsComposer.FURNI_ANCHOR_NONE;
         int anchorId = hasActiveMoveStatus ? roomUnit.getId() : 0;
 
         if (hasActiveMoveStatus) {
@@ -97,12 +116,38 @@ public class WiredEffectFurniToUser extends WiredEffectUserFurniBase {
                 }
 
                 Double targetZ = WiredMoveCarryHelper.resolveFollowerStackZ(room, item, targetTile, item.getRotation());
-                FurnitureMovementError error = WiredMoveCarryHelper.moveFurni(room, this, item, targetTile, item.getRotation(), targetZ, null, false, ctx, animationDuration, animationElapsed, WiredMovementsComposer.FURNI_ANCHOR_USER, roomUnit.getId());
+                FurnitureMovementError error = WiredMoveCarryHelper.moveFurni(
+                        room,
+                        this,
+                        item,
+                        targetTile,
+                        item.getRotation(),
+                        targetZ,
+                        null,
+                        false,
+                        ctx,
+                        animationDuration,
+                        animationElapsed,
+                        WiredMovementsComposer.FURNI_ANCHOR_USER,
+                        roomUnit.getId());
                 if (error != FurnitureMovementError.NONE) {
                     Double fallbackZ = followerZOverrides.get(item.getId());
 
                     if (fallbackZ != null) {
-                        error = WiredMoveCarryHelper.moveFurni(room, this, item, targetTile, item.getRotation(), fallbackZ, null, false, ctx, animationDuration, animationElapsed, WiredMovementsComposer.FURNI_ANCHOR_USER, roomUnit.getId());
+                        error = WiredMoveCarryHelper.moveFurni(
+                                room,
+                                this,
+                                item,
+                                targetTile,
+                                item.getRotation(),
+                                fallbackZ,
+                                null,
+                                false,
+                                ctx,
+                                animationDuration,
+                                animationElapsed,
+                                WiredMovementsComposer.FURNI_ANCHOR_USER,
+                                roomUnit.getId());
                     }
                 }
 
@@ -117,12 +162,26 @@ public class WiredEffectFurniToUser extends WiredEffectUserFurniBase {
                 continue;
             }
 
-            if (hasActiveMoveStatus && WiredMoveCarryHelper.isUserFollowerProcessed(roomUnit, item, moveStatusTimestamp)) {
+            if (hasActiveMoveStatus
+                    && WiredMoveCarryHelper.isUserFollowerProcessed(roomUnit, item, moveStatusTimestamp)) {
                 continue;
             }
 
             Double targetZ = WiredMoveCarryHelper.resolveFollowerStackZ(room, item, targetTile, item.getRotation());
-            FurnitureMovementError error = WiredMoveCarryHelper.moveFurni(room, this, item, targetTile, item.getRotation(), targetZ, null, false, ctx, animationDurationOverride, null, anchorType, anchorId);
+            FurnitureMovementError error = WiredMoveCarryHelper.moveFurni(
+                    room,
+                    this,
+                    item,
+                    targetTile,
+                    item.getRotation(),
+                    targetZ,
+                    null,
+                    false,
+                    ctx,
+                    animationDurationOverride,
+                    null,
+                    anchorType,
+                    anchorId);
             if (error == FurnitureMovementError.NONE) {
                 continue;
             }
@@ -130,7 +189,20 @@ public class WiredEffectFurniToUser extends WiredEffectUserFurniBase {
             Double fallbackZ = followerZOverrides.get(item.getId());
 
             if (fallbackZ != null) {
-                WiredMoveCarryHelper.moveFurni(room, this, item, targetTile, item.getRotation(), fallbackZ, null, false, ctx, animationDurationOverride, null, anchorType, anchorId);
+                WiredMoveCarryHelper.moveFurni(
+                        room,
+                        this,
+                        item,
+                        targetTile,
+                        item.getRotation(),
+                        fallbackZ,
+                        null,
+                        false,
+                        ctx,
+                        animationDurationOverride,
+                        null,
+                        anchorType,
+                        anchorId);
             }
         }
     }
@@ -145,5 +217,4 @@ public class WiredEffectFurniToUser extends WiredEffectUserFurniBase {
     public WiredEffectType getType() {
         return type;
     }
-
 }

@@ -6,13 +6,12 @@ import com.eu.habbo.habbohotel.items.interactions.InteractionWiredCondition;
 import com.eu.habbo.habbohotel.items.interactions.wired.WiredSettings;
 import com.eu.habbo.habbohotel.rooms.Room;
 import com.eu.habbo.habbohotel.rooms.RoomUnit;
+import com.eu.habbo.habbohotel.users.HabboItem;
 import com.eu.habbo.habbohotel.wired.WiredConditionType;
 import com.eu.habbo.habbohotel.wired.core.WiredContext;
 import com.eu.habbo.habbohotel.wired.core.WiredManager;
 import com.eu.habbo.habbohotel.wired.core.WiredSourceUtil;
-import com.eu.habbo.habbohotel.users.HabboItem;
 import com.eu.habbo.messages.ServerMessage;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.HashSet;
@@ -21,7 +20,8 @@ import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 
-public class WiredConditionSelectionQuantity extends InteractionWiredCondition {
+public class WiredConditionSelectionQuantity extends InteractionWiredCondition
+        implements com.eu.habbo.habbohotel.wired.protocol.WiredOfficialSources {
     private static final int COMPARISON_LESS_THAN = 0;
     private static final int COMPARISON_EQUAL = 1;
     private static final int COMPARISON_GREATER_THAN = 2;
@@ -48,7 +48,8 @@ public class WiredConditionSelectionQuantity extends InteractionWiredCondition {
         this.items = new LinkedHashSet<>();
     }
 
-    public WiredConditionSelectionQuantity(int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
+    public WiredConditionSelectionQuantity(
+            int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
         super(id, userId, item, extradata, limitedStack, limitedSells);
         this.items = new LinkedHashSet<>();
     }
@@ -75,11 +76,12 @@ public class WiredConditionSelectionQuantity extends InteractionWiredCondition {
         message.appendInt(this.getBaseItem().getSpriteId());
         message.appendInt(this.getId());
         message.appendString("");
-        message.appendInt(4);
-        message.appendInt(this.comparison);
+        // Official layout: [merged, amount (0-100), comparison (0 less, 1 equal, 2 more)], what is counted in
+        // the official furni or user source slot.
+        message.appendInt(3);
+        message.appendInt(0);
         message.appendInt(this.quantity);
-        message.appendInt(this.sourceGroup);
-        message.appendInt(this.sourceType);
+        message.appendInt(this.comparison);
         message.appendInt(0);
         message.appendInt(this.getType().code);
         message.appendInt(0);
@@ -90,15 +92,21 @@ public class WiredConditionSelectionQuantity extends InteractionWiredCondition {
     public boolean saveData(WiredSettings settings) {
         int[] params = settings.getIntParams();
 
-        this.comparison = (params.length > 0) ? this.normalizeComparison(params[0]) : COMPARISON_EQUAL;
         this.quantity = (params.length > 1) ? this.normalizeQuantity(params[1]) : 0;
+        this.comparison = (params.length > 2) ? this.normalizeComparison(params[2]) : COMPARISON_EQUAL;
         this.items.clear();
 
-        if (params.length > 3) {
-            this.sourceGroup = this.normalizeSourceGroup(params[2]);
-            this.sourceType = this.normalizeSourceType(this.sourceGroup, params[3]);
+        // What is counted: the furni slot when one is sent, otherwise the user slot.
+        if (settings.getFurniSourceTypes().length > 0) {
+            this.sourceGroup = SOURCE_GROUP_FURNI;
+            this.sourceType = this.normalizeSourceType(SOURCE_GROUP_FURNI, settings.getFurniSourceTypes()[0]);
         } else {
-            this.setSourceSelection((params.length > 2) ? params[2] : SOURCE_USER_TRIGGER);
+            this.sourceGroup = SOURCE_GROUP_USERS;
+            this.sourceType = this.normalizeSourceType(
+                    SOURCE_GROUP_USERS,
+                    settings.getUserSourceTypes().length > 0
+                            ? settings.getUserSourceTypes()[0]
+                            : WiredSourceUtil.SOURCE_TRIGGER);
         }
 
         if (this.sourceGroup != SOURCE_GROUP_FURNI || this.sourceType != WiredSourceUtil.SOURCE_SELECTED) {
@@ -150,13 +158,13 @@ public class WiredConditionSelectionQuantity extends InteractionWiredCondition {
     public String getWiredData() {
         this.refresh(Emulator.getGameEnvironment().getRoomManager().getRoom(this.getRoomId()));
 
-        return WiredManager.getGson().toJson(new JsonData(
-                this.comparison,
-                this.quantity,
-                this.sourceGroup,
-                this.sourceType,
-                this.items.stream().map(HabboItem::getId).collect(Collectors.toList())
-        ));
+        return WiredManager.getGson()
+                .toJson(new JsonData(
+                        this.comparison,
+                        this.quantity,
+                        this.sourceGroup,
+                        this.sourceType,
+                        this.items.stream().map(HabboItem::getId).collect(Collectors.toList())));
     }
 
     @Override
@@ -210,6 +218,16 @@ public class WiredConditionSelectionQuantity extends InteractionWiredCondition {
         this.quantity = 0;
         this.sourceGroup = SOURCE_GROUP_USERS;
         this.sourceType = WiredSourceUtil.SOURCE_TRIGGER;
+    }
+
+    @Override
+    public int[] officialFurniSources() {
+        return this.sourceGroup == SOURCE_GROUP_FURNI ? new int[] {this.sourceType} : new int[0];
+    }
+
+    @Override
+    public int[] officialUserSources() {
+        return this.sourceGroup == SOURCE_GROUP_USERS ? new int[] {this.sourceType} : new int[0];
     }
 
     private int resolveCount(WiredContext ctx) {

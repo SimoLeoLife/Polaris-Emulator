@@ -11,9 +11,10 @@ import com.eu.habbo.habbohotel.users.HabboItem;
 import com.eu.habbo.habbohotel.wired.WiredConditionType;
 import com.eu.habbo.habbohotel.wired.core.WiredContext;
 import com.eu.habbo.habbohotel.wired.core.WiredManager;
+import com.eu.habbo.habbohotel.wired.core.WiredQuantifier;
 import com.eu.habbo.habbohotel.wired.core.WiredSourceUtil;
+import com.eu.habbo.habbohotel.wired.protocol.WiredOfficialQuantifier;
 import com.eu.habbo.messages.ServerMessage;
-
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.sql.ResultSet;
@@ -30,14 +31,14 @@ import java.util.List;
  * radius + source + quantifier), so it needs no new client dialog. No furni are selected, so the
  * furni-picker portion of the dialog is left empty.
  */
-public class WiredConditionUserNotInRange extends InteractionWiredCondition {
+public class WiredConditionUserNotInRange extends InteractionWiredCondition implements WiredOfficialQuantifier {
     private static final int COMPARISON_LESS = 0;
     private static final int COMPARISON_EQUAL = 1;
     private static final int COMPARISON_GREATER = 2;
     private static final int QUANTIFIER_ALL = 0;
     private static final int QUANTIFIER_ANY = 1;
 
-    public static final WiredConditionType type = WiredConditionType.HAS_ALTITUDE;
+    public static final WiredConditionType type = WiredConditionType.USER_RANGE;
 
     private int comparison = COMPARISON_EQUAL;
     private double radius = 0.0D;
@@ -48,7 +49,8 @@ public class WiredConditionUserNotInRange extends InteractionWiredCondition {
         super(set, baseItem);
     }
 
-    public WiredConditionUserNotInRange(int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
+    public WiredConditionUserNotInRange(
+            int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
         super(id, userId, item, extradata, limitedStack, limitedSells);
     }
 
@@ -75,8 +77,9 @@ public class WiredConditionUserNotInRange extends InteractionWiredCondition {
         }
 
         List<RoomUnit> targets = WiredSourceUtil.resolveUsers(ctx, this.userSource);
+        // Its own reading ("all are outside" / "any is outside"), so all holds over none.
         if (targets.isEmpty()) {
-            return true;
+            return WiredQuantifier.overEmpty(this.quantifier != QUANTIFIER_ANY);
         }
 
         if (this.quantifier == QUANTIFIER_ANY) {
@@ -94,12 +97,9 @@ public class WiredConditionUserNotInRange extends InteractionWiredCondition {
 
     @Override
     public String getWiredData() {
-        return WiredManager.getGson().toJson(new JsonData(
-                this.comparison,
-                this.formatRadius(this.radius),
-                this.userSource,
-                this.quantifier
-        ));
+        return WiredManager.getGson()
+                .toJson(new JsonData(
+                        this.comparison, this.formatRadius(this.radius), this.userSource, this.quantifier));
     }
 
     @Override
@@ -154,10 +154,9 @@ public class WiredConditionUserNotInRange extends InteractionWiredCondition {
         message.appendInt(this.getBaseItem().getSpriteId());
         message.appendInt(this.getId());
         message.appendString(this.formatRadius(this.radius));
-        message.appendInt(3);
+        message.appendInt(2);
         message.appendInt(this.comparison);
         message.appendInt(this.userSource);
-        message.appendInt(this.quantifier);
         message.appendInt(0);
         message.appendInt(this.getType().code);
         message.appendInt(0);
@@ -169,10 +168,23 @@ public class WiredConditionUserNotInRange extends InteractionWiredCondition {
         int[] params = settings.getIntParams();
         this.comparison = (params.length > 0) ? this.normalizeComparison(params[0]) : COMPARISON_EQUAL;
         this.userSource = (params.length > 1) ? this.normalizeUserSource(params[1]) : WiredSourceUtil.SOURCE_TRIGGER;
-        this.quantifier = (params.length > 2) ? this.normalizeQuantifier(params[2]) : QUANTIFIER_ALL;
+        this.quantifier = this.normalizeQuantifier(settings.getQuantifierCode());
         this.radius = this.parseRadiusOrDefault(settings.getStringParam());
 
         return true;
+    }
+
+    /**
+     * The dialog offers three operators against the radius, and until now every one of them behaved
+     * as "within". They now mean what they say, with {@code equals} keeping the historical inclusive
+     * reading so a box saved before this change evaluates exactly as it did.
+     */
+    private boolean matchesRadius(double distance) {
+        return switch (this.comparison) {
+            case COMPARISON_LESS -> distance < this.radius;
+            case COMPARISON_GREATER -> distance > this.radius;
+            default -> distance <= this.radius;
+        };
     }
 
     private boolean isOutsideRange(RoomTile origin, RoomUnit unit) {
@@ -185,7 +197,7 @@ public class WiredConditionUserNotInRange extends InteractionWiredCondition {
             return true;
         }
 
-        return origin.distance(tile) > this.radius;
+        return !this.matchesRadius(origin.distance(tile));
     }
 
     int normalizeComparison(int value) {
@@ -206,7 +218,9 @@ public class WiredConditionUserNotInRange extends InteractionWiredCondition {
 
     double normalizeRadius(double value) {
         double clampedValue = Math.max(0.0D, value);
-        return BigDecimal.valueOf(clampedValue).setScale(2, RoundingMode.HALF_UP).doubleValue();
+        return BigDecimal.valueOf(clampedValue)
+                .setScale(2, RoundingMode.HALF_UP)
+                .doubleValue();
     }
 
     double parseRadiusOrDefault(String value) {
@@ -238,5 +252,10 @@ public class WiredConditionUserNotInRange extends InteractionWiredCondition {
             this.userSource = userSource;
             this.quantifier = quantifier;
         }
+    }
+
+    @Override
+    public int officialQuantifierCode() {
+        return this.quantifier;
     }
 }

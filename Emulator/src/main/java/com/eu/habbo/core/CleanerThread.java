@@ -7,14 +7,13 @@ import com.eu.habbo.habbohotel.users.Habbo;
 import com.eu.habbo.messages.incoming.friends.SearchUserEvent;
 import com.eu.habbo.messages.outgoing.users.UserDataComposer;
 import com.eu.habbo.threading.runnables.AchievementUpdater;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class CleanerThread implements Runnable {
 
@@ -30,6 +29,11 @@ public class CleanerThread implements Runnable {
     private static final int CLEAR_CACHED_VALUES = 60 * 60;
     private static final int CLEAN_MESSENGER_HISTORY = 60 * 60;
     private static final int CALLBACK_TIME = 60 * 15;
+    /** When the daily counters were last refilled, so a restart does not refill them again. */
+    static final String LAST_DAILY_REFILL_KEY = "hotel.refill.daily.last";
+
+    static final String LAST_DAILY_REFILL_SQL = "INSERT INTO emulator_settings (`key`, `value`) VALUES (?, ?) "
+            + "ON DUPLICATE KEY UPDATE `value` = VALUES(`value`)";
 
     private static int LAST_HOF_RELOAD = Emulator.getIntUnixTimestamp();
     private static int LAST_NL_RELOAD = Emulator.getIntUnixTimestamp();
@@ -37,12 +41,13 @@ public class CleanerThread implements Runnable {
     private static int LAST_INACTIVE_GUILDS_CLEARED = Emulator.getIntUnixTimestamp();
     private static int LAST_INACTIVE_TOURS_CLEARED = Emulator.getIntUnixTimestamp();
     private static int LAST_ERROR_LOGS_SAVED = Emulator.getIntUnixTimestamp();
-    private static int LAST_DAILY_REFILL = Emulator.getIntUnixTimestamp();
+    private static int LAST_DAILY_REFILL = 0;
     private static int LAST_CALLBACK = Emulator.getIntUnixTimestamp();
     private static int LAST_HABBO_CACHE_CLEARED = Emulator.getIntUnixTimestamp();
     private static int LAST_MESSENGER_HISTORY_CLEANED = Emulator.getIntUnixTimestamp();
 
     public CleanerThread() {
+        LAST_DAILY_REFILL = Emulator.getConfig().getInt(LAST_DAILY_REFILL_KEY, 0);
         this.databaseCleanup();
         Emulator.getThreading().run(this, DELAY);
 
@@ -93,10 +98,7 @@ public class CleanerThread implements Runnable {
             LAST_CALLBACK = time;
         }
 
-        if (time - LAST_DAILY_REFILL > Emulator.getConfig().getInt("hotel.refill.daily")) {
-            this.refillDailyRespects();
-            LAST_DAILY_REFILL = time;
-        }
+        this.refillDailyRespectsIfDue(time);
 
         if (time - LAST_HABBO_CACHE_CLEARED > CLEAR_CACHED_VALUES) {
             this.clearCachedValues();
@@ -115,21 +117,22 @@ public class CleanerThread implements Runnable {
         SearchUserEvent.cleanExpiredCache();
     }
 
-
     void databaseCleanup() {
-        this.refillDailyRespects();
-
         int time = Emulator.getIntUnixTimestamp();
+        this.refillDailyRespectsIfDue(time);
+
         try (Connection connection = Emulator.getDatabase().getDataSource().getConnection()) {
             try (Statement statement = connection.createStatement()) {
                 statement.execute("UPDATE users SET online = '0' WHERE online = '1'");
                 statement.execute("UPDATE rooms SET users = '0' WHERE users > 0");
                 statement.execute("DELETE FROM room_mutes WHERE ends < " + time);
                 statement.execute("DELETE FROM room_bans WHERE ends < " + time);
-                statement.execute("DELETE users_favorite_rooms FROM users_favorite_rooms LEFT JOIN rooms ON room_id = rooms.id WHERE rooms.id IS NULL");
+                statement.execute(
+                        "DELETE users_favorite_rooms FROM users_favorite_rooms LEFT JOIN rooms ON room_id = rooms.id WHERE rooms.id IS NULL");
             }
 
-            try (PreparedStatement statement = connection.prepareStatement("UPDATE users_effects SET total = total - 1 WHERE activation_timestamp + duration < ? AND activation_timestamp > 0 AND duration > 0")) {
+            try (PreparedStatement statement = connection.prepareStatement(
+                    "UPDATE users_effects SET total = total - 1 WHERE activation_timestamp + duration < ? AND activation_timestamp > 0 AND duration > 0")) {
                 statement.setInt(1, Emulator.getIntUnixTimestamp());
                 statement.execute();
             }
@@ -144,27 +147,68 @@ public class CleanerThread implements Runnable {
         LOGGER.info("Database -> Cleaned!");
     }
 
+    static boolean dailyRefillDue(int time, int lastRefill, int cooldown) {
+        return lastRefill <= 0 || time - lastRefill > cooldown;
+    }
+
+    private void refillDailyRespectsIfDue(int time) {
+        if (dailyRefillDue(time, LAST_DAILY_REFILL, Emulator.getConfig().getInt("hotel.refill.daily"))) {
+            this.refillDailyRespects();
+        }
+    }
+
     public void refillDailyRespects() {
-        try (Connection connection = Emulator.getDatabase().getDataSource().getConnection(); PreparedStatement statement = connection.prepareStatement("UPDATE users_settings SET daily_respect_points = ?, daily_pet_respect_points = ?")) {
-            statement.setInt(1, Emulator.getConfig().getInt("hotel.daily.respect"));
-            statement.setInt(2, Emulator.getConfig().getInt("hotel.daily.respect.pets"));
-            statement.executeUpdate();
+        int time = Emulator.getIntUnixTimestamp();
+        ConfigurationManager config = Emulator.getConfig();
+        int respects = config.getInt("hotel.daily.respect");
+        int petRespects = config.getInt("hotel.daily.respect.pets");
+        // Official respectReplenishesLeft: how many daily-respect buybacks the day grants.
+        int replenishes = config.getInt("hotel.daily.respect.replenishes", 1);
+
+        try (Connection connection = Emulator.getDatabase().getDataSource().getConnection()) {
+            try (PreparedStatement statement = connection.prepareStatement(
+                    "UPDATE users_settings SET daily_respect_points = ?, daily_pet_respect_points = ?, daily_respect_replenishes = ?")) {
+                statement.setInt(1, respects);
+                statement.setInt(2, petRespects);
+                statement.setInt(3, replenishes);
+                statement.executeUpdate();
+            }
+
+            try (PreparedStatement statement = connection.prepareStatement(LAST_DAILY_REFILL_SQL)) {
+                statement.setString(1, LAST_DAILY_REFILL_KEY);
+                statement.setString(2, String.valueOf(time));
+                statement.executeUpdate();
+            }
         } catch (SQLException e) {
             LOGGER.error("Caught SQL exception", e);
         }
 
+        LAST_DAILY_REFILL = time;
+
         if (Emulator.isReady) {
-            for (Habbo habbo : Emulator.getGameEnvironment().getHabboManager().getOnlineHabbos().values()) {
-                habbo.getHabboStats().respectPointsToGive = Emulator.getConfig().getInt("hotel.daily.respect");
-                habbo.getHabboStats().petRespectPointsToGive = Emulator.getConfig().getInt("hotel.daily.respect.pets");
-                habbo.getClient().sendResponse(new UserDataComposer(habbo));
+            for (Habbo habbo : Emulator.getGameEnvironment()
+                    .getHabboManager()
+                    .getOnlineHabbos()
+                    .values()) {
+                // One user whose client is gone must not stop the others, nor make the refill run again.
+                try {
+                    habbo.getHabboStats().respectPointsToGive = respects;
+                    habbo.getHabboStats().petRespectPointsToGive = petRespects;
+                    habbo.getHabboStats().respectReplenishesLeft = replenishes;
+                    habbo.getClient().sendResponse(new UserDataComposer(habbo));
+                } catch (Exception e) {
+                    LOGGER.error("Caught exception", e);
+                }
             }
         }
     }
 
     private void clearCachedValues() {
         Habbo habbo;
-        for (Map.Entry<Integer, Habbo> map : Emulator.getGameEnvironment().getHabboManager().getOnlineHabbos().entrySet()) {
+        for (Map.Entry<Integer, Habbo> map : Emulator.getGameEnvironment()
+                .getHabboManager()
+                .getOnlineHabbos()
+                .entrySet()) {
             habbo = map.getValue();
 
             try {

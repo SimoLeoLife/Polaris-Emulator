@@ -2,6 +2,7 @@ package com.eu.habbo.messages.outgoing.wired;
 
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredCondition;
 import com.eu.habbo.habbohotel.rooms.Room;
+import com.eu.habbo.habbohotel.wired.protocol.WiredDefinitionWire;
 import com.eu.habbo.messages.ServerMessage;
 import com.eu.habbo.messages.outgoing.MessageComposer;
 import com.eu.habbo.messages.outgoing.Outgoing;
@@ -18,7 +19,10 @@ public class WiredConditionDataComposer extends MessageComposer {
     @Override
     protected ServerMessage composeInternal() {
         this.response.init(Outgoing.WiredConditionDataComposer);
-        this.condition.serializeWiredData(this.response, this.room);
+        // Each box still writes the legacy layout; it goes out in the official one.
+        ServerMessage legacy = new ServerMessage(Outgoing.WiredConditionDataComposer);
+        this.condition.serializeWiredData(legacy, this.room);
+        WiredDefinitionWire.writeOfficial(legacy, WiredDefinitionWire.Holder.CONDITION, this.response, this.condition);
         this.condition.needsUpdate(true);
         return this.response;
     }

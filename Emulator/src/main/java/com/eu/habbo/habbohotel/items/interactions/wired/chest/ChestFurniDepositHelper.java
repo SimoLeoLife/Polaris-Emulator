@@ -1,18 +1,19 @@
 package com.eu.habbo.habbohotel.items.interactions.wired.chest;
 
-import com.eu.habbo.Emulator;
-import com.eu.habbo.habbohotel.items.FurnitureType;
-import com.eu.habbo.habbohotel.items.Item;
 import com.eu.habbo.habbohotel.rooms.Room;
 import com.eu.habbo.habbohotel.users.Habbo;
 import com.eu.habbo.habbohotel.users.HabboItem;
 import com.eu.habbo.messages.outgoing.inventory.InventoryRefreshComposer;
 import com.eu.habbo.messages.outgoing.inventory.RemoveHabboItemComposer;
-import com.eu.habbo.messages.outgoing.rooms.items.ChestDataComposer;
-import com.eu.habbo.threading.runnables.QueryDeleteHabboItems;
 import java.util.List;
 
-/** Shared deposit logic for wired furni chests (bulk + per-inventory-item). */
+/**
+ * Put one inventory item into a furni chest. Kept for callers compiled against it; the official flow
+ * is the wired trade ({@link WiredTradingManager#openDeposit}).
+ *
+ * <p>The item itself moves into the chest's store (AIR model); a chest that refuses it leaves it in
+ * the inventory.
+ */
 public final class ChestFurniDepositHelper {
     private ChestFurniDepositHelper() {}
 
@@ -21,34 +22,59 @@ public final class ChestFurniDepositHelper {
 
         Room room = habbo.getHabboInfo().getCurrentRoom();
         if (room == null) return false;
-
-        ChestStorage contents = chest.getContents();
-        if (!contents.isAccessDonate() && !room.hasRights(habbo)) return false;
-
-        Item baseItem = inventoryItem.getBaseItem();
-        if (baseItem == null || baseItem.getType() != FurnitureType.FLOOR) return false;
-
-        HabboItem removed = habbo.getInventory().getItemsComponent().getHabboItem(inventoryItem.getId());
-        if (removed == null) return false;
-        habbo.getInventory().getItemsComponent().removeHabboItem(removed);
-
-        ChestFurniStoredItem stored = ChestFurniStoredItem.fromHabboItem(removed, removed.getId());
-
-        // Atomic capacity-guarded add; if the chest is full, hand the item back rather than lose it.
-        if (!contents.tryDepositFurni(stored)) {
-            habbo.getInventory().getItemsComponent().addItem(removed);
+        if (ChestTransactionFailures.depositRefusal(chest, habbo, room.hasRights(habbo))
+                != ChestTransactionFailures.NONE) {
             return false;
         }
-        contents.addLog(new ChestStorage.LogEntry(
-                "deposit", System.currentTimeMillis(), habbo.getHabboInfo().getUsername(), 0, 1));
-        chest.persistContents();
+        if (chest.chestKind() != ChestStorage.KIND_FURNI || !InteractionWiredChest.canStore(inventoryItem))
+            return false;
 
-        habbo.getClient().sendResponse(new RemoveHabboItemComposer(removed.getGiftAdjustedId()));
-        habbo.getClient().sendResponse(new InventoryRefreshComposer());
-        Emulator.getThreading().runPersistence(new QueryDeleteHabboItems(List.of(removed)));
+        HabboItem held = habbo.getInventory().getItemsComponent().getHabboItem(inventoryItem.getId());
+        if (held == null || !habbo.getInventory().getItemsComponent().takeHabboItemsAtomically(List.of(held))) {
+            return false;
+        }
 
-        habbo.getClient().sendResponse(new ChestDataComposer(chest));
-        ChestFurniPackets.sendDelta(habbo.getClient(), chest.getId(), List.of(), List.of(stored));
+        int storedBefore = chest.getContents().furniItemCount();
+        if (chest.depositFurni(habbo.getHabboInfo().getId(), List.of(held)).isEmpty()) {
+            habbo.getInventory().getItemsComponent().addItem(held);
+            return false;
+        }
+
+        ChestFurniStoredItem row = null;
+        for (ChestFurniStoredItem stored : chest.getContents().furniItems()) {
+            if (stored.inventoryId == held.getId()) row = stored;
+        }
+        List<ChestFurniStoredItem> rows = row == null ? List.of() : List.of(row);
+
+        chest.getContents()
+                .addLog(new ChestStorage.LogEntry(
+                        "deposit",
+                        System.currentTimeMillis(),
+                        habbo.getHabboInfo().getUsername(),
+                        0,
+                        1));
+        ChestTransactionLog.record(
+                chest.getRoomId(),
+                chest.getId(),
+                ChestStorage.KIND_FURNI,
+                ChestTransactionLog.TYPE_DEPOSIT,
+                ChestTransactionLog.SOURCE_USER,
+                habbo,
+                -1,
+                0,
+                1,
+                rows);
+        chest.notifyViewers(room, List.of(), rows);
+        chest.persistContents(room);
+
+        ChestNotifications.donation(chest, room, habbo, 1);
+        ChestNotifications.afterChange(
+                chest, room, storedBefore, chest.getContents().furniItemCount());
+
+        if (habbo.getClient() != null) {
+            habbo.getClient().sendResponse(new RemoveHabboItemComposer(held.getGiftAdjustedId()));
+            habbo.getClient().sendResponse(new InventoryRefreshComposer());
+        }
         return true;
     }
 }

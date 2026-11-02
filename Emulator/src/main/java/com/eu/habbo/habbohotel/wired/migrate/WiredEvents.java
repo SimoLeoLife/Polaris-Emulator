@@ -13,22 +13,22 @@ import com.eu.habbo.habbohotel.wired.core.WiredEvent;
  * This class provides convenient builder methods for creating events that can be
  * passed to the {@link com.eu.habbo.habbohotel.wired.core.WiredEngine}.
  * </p>
- * 
+ *
  * <h3>Usage:</h3>
  * <pre>{@code
  * // When user walks on furniture
  * WiredEvent event = WiredEvents.userWalksOn(room, user, steppedItem);
  * engine.handleEvent(event);
- * 
+ *
  * // When user says something
  * WiredEvent event = WiredEvents.userSays(room, user, message);
  * engine.handleEvent(event);
  * }</pre>
- * 
+ *
  * @see WiredEvent
  */
 public final class WiredEvents {
-    
+
     private WiredEvents() {
         // Static utility class
     }
@@ -180,6 +180,20 @@ public final class WiredEvents {
                 .build();
     }
 
+    /**
+     * Create the companion of {@link #userSays} for the say-your-username trigger, which has its own
+     * legacy type and therefore its own event.
+     */
+    public static WiredEvent userSaysUsername(Room room, RoomUnit user, String message, int chatType, int chatStyle) {
+        return WiredEvent.builder(WiredEvent.Type.USER_SAYS_USERNAME, room)
+                .actor(user)
+                .text(message)
+                .chatType(chatType)
+                .chatStyle(chatStyle)
+                .tile(user.getCurrentLocation())
+                .build();
+    }
+
     // ========== Furniture Events ==========
 
     /**
@@ -198,7 +212,43 @@ public final class WiredEvents {
                 .build();
     }
 
-    public static WiredEvent userVariableChanged(Room room, RoomUnit user, int definitionItemId, boolean created, boolean deleted, WiredEvent.VariableChangeKind changeKind) {
+    /**
+     * Create an event for any state update of a furni, user click or wired effect alike.
+     * @param room the room
+     * @param user the user behind the change, null when a wired effect or the room did it
+     * @param item the furniture that changed
+     * @param byEffect true when a wired effect changed the state
+     * @return the event
+     */
+    public static WiredEvent furniStateUpdated(Room room, RoomUnit user, HabboItem item, boolean byEffect) {
+        RoomTile tile = (room.getLayout() != null) ? room.getLayout().getTile(item.getX(), item.getY()) : null;
+        return WiredEvent.builder(WiredEvent.Type.FURNI_STATE_UPDATED, room)
+                .actor(user)
+                .sourceItem(item)
+                .tile(tile)
+                .triggeredByEffect(byEffect)
+                .build();
+    }
+
+    public static WiredEvent userVariableChanged(
+            Room room,
+            RoomUnit user,
+            int definitionItemId,
+            boolean created,
+            boolean deleted,
+            WiredEvent.VariableChangeKind changeKind) {
+        return userVariableChanged(room, user, definitionItemId, created, deleted, changeKind, 0L, 0L);
+    }
+
+    public static WiredEvent userVariableChanged(
+            Room room,
+            RoomUnit user,
+            int definitionItemId,
+            boolean created,
+            boolean deleted,
+            WiredEvent.VariableChangeKind changeKind,
+            long previousValue,
+            long currentValue) {
         return WiredEvent.builder(WiredEvent.Type.VARIABLE_CHANGED, room)
                 .actor(user)
                 .tile((user != null) ? user.getCurrentLocation() : null)
@@ -207,10 +257,29 @@ public final class WiredEvents {
                 .variableCreated(created)
                 .variableDeleted(deleted)
                 .variableChangeKind(changeKind)
+                .variableValues(previousValue, currentValue)
                 .build();
     }
 
-    public static WiredEvent furniVariableChanged(Room room, HabboItem item, int definitionItemId, boolean created, boolean deleted, WiredEvent.VariableChangeKind changeKind) {
+    public static WiredEvent furniVariableChanged(
+            Room room,
+            HabboItem item,
+            int definitionItemId,
+            boolean created,
+            boolean deleted,
+            WiredEvent.VariableChangeKind changeKind) {
+        return furniVariableChanged(room, item, definitionItemId, created, deleted, changeKind, 0L, 0L);
+    }
+
+    public static WiredEvent furniVariableChanged(
+            Room room,
+            HabboItem item,
+            int definitionItemId,
+            boolean created,
+            boolean deleted,
+            WiredEvent.VariableChangeKind changeKind,
+            long previousValue,
+            long currentValue) {
         RoomTile tile = (item != null) ? room.getLayout().getTile(item.getX(), item.getY()) : null;
 
         return WiredEvent.builder(WiredEvent.Type.VARIABLE_CHANGED, room)
@@ -221,16 +290,28 @@ public final class WiredEvents {
                 .variableCreated(created)
                 .variableDeleted(deleted)
                 .variableChangeKind(changeKind)
+                .variableValues(previousValue, currentValue)
                 .build();
     }
 
-    public static WiredEvent roomVariableChanged(Room room, int definitionItemId, WiredEvent.VariableChangeKind changeKind) {
+    public static WiredEvent roomVariableChanged(
+            Room room, int definitionItemId, WiredEvent.VariableChangeKind changeKind) {
+        return roomVariableChanged(room, definitionItemId, changeKind, 0L, 0L);
+    }
+
+    public static WiredEvent roomVariableChanged(
+            Room room,
+            int definitionItemId,
+            WiredEvent.VariableChangeKind changeKind,
+            long previousValue,
+            long currentValue) {
         return WiredEvent.builder(WiredEvent.Type.VARIABLE_CHANGED, room)
                 .variableTargetType(3)
                 .variableDefinitionItemId(definitionItemId)
                 .variableCreated(false)
                 .variableDeleted(false)
                 .variableChangeKind(changeKind)
+                .variableValues(previousValue, currentValue)
                 .build();
     }
 
@@ -279,6 +360,18 @@ public final class WiredEvents {
     }
 
     /**
+     * Create an event for the long one-shot timer (AT_GIVEN_TIME_LONG).
+     * @param room the room
+     * @param timerItem the timer furniture
+     * @return the event
+     */
+    public static WiredEvent timerTickLong(Room room, HabboItem timerItem) {
+        return WiredEvent.builder(WiredEvent.Type.TIMER_TICK_LONG, room)
+                .sourceItem(timerItem)
+                .build();
+    }
+
+    /**
      * Create an event for a short periodic timer.
      * @param room the room
      * @param timerItem the timer furniture
@@ -298,8 +391,7 @@ public final class WiredEvents {
      * @return the event
      */
     public static WiredEvent gameStarts(Room room) {
-        return WiredEvent.builder(WiredEvent.Type.GAME_STARTS, room)
-                .build();
+        return WiredEvent.builder(WiredEvent.Type.GAME_STARTS, room).build();
     }
 
     /**
@@ -308,8 +400,7 @@ public final class WiredEvents {
      * @return the event
      */
     public static WiredEvent gameEnds(Room room) {
-        return WiredEvent.builder(WiredEvent.Type.GAME_ENDS, room)
-                .build();
+        return WiredEvent.builder(WiredEvent.Type.GAME_ENDS, room).build();
     }
 
     /**
@@ -319,9 +410,7 @@ public final class WiredEvents {
      * @return the event
      */
     public static WiredEvent teamWins(Room room, RoomUnit user) {
-        return WiredEvent.builder(WiredEvent.Type.TEAM_WINS, room)
-                .actor(user)
-                .build();
+        return WiredEvent.builder(WiredEvent.Type.TEAM_WINS, room).actor(user).build();
     }
 
     /**
@@ -331,9 +420,7 @@ public final class WiredEvents {
      * @return the event
      */
     public static WiredEvent teamLoses(Room room, RoomUnit user) {
-        return WiredEvent.builder(WiredEvent.Type.TEAM_LOSES, room)
-                .actor(user)
-                .build();
+        return WiredEvent.builder(WiredEvent.Type.TEAM_LOSES, room).actor(user).build();
     }
 
     /**
@@ -361,10 +448,19 @@ public final class WiredEvents {
      * @return the event
      */
     public static WiredEvent botCollision(Room room, RoomUnit botUnit) {
-        return WiredEvent.builder(WiredEvent.Type.BOT_COLLISION, room)
+        return botCollision(room, botUnit, null);
+    }
+
+    public static WiredEvent botCollision(Room room, RoomUnit botUnit, HabboItem collidingFurni) {
+        WiredEvent.Builder builder = WiredEvent.builder(WiredEvent.Type.BOT_COLLISION, room)
                 .actor(botUnit)
-                .tile(botUnit.getCurrentLocation())
-                .build();
+                .tile(botUnit.getCurrentLocation());
+
+        if (collidingFurni != null) {
+            builder.sourceItem(collidingFurni);
+        }
+
+        return builder.build();
     }
 
     /**
@@ -490,7 +586,7 @@ public final class WiredEvents {
     /**
      * Create an event from legacy trigger type and parameters.
      * This is for backwards compatibility during migration.
-     * 
+     *
      * @param triggerType the legacy trigger type
      * @param room the room
      * @param roomUnit the triggering unit (may be null)
@@ -499,10 +595,9 @@ public final class WiredEvents {
      */
     public static WiredEvent fromLegacy(WiredTriggerType triggerType, Room room, RoomUnit roomUnit, Object[] stuff) {
         WiredEvent.Type eventType = WiredEvent.Type.fromLegacyType(triggerType);
-        
-        WiredEvent.Builder builder = WiredEvent.builder(eventType, room)
-                .actor(roomUnit);
-        
+
+        WiredEvent.Builder builder = WiredEvent.builder(eventType, room).actor(roomUnit);
+
         // Try to extract common data from stuff array
         if (stuff != null) {
             for (Object obj : stuff) {
@@ -515,12 +610,12 @@ public final class WiredEvents {
                 }
             }
         }
-        
+
         // Add current tile from room unit if available
         if (roomUnit != null && roomUnit.getCurrentLocation() != null) {
             builder.tile(roomUnit.getCurrentLocation());
         }
-        
+
         return builder.build();
     }
 }

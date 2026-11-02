@@ -10,7 +10,6 @@ import com.eu.habbo.habbohotel.wired.WiredConditionType;
 import com.eu.habbo.habbohotel.wired.core.WiredContext;
 import com.eu.habbo.habbohotel.wired.core.WiredManager;
 import com.eu.habbo.messages.ServerMessage;
-
 import java.sql.ResultSet;
 import java.sql.SQLException;
 
@@ -24,7 +23,8 @@ public class WiredConditionDateRangeActive extends InteractionWiredCondition {
         super(set, baseItem);
     }
 
-    public WiredConditionDateRangeActive(int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
+    public WiredConditionDateRangeActive(
+            int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
         super(id, userId, item, extradata, limitedStack, limitedSells);
     }
 
@@ -41,9 +41,12 @@ public class WiredConditionDateRangeActive extends InteractionWiredCondition {
         message.appendInt(this.getBaseItem().getSpriteId());
         message.appendInt(this.getId());
         message.appendString("");
-        message.appendInt(2);
-        message.appendInt(this.startDate);
-        message.appendInt(this.endDate);
+        // Official layout: [] with no start, [start] with no end, otherwise [start, end] (Unix seconds).
+        int[] params = officialParams(this.startDate, this.endDate);
+        message.appendInt(params.length);
+        for (int param : params) {
+            message.appendInt(param);
+        }
         message.appendInt(0);
         message.appendInt(this.getType().code);
         message.appendInt(this.startDate);
@@ -52,15 +55,30 @@ public class WiredConditionDateRangeActive extends InteractionWiredCondition {
 
     @Override
     public boolean saveData(WiredSettings settings) {
-        if(settings.getIntParams().length < 2) return false;
-        this.applyRange(settings.getIntParams()[0], settings.getIntParams()[1]);
+        // AIR sends [] when the start does not parse, [start] when the end does not, else [start, end].
+        int[] params = settings.getIntParams();
+        this.applyRange(params.length > 0 ? params[0] : 0, params.length > 1 ? params[1] : 0);
         return true;
+    }
+
+    /** The official param list of a stored range: empty without a start, the start alone without an end. */
+    static int[] officialParams(int startDate, int endDate) {
+        if (startDate <= 0 && endDate <= 0) return new int[0];
+        if (endDate <= 0) return new int[] {startDate};
+        return new int[] {startDate, endDate};
     }
 
     @Override
     public boolean evaluate(WiredContext ctx) {
-        int time = Emulator.getIntUnixTimestamp();
-        return this.startDate < time && this.endDate >= time;
+        return isActive(this.startDate, this.endDate, Emulator.getIntUnixTimestamp());
+    }
+
+    /**
+     * Official rule: a range without an end date (0) never passes. A start of 0 means "since always". Behaviour
+     * observed in plus-emulator/PlusEMU 06b4ae9a, reimplemented.
+     */
+    static boolean isActive(int startDate, int endDate, int now) {
+        return endDate > 0 && startDate <= now && endDate >= now;
     }
 
     @Deprecated
@@ -71,10 +89,7 @@ public class WiredConditionDateRangeActive extends InteractionWiredCondition {
 
     @Override
     public String getWiredData() {
-        return WiredManager.getGson().toJson(new JsonData(
-                this.startDate,
-                this.endDate
-        ));
+        return WiredManager.getGson().toJson(new JsonData(this.startDate, this.endDate));
     }
 
     @Override

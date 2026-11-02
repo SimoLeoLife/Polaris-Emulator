@@ -73,8 +73,13 @@ public class GameServer extends Server {
                     ch.pipeline().addLast(new GameClientMessageLogger());
                 }
                 ch.pipeline().addLast("idleEventHandler", new IdleTimeoutHandler(30, 60));
+                ch.pipeline().addLast("gameClientRegistrar", new GameMessageHandler.ClientRegistrar());
                 ch.pipeline().addLast(new GameMessageRateLimit());
                 ch.pipeline().addLast("packetDispatchMarker", new PacketDispatchMarker());
+                ch.pipeline()
+                        .addLast(
+                                "packetExecutionAdmission",
+                                GamePacketExecutionGroup.admissionHandler("packetDispatchLatency"));
                 ch.pipeline()
                         .addLast(
                                 GamePacketExecutionGroup.get(),
@@ -122,6 +127,8 @@ public class GameServer extends Server {
             this.webSocketListening = true;
             wsFuture.channel().closeFuture().addListener(ignored -> this.webSocketListening = false);
             LOGGER.info("WebSocket server started on {}:{} (SSL: {})", wsHost, wsPort, wsInitializer.isSslEnabled());
+            com.eu.habbo.networking.gameserver.cms.CmsApiHandler.logStartupStatus(wsHost, wsPort);
+            com.eu.habbo.networking.gameserver.wired.WiredVariableApiHandler.logStartupStatus(wsHost, wsPort);
 
             if (configuration().getBoolean("crypto.ws.signing.enabled", false)) {
                 try {
@@ -156,7 +163,9 @@ public class GameServer extends Server {
     public void stop() {
         this.webSocketListening = false;
         if (this.webSocketChannel != null) {
-            this.webSocketChannel.close().syncUninterruptibly();
+            if (!this.webSocketChannel.close().awaitUninterruptibly(5, TimeUnit.SECONDS)) {
+                LOGGER.warn("WebSocket listener did not close within 5 s, continuing");
+            }
         }
         for (GameClient client :
                 new ArrayList<>(this.gameClientManager.getSessions().values())) {

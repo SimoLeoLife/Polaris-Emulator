@@ -14,8 +14,8 @@ import com.eu.habbo.habbohotel.wired.WiredEffectType;
 import com.eu.habbo.habbohotel.wired.core.WiredContext;
 import com.eu.habbo.habbohotel.wired.core.WiredManager;
 import com.eu.habbo.habbohotel.wired.core.WiredSourceUtil;
+import com.eu.habbo.habbohotel.wired.protocol.WiredOfficialSelector;
 import com.eu.habbo.messages.ServerMessage;
-
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.sql.ResultSet;
@@ -26,7 +26,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 
-public class WiredEffectFurniOnFurni extends InteractionWiredEffect {
+public class WiredEffectFurniOnFurni extends InteractionWiredEffect implements WiredOfficialSelector {
     private static final double EPSILON = 0.0001D;
 
     private static final int SELECT_FURNI_ABOVE = 0;
@@ -46,7 +46,8 @@ public class WiredEffectFurniOnFurni extends InteractionWiredEffect {
         super(set, baseItem);
     }
 
-    public WiredEffectFurniOnFurni(int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
+    public WiredEffectFurniOnFurni(
+            int id, int userId, Item item, String extradata, int limitedStack, int limitedSells) {
         super(id, userId, item, extradata, limitedStack, limitedSells);
     }
 
@@ -60,11 +61,8 @@ public class WiredEffectFurniOnFurni extends InteractionWiredEffect {
 
         this.refresh(room);
 
+        // No source furni selects nothing; earlier selectors' picks stay, as with any other selector.
         List<HabboItem> sourceItems = WiredSourceUtil.resolveItems(ctx, this.furniSource, this.items);
-        if (sourceItems.isEmpty()) {
-            ctx.targets().setItems(Collections.emptySet());
-            return;
-        }
 
         Set<HabboItem> result = new LinkedHashSet<>();
         boolean includeWiredItems = this.includeWiredTargets(ctx);
@@ -73,7 +71,8 @@ public class WiredEffectFurniOnFurni extends InteractionWiredEffect {
             result.addAll(this.resolveRelatedItems(room, sourceItem, includeWiredItems));
         }
 
-        result = this.applySelectorModifiers(result, this.getSelectableFloorItems(room, ctx), ctx.targets().items(), this.filterExisting, this.invert);
+        result = this.applySelectorModifiers(
+                result, this.getSelectableItems(room, ctx), ctx.targets().items(), this.filterExisting, this.invert);
 
         ctx.targets().setItems(result);
     }
@@ -83,9 +82,11 @@ public class WiredEffectFurniOnFurni extends InteractionWiredEffect {
         int[] params = settings.getIntParams();
 
         this.selectionType = (params.length > 0) ? this.normalizeSelectionType(params[0]) : SELECT_FURNI_ABOVE;
-        this.furniSource = (params.length > 1) ? this.normalizeFurniSource(params[1]) : WiredSourceUtil.SOURCE_TRIGGER;
-        this.filterExisting = params.length > 2 && params[2] == 1;
-        this.invert = params.length > 3 && params[3] == 1;
+        this.furniSource = settings.getFurniSourceTypes().length > 0
+                ? this.normalizeFurniSource(settings.getFurniSourceTypes()[0])
+                : WiredSourceUtil.SOURCE_TRIGGER;
+        this.filterExisting = settings.isSelectorFilter();
+        this.invert = settings.isSelectorInvert();
 
         int count = settings.getFurniIds().length;
         if (count > Emulator.getConfig().getInt("hotel.wired.furni.selection.count")) {
@@ -119,6 +120,26 @@ public class WiredEffectFurniOnFurni extends InteractionWiredEffect {
     }
 
     @Override
+    public boolean selectorFilter() {
+        return this.filterExisting;
+    }
+
+    @Override
+    public boolean selectorInvert() {
+        return this.invert;
+    }
+
+    @Override
+    public int[] officialFurniSources() {
+        return new int[] {this.furniSource};
+    }
+
+    @Override
+    public int[] officialUserSources() {
+        return new int[0];
+    }
+
+    @Override
     public WiredEffectType getType() {
         return type;
     }
@@ -137,14 +158,14 @@ public class WiredEffectFurniOnFurni extends InteractionWiredEffect {
     public String getWiredData() {
         this.refresh(Emulator.getGameEnvironment().getRoomManager().getRoom(this.getRoomId()));
 
-        return WiredManager.getGson().toJson(new JsonData(
-                this.selectionType,
-                this.furniSource,
-                this.filterExisting,
-                this.invert,
-                this.items.stream().map(HabboItem::getId).collect(Collectors.toList()),
-                this.getDelay()
-        ));
+        return WiredManager.getGson()
+                .toJson(new JsonData(
+                        this.selectionType,
+                        this.furniSource,
+                        this.filterExisting,
+                        this.invert,
+                        this.items.stream().map(HabboItem::getId).collect(Collectors.toList()),
+                        this.getDelay()));
     }
 
     @Override
@@ -205,11 +226,9 @@ public class WiredEffectFurniOnFurni extends InteractionWiredEffect {
         message.appendInt(this.getBaseItem().getSpriteId());
         message.appendInt(this.getId());
         message.appendString("");
-        message.appendInt(4);
+        // Official layout: [selection type], the furni in the official source slot.
+        message.appendInt(1);
         message.appendInt(this.selectionType);
-        message.appendInt(this.furniSource);
-        message.appendInt(this.filterExisting ? 1 : 0);
-        message.appendInt(this.invert ? 1 : 0);
         message.appendInt(0);
         message.appendInt(this.getType().code);
         message.appendInt(this.getDelay());
@@ -233,7 +252,12 @@ public class WiredEffectFurniOnFurni extends InteractionWiredEffect {
             return result;
         }
 
-        Set<RoomTile> occupiedTiles = room.getLayout().getTilesAt(baseTile, sourceItem.getBaseItem().getWidth(), sourceItem.getBaseItem().getLength(), sourceItem.getRotation());
+        Set<RoomTile> occupiedTiles = room.getLayout()
+                .getTilesAt(
+                        baseTile,
+                        sourceItem.getBaseItem().getWidth(),
+                        sourceItem.getBaseItem().getLength(),
+                        sourceItem.getRotation());
         if (occupiedTiles == null) {
             return result;
         }
@@ -252,7 +276,8 @@ public class WiredEffectFurniOnFurni extends InteractionWiredEffect {
                 }
 
                 if (matchedItem == sourceItem) {
-                    if (this.selectionType == SELECT_FURNI_SAME_HEIGHT || this.selectionType == SELECT_ALL_FURNI_ON_TILE) {
+                    if (this.selectionType == SELECT_FURNI_SAME_HEIGHT
+                            || this.selectionType == SELECT_ALL_FURNI_ON_TILE) {
                         result.add(matchedItem);
                     }
                     continue;
@@ -322,7 +347,9 @@ public class WiredEffectFurniOnFurni extends InteractionWiredEffect {
 
     private double normalizeAltitude(double value) {
         double clampedValue = Math.max(0.0D, Math.min(Room.MAXIMUM_FURNI_HEIGHT, value));
-        return BigDecimal.valueOf(clampedValue).setScale(2, RoundingMode.HALF_UP).doubleValue();
+        return BigDecimal.valueOf(clampedValue)
+                .setScale(2, RoundingMode.HALF_UP)
+                .doubleValue();
     }
 
     static class JsonData {
@@ -333,7 +360,13 @@ public class WiredEffectFurniOnFurni extends InteractionWiredEffect {
         List<Integer> itemIds;
         int delay;
 
-        JsonData(int selectionType, int furniSource, boolean filterExisting, boolean invert, List<Integer> itemIds, int delay) {
+        JsonData(
+                int selectionType,
+                int furniSource,
+                boolean filterExisting,
+                boolean invert,
+                List<Integer> itemIds,
+                int delay) {
             this.selectionType = selectionType;
             this.furniSource = furniSource;
             this.filterExisting = filterExisting;

@@ -8,7 +8,7 @@ import com.eu.habbo.habbohotel.permissions.Permission;
 import com.eu.habbo.habbohotel.users.Habbo;
 import com.eu.habbo.messages.incoming.MessageHandler;
 import com.eu.habbo.messages.outgoing.modtool.ModToolIssueHandledComposer;
-
+import com.eu.habbo.messages.outgoing.modtool.ModeratorActionResultComposer;
 import java.util.ArrayList;
 import java.util.Map;
 
@@ -25,9 +25,17 @@ public class ModToolSanctionTradeLockEvent extends MessageHandler {
         int duration = this.packet.readInt();
         int cfhTopic = this.packet.readInt();
 
-        if (!ModToolTicketGuard.isPositiveId(userId) || !ModToolTicketGuard.isPositiveId(cfhTopic) || !ModToolInputGuard.isSafeMessage(message)) {
+        if (!ModToolTicketGuard.isPositiveId(userId)
+                || !ModToolTicketGuard.isPositiveId(cfhTopic)
+                || !ModToolInputGuard.isSafeMessage(message)
+                || duration <= 0) {
             return;
         }
+
+        // The packet carries a length in seconds; sanctions.trade_locked_until holds an
+        // absolute timestamp. Storing the raw number put every lock in 1970, so the next
+        // login saw it as expired and unlocked the user again - "permanent" included.
+        int tradeLockedUntil = ModToolManager.banExpiry(Emulator.getIntUnixTimestamp(), duration);
 
         if (this.client.getHabbo().hasPermission(Permission.ACC_SUPPORTTOOL)) {
             Habbo habbo = Emulator.getGameEnvironment().getHabboManager().getHabbo(userId);
@@ -37,31 +45,43 @@ public class ModToolSanctionTradeLockEvent extends MessageHandler {
                     return;
                 }
 
-                ModToolSanctions modToolSanctions = Emulator.getGameEnvironment().getModToolSanctions();
+                ModToolSanctions modToolSanctions =
+                        Emulator.getGameEnvironment().getModToolSanctions();
 
                 if (Emulator.getConfig().getBoolean("hotel.sanctions.enabled")) {
-                    Map<Integer, ArrayList<ModToolSanctionItem>> modToolSanctionItemsHashMap = Emulator.getGameEnvironment().getModToolSanctions().getSanctions(userId);
+                    Map<Integer, ArrayList<ModToolSanctionItem>> modToolSanctionItemsHashMap =
+                            Emulator.getGameEnvironment().getModToolSanctions().getSanctions(userId);
                     ArrayList<ModToolSanctionItem> modToolSanctionItems = modToolSanctionItemsHashMap.get(userId);
 
+                    int sanctionLevel = 0;
                     if (modToolSanctionItems != null && !modToolSanctionItems.isEmpty()) {
-                        ModToolSanctionItem item = modToolSanctionItems.get(modToolSanctionItems.size() - 1);
-
-                        if (item.probationTimestamp > 0 && item.probationTimestamp >= Emulator.getIntUnixTimestamp()) {
-                            modToolSanctions.run(userId, this.client.getHabbo(), item.sanctionLevel, cfhTopic, message, duration, false, 0);
-                        } else {
-                            modToolSanctions.run(userId, this.client.getHabbo(), item.sanctionLevel, cfhTopic, message, duration, false, 0);
-                        }
-                    } else {
-                        modToolSanctions.run(userId, this.client.getHabbo(), 0, cfhTopic, message, duration, false, 0);
+                        sanctionLevel = modToolSanctionItems.get(modToolSanctionItems.size() - 1).sanctionLevel;
                     }
+
+                    modToolSanctions.run(
+                            userId,
+                            this.client.getHabbo(),
+                            sanctionLevel,
+                            cfhTopic,
+                            message,
+                            tradeLockedUntil,
+                            false,
+                            0);
                 } else {
-                    habbo.getHabboStats().setAllowTrade(false);
                     habbo.alert(message);
                 }
 
+                // The sanction row alone does not stop the session that is already
+                // trading: only the next login reads trade_locked_until.
+                habbo.getHabboStats().setAllowTrade(false);
+
                 ModToolManager.bumpUserSettingCounter(userId, "tradelock_amount");
+                this.client.sendResponse(new ModeratorActionResultComposer(userId, true));
             } else {
-                this.client.sendResponse(new ModToolIssueHandledComposer(Emulator.getTexts().getValue("generic.user.not_found").replace("%user%", Emulator.getConfig().getValue("hotel.player.name"))));
+                this.client.sendResponse(new ModeratorActionResultComposer(userId, false));
+                this.client.sendResponse(new ModToolIssueHandledComposer(Emulator.getTexts()
+                        .getValue("generic.user.not_found")
+                        .replace("%user%", Emulator.getConfig().getValue("hotel.player.name"))));
             }
         }
     }

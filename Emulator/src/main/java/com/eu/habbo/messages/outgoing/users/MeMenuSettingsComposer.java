@@ -23,6 +23,24 @@ public class MeMenuSettingsComposer extends MessageComposer {
         this.response.appendBoolean(this.habbo.getHabboStats().blockCameraFollow);
         this.response.appendInt(this.habbo.getHabboStats().uiFlags);
         this.response.appendInt(this.habbo.getHabboStats().chatColor.getType());
+        // Game privacy flags, broadcast in the positive form the client expects
+        // (SaveGamePrivacySettingsEvent stores them inverted as hide/block).
+        this.response.appendBoolean(!this.habbo.getHabboStats().hideOnline);
+        this.response.appendBoolean(!this.habbo.getHabboStats().blockFollowing);
+        this.response.appendBoolean(!this.habbo.getHabboStats().blockFriendRequests);
+        this.response.appendInt(this.habbo.getHabboStats().volumeSoundboard);
+        // Per-user preferences of the official AIR 13 UserSettings packet (wired whisper switch, chat
+        // mode / bubble width / scroll speed, friend-online notification preference).
+        this.response.appendBoolean(this.habbo.getHabboStats().wiredWhisperDisabled);
+        this.response.appendInt(this.habbo.getHabboStats().chatMode);
+        this.response.appendInt(this.habbo.getHabboStats().chatBubbleWidth);
+        this.response.appendInt(this.habbo.getHabboStats().chatScrollSpeed);
+        this.response.appendInt(this.habbo.getHabboStats().onlineIndicatorPreference);
+        // Appended last so older clients, which stop reading earlier, are unaffected: whether the
+        // extended profile is visible to others, in the same positive form as the flags above.
+        this.response.appendBoolean(!this.habbo.getHabboStats().hideProfile);
+        // Then the stored wired menu preferences ("" until saved once), also last for older clients.
+        this.response.appendString(this.habbo.getHabboStats().wiredMenuPreferences);
         return this.response;
     }
 

@@ -4,8 +4,10 @@ import com.eu.habbo.Emulator;
 import com.eu.habbo.habbohotel.gameclients.GameClient;
 import com.eu.habbo.habbohotel.items.Item;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredEffect;
+import com.eu.habbo.habbohotel.items.interactions.wired.WiredInputGuard;
 import com.eu.habbo.habbohotel.items.interactions.wired.WiredSettings;
 import com.eu.habbo.habbohotel.rooms.Room;
+import com.eu.habbo.habbohotel.rooms.RoomFurniHeightLimit;
 import com.eu.habbo.habbohotel.rooms.RoomTile;
 import com.eu.habbo.habbohotel.rooms.RoomUnit;
 import com.eu.habbo.habbohotel.users.HabboItem;
@@ -16,13 +18,13 @@ import com.eu.habbo.habbohotel.wired.core.WiredMoveCarryHelper;
 import com.eu.habbo.habbohotel.wired.core.WiredSourceUtil;
 import com.eu.habbo.messages.ServerMessage;
 import com.eu.habbo.messages.incoming.wired.WiredSaveException;
-
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
@@ -35,7 +37,7 @@ public class WiredEffectSetAltitude extends InteractionWiredEffect {
 
     public static final WiredEffectType type = WiredEffectType.SET_ALTITUDE;
 
-    private final List<HabboItem> items = new ArrayList<>();
+    private final List<HabboItem> items = new CopyOnWriteArrayList<>();
     private int operator = OPERATOR_SET;
     private double altitude = 0.0D;
     private int furniSource = WiredSourceUtil.SOURCE_TRIGGER;
@@ -58,9 +60,8 @@ public class WiredEffectSetAltitude extends InteractionWiredEffect {
         List<HabboItem> effectiveItems = WiredSourceUtil.resolveItems(ctx, this.furniSource, this.items);
 
         if (this.furniSource == WiredSourceUtil.SOURCE_SELECTED) {
-            this.items.removeIf(item -> item == null
-                    || item.getRoomId() != this.getRoomId()
-                    || room.getHabboItem(item.getId()) == null);
+            this.items.removeIf(item ->
+                    item == null || item.getRoomId() != this.getRoomId() || room.getHabboItem(item.getId()) == null);
         }
 
         for (HabboItem item : effectiveItems) {
@@ -74,7 +75,11 @@ public class WiredEffectSetAltitude extends InteractionWiredEffect {
             }
 
             double nextAltitude = this.computeAltitude(item.getZ());
-            WiredMoveCarryHelper.moveFurni(room, this, item, tile, item.getRotation(), nextAltitude, null, true, ctx);
+            // AIR's range runs to 80.00, above the room's build ceiling, for this box's own moves.
+            try (RoomFurniHeightLimit.Scope ignored = RoomFurniHeightLimit.beginWiredAltitude()) {
+                WiredMoveCarryHelper.moveFurni(
+                        room, this, item, tile, item.getRotation(), nextAltitude, null, true, ctx);
+            }
         }
     }
 
@@ -86,13 +91,13 @@ public class WiredEffectSetAltitude extends InteractionWiredEffect {
 
     @Override
     public String getWiredData() {
-        return WiredManager.getGson().toJson(new JsonData(
-                this.getDelay(),
-                this.items.stream().map(HabboItem::getId).collect(Collectors.toList()),
-                this.operator,
-                this.formatAltitude(this.altitude),
-                this.furniSource
-        ));
+        return WiredManager.getGson()
+                .toJson(new JsonData(
+                        this.getDelay(),
+                        this.items.stream().map(HabboItem::getId).collect(Collectors.toList()),
+                        this.operator,
+                        this.formatAltitude(this.altitude),
+                        this.furniSource));
     }
 
     @Override
@@ -144,9 +149,8 @@ public class WiredEffectSetAltitude extends InteractionWiredEffect {
     @Override
     public void serializeWiredData(ServerMessage message, Room room) {
         List<HabboItem> itemsSnapshot = new ArrayList<>(this.items);
-        itemsSnapshot.removeIf(item -> item == null
-                || item.getRoomId() != this.getRoomId()
-                || room.getHabboItem(item.getId()) == null);
+        itemsSnapshot.removeIf(item ->
+                item == null || item.getRoomId() != this.getRoomId() || room.getHabboItem(item.getId()) == null);
 
         this.items.clear();
         this.items.addAll(itemsSnapshot);
@@ -160,10 +164,10 @@ public class WiredEffectSetAltitude extends InteractionWiredEffect {
 
         message.appendInt(this.getBaseItem().getSpriteId());
         message.appendInt(this.getId());
-        message.appendString(this.formatAltitude(this.altitude));
+        message.appendString("");
         message.appendInt(2);
+        message.appendInt((int) Math.round(this.normalizeAltitude(this.altitude) * 100.0D));
         message.appendInt(this.operator);
-        message.appendInt(this.furniSource);
         message.appendInt(0);
         message.appendInt(this.getType().code);
         message.appendInt(this.getDelay());
@@ -173,11 +177,14 @@ public class WiredEffectSetAltitude extends InteractionWiredEffect {
     @Override
     public boolean saveData(WiredSettings settings, GameClient gameClient) throws WiredSaveException {
         int[] params = settings.getIntParams();
-        this.operator = (params.length > 0) ? this.normalizeOperator(params[0]) : OPERATOR_SET;
-        this.furniSource = (params.length > 1) ? params[1] : WiredSourceUtil.SOURCE_TRIGGER;
+        // Official layout: [altitude in hundredths, operator]; the furni source is the official slot.
+        // A save from before that layout sent the altitude as text and [operator].
+        boolean official = params.length > 1;
+        this.operator = this.normalizeOperator(official ? params[1] : (params.length > 0 ? params[0] : OPERATOR_SET));
+        this.furniSource = settings.furniSource(0, WiredSourceUtil.SOURCE_TRIGGER);
 
         int delay = settings.getDelay();
-        if (delay > Emulator.getConfig().getInt("hotel.wired.max_delay", 20)) {
+        if (delay > Emulator.getConfig().getInt("hotel.wired.max_delay", WiredInputGuard.DEFAULT_MAX_DELAY)) {
             throw new WiredSaveException("Delay too long");
         }
 
@@ -201,7 +208,9 @@ public class WiredEffectSetAltitude extends InteractionWiredEffect {
             newItems.add(item);
         }
 
-        this.altitude = this.parseAltitude(settings.getStringParam());
+        this.altitude = official
+                ? this.normalizeAltitude(Math.max(0, params[0]) / 100.0D)
+                : this.parseAltitude(settings.getStringParam());
         this.items.clear();
         this.items.addAll(newItems);
         this.setDelay(delay);
@@ -263,8 +272,10 @@ public class WiredEffectSetAltitude extends InteractionWiredEffect {
     }
 
     private double normalizeAltitude(double value) {
-        double clampedValue = Math.max(0.0D, Math.min(Room.MAXIMUM_FURNI_HEIGHT, value));
-        return BigDecimal.valueOf(clampedValue).setScale(2, RoundingMode.HALF_UP).doubleValue();
+        double clampedValue = Math.max(0.0D, Math.min(RoomFurniHeightLimit.wiredAltitudeMax(), value));
+        return BigDecimal.valueOf(clampedValue)
+                .setScale(2, RoundingMode.HALF_UP)
+                .doubleValue();
     }
 
     private String formatAltitude(double value) {

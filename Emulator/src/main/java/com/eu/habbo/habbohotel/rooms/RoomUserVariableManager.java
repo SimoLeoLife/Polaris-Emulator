@@ -2,16 +2,21 @@ package com.eu.habbo.habbohotel.rooms;
 
 import com.eu.habbo.Emulator;
 import com.eu.habbo.habbohotel.items.interactions.InteractionWiredExtra;
+import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraPointerVariable;
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraUserVariable;
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraVariableEcho;
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredExtraVariableReference;
 import com.eu.habbo.habbohotel.items.interactions.wired.extra.WiredVariableReferenceSupport;
 import com.eu.habbo.habbohotel.users.Habbo;
+import com.eu.habbo.habbohotel.wired.core.WiredDailyTaskSupport;
 import com.eu.habbo.habbohotel.wired.core.WiredEvent;
 import com.eu.habbo.habbohotel.wired.core.WiredManager;
+import com.eu.habbo.habbohotel.wired.core.WiredPointerVariableSupport;
+import com.eu.habbo.habbohotel.wired.core.WiredSharedVariableChanges;
+import com.eu.habbo.habbohotel.wired.core.WiredVariableHolderLimit;
 import com.eu.habbo.habbohotel.wired.core.WiredVariableLevelSystemSupport;
 import com.eu.habbo.habbohotel.wired.core.WiredVariableTextConnectorSupport;
-import com.eu.habbo.messages.outgoing.wired.WiredUserVariablesDataComposer;
+import com.eu.habbo.habbohotel.wired.protocol.WiredVariableTargets;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -19,11 +24,14 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.IntSupplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -34,9 +42,18 @@ public class RoomUserVariableManager {
     private final Room room;
     private final RoomUserVariableRepository repository;
     private final IntSupplier currentTimestamp;
-    private final ConcurrentHashMap<Integer, ConcurrentHashMap<Integer, VariableAssignment>> activeAssignmentsByUserId;
+    private final ConcurrentHashMap<Integer, ConcurrentHashMap<Integer, RoomVariableAssignment>>
+            activeAssignmentsByUserId;
     private final java.util.concurrent.atomic.AtomicBoolean broadcastRequested =
             new java.util.concurrent.atomic.AtomicBoolean(false);
+    /** Holders whose stored values are loaded: from restore until they leave. */
+    private final Set<Integer> residents = ConcurrentHashMap.newKeySet();
+    /** Bumped whenever stored rows of a whole variable are deleted, so a load that raced it reads again. */
+    private final AtomicLong storedClears = new AtomicLong();
+    /** Bumped on every change to any holder's variables, live or saved; readers poll it to skip work. */
+    private final AtomicLong changeVersion = new AtomicLong();
+
+    private final RoomUserVariableStore store;
 
     public RoomUserVariableManager(Room room) {
         this(
@@ -50,41 +67,159 @@ public class RoomUserVariableManager {
         this.repository = repository;
         this.currentTimestamp = currentTimestamp;
         this.activeAssignmentsByUserId = new ConcurrentHashMap<>();
+        this.store = new RoomUserVariableStore(room, this, repository, currentTimestamp);
+    }
+
+    /** "user", "pet" or "bot", for the monitor line of a holder key. */
+    private static String holderKindName(int holderKey) {
+        UserVariableHolders.Kind kind = UserVariableHolders.kindOf(holderKey);
+        return kind == null ? "user" : kind.name().toLowerCase(java.util.Locale.ROOT);
+    }
+
+    /** The values of users in this room and the saved rows of users who are not. */
+    public RoomUserVariableStore getStore() {
+        return this.store;
     }
 
     public void restorePermanentAssignments(Habbo habbo) {
-        if (habbo == null) {
+        if (habbo == null || habbo.getHabboInfo() == null) {
             return;
         }
 
-        int userId = habbo.getHabboInfo().getId();
-        ConcurrentHashMap<Integer, VariableAssignment> restoredAssignments = new ConcurrentHashMap<>();
-        List<Integer> staleDefinitionIds = new ArrayList<>();
+        this.restorePermanentAssignments(habbo.getHabboInfo().getId());
+    }
 
-        try {
-            for (RoomUserVariableRepository.StoredAssignment stored :
-                    this.repository.findByUser(this.room.getId(), userId)) {
-                int definitionItemId = stored.definitionItemId();
-                WiredExtraUserVariable definition = this.getDefinition(definitionItemId);
-
-                if (definition == null || !definition.isPermanentAvailability()) {
-                    staleDefinitionIds.add(definitionItemId);
-                    continue;
-                }
-
-                int createdAt = normalizeTimestamp(stored.createdAt(), 0);
-                int updatedAt = normalizeTimestamp(stored.updatedAt(), createdAt);
-                restoredAssignments.put(definitionItemId, new VariableAssignment(stored.value(), createdAt, updatedAt));
+    /**
+     * Restores the permanent variables of the pets and bots in the room with one query; run once its
+     * wired has loaded.
+     */
+    public void restoreUnitHolders() {
+        Set<Integer> present = new LinkedHashSet<>();
+        if (this.room.getCurrentPets() != null) {
+            for (com.eu.habbo.habbohotel.pets.Pet pet :
+                    this.room.getCurrentPets().values()) {
+                if (pet != null) present.add(UserVariableHolders.ofPet(pet.getId()));
             }
-        } catch (SQLException e) {
-            LOGGER.error(
-                    "Failed to restore wired user variables for room {} and user {}", this.room.getId(), userId, e);
+        }
+        if (this.room.getCurrentBots() != null) {
+            for (com.eu.habbo.habbohotel.bots.Bot bot :
+                    this.room.getCurrentBots().values()) {
+                if (bot != null) present.add(UserVariableHolders.ofBot(bot.getId()));
+            }
+        }
+        present.remove(0);
+        if (present.isEmpty()) {
+            return;
         }
 
-        if (!staleDefinitionIds.isEmpty()) {
-            for (Integer definitionItemId : staleDefinitionIds) {
-                this.deletePersistentAssignment(userId, definitionItemId);
+        Map<Integer, List<RoomUserVariableRepository.StoredAssignment>> stored;
+        try {
+            stored = this.repository.findUnitHolders(this.room.getId());
+        } catch (SQLException e) {
+            LOGGER.error("Failed to restore pet and bot wired variables for room {}", this.room.getId(), e);
+            return;
+        }
+
+        for (Integer holder : present) {
+            this.applyRestored(holder, stored.getOrDefault(holder, List.of()));
+            this.residents.add(holder);
+        }
+        this.broadcastSnapshot();
+    }
+
+    /** Restores the permanent variables of one holder (see {@link UserVariableHolders}). */
+    public void restorePermanentAssignments(int userId) {
+        if (!UserVariableHolders.isValid(userId)) {
+            return;
+        }
+
+        if (userId > 0) {
+            // Under the user's lock: a web API write of their saved rows lands before this read or waits.
+            ReentrantLock lock = UserVariableLocks.of(this.room.getId(), userId);
+            lock.lock();
+            try {
+                this.restoreStored(userId);
+            } finally {
+                lock.unlock();
             }
+        } else {
+            this.restoreStored(userId);
+        }
+        this.broadcastSnapshot();
+    }
+
+    private void restoreStored(int userId) {
+        for (int attempt = 0; ; attempt++) {
+            long clears = this.storedClears.get();
+            List<RoomUserVariableRepository.StoredAssignment> stored = List.of();
+            try {
+                stored = this.repository.findByUser(this.room.getId(), userId);
+            } catch (SQLException e) {
+                LOGGER.error(
+                        "Failed to restore wired user variables for room {} and user {}", this.room.getId(), userId, e);
+            }
+
+            this.applyRestored(userId, stored);
+            // A variable cleared for everyone while we read must not come back from the old rows.
+            if (this.storedClears.get() == clears || attempt >= 2) {
+                break;
+            }
+        }
+        this.residents.add(userId);
+    }
+
+    /** Whether the live store answers for this holder: loaded and in the room. */
+    boolean isLive(int userId) {
+        return this.residents.contains(userId) && UserVariableHolders.isInRoom(this.room, userId);
+    }
+
+    /** The users (not pets or bots) the live store answers for. */
+    Set<Integer> liveUsers() {
+        Set<Integer> users = new HashSet<>();
+        for (Integer userId : this.residents) {
+            if (userId > 0 && UserVariableHolders.isInRoom(this.room, userId)) {
+                users.add(userId);
+            }
+        }
+        return users;
+    }
+
+    /** Forgets live values a write left behind for a holder that has gone (its rows stay stored). */
+    void dropIfAbsent(int userId) {
+        if (!this.residents.contains(userId) && this.activeAssignmentsByUserId.remove(userId) != null) {
+            this.broadcastSnapshot();
+        }
+    }
+
+    /** The custom variable box behind an id, or null. */
+    WiredExtraUserVariable definitionOf(int definitionItemId) {
+        return this.getDefinition(definitionItemId);
+    }
+
+    InteractionWiredExtra definitionExtraOf(int definitionItemId) {
+        return this.getDefinitionExtra(definitionItemId);
+    }
+
+    private void applyRestored(int userId, List<RoomUserVariableRepository.StoredAssignment> rows) {
+        ConcurrentHashMap<Integer, RoomVariableAssignment> restoredAssignments = new ConcurrentHashMap<>();
+        List<Integer> staleDefinitionIds = new ArrayList<>();
+
+        for (RoomUserVariableRepository.StoredAssignment stored : rows) {
+            int definitionItemId = stored.definitionItemId();
+            WiredExtraUserVariable definition = this.getDefinition(definitionItemId);
+
+            if (definition == null || !definition.isPermanentAvailability()) {
+                staleDefinitionIds.add(definitionItemId);
+                continue;
+            }
+
+            int createdAt = normalizeTimestamp(stored.createdAt(), 0);
+            int updatedAt = normalizeTimestamp(stored.updatedAt(), createdAt);
+            restoredAssignments.put(definitionItemId, new RoomVariableAssignment(stored.value(), createdAt, updatedAt));
+        }
+
+        for (Integer definitionItemId : staleDefinitionIds) {
+            this.deletePersistentAssignment(userId, definitionItemId);
         }
 
         if (restoredAssignments.isEmpty()) {
@@ -92,8 +227,6 @@ public class RoomUserVariableManager {
         } else {
             this.activeAssignmentsByUserId.put(userId, restoredAssignments);
         }
-
-        this.broadcastSnapshot();
     }
 
     public boolean assignVariable(
@@ -102,8 +235,29 @@ public class RoomUserVariableManager {
     }
 
     public boolean assignVariable(Habbo habbo, int definitionItemId, Integer value, boolean overrideExisting) {
-        if (habbo == null || definitionItemId <= 0) {
+        if (habbo == null || habbo.getHabboInfo() == null) {
             return false;
+        }
+
+        return this.assignVariable(habbo.getHabboInfo().getId(), definitionItemId, value, overrideExisting);
+    }
+
+    /** Gives the variable to a holder (see {@link UserVariableHolders}). */
+    public boolean assignVariable(int userId, int definitionItemId, Integer value, boolean overrideExisting) {
+        if (!UserVariableHolders.isValid(userId) || definitionItemId <= 0) {
+            return false;
+        }
+
+        if (WiredPointerVariableSupport.isPointer(this.room, definitionItemId)) {
+            // A pointer holds nothing itself; boxes resolve it to the variable it stands for first.
+            return false;
+        }
+
+        WiredVariableLevelSystemSupport.DerivedDefinition derivedPart =
+                WiredVariableLevelSystemSupport.resolveDerivedDefinition(
+                        this.room, WiredVariableLevelSystemSupport.TARGET_USER, definitionItemId);
+        if (derivedPart != null) {
+            return overrideExisting && this.writeDerivedPart(userId, derivedPart, value);
         }
 
         InteractionWiredExtra extra = this.getDefinitionExtra(definitionItemId);
@@ -113,7 +267,6 @@ public class RoomUserVariableManager {
             return false;
         }
 
-        int userId = habbo.getHabboInfo().getId();
         Integer normalizedValue = definitionInfo.hasValue() ? value : null;
         boolean hadBefore = this.hasVariable(userId, definitionItemId);
         Integer previousValue =
@@ -167,37 +320,48 @@ public class RoomUserVariableManager {
             return changed;
         }
 
-        ConcurrentHashMap<Integer, VariableAssignment> assignments =
+        ConcurrentHashMap<Integer, RoomVariableAssignment> assignments =
                 this.activeAssignmentsByUserId.computeIfAbsent(userId, key -> new ConcurrentHashMap<>());
-        VariableAssignment existingAssignment = assignments.get(definitionItemId);
+        RoomVariableAssignment existingAssignment = assignments.get(definitionItemId);
 
         if (existingAssignment != null && !overrideExisting) {
             return false;
         }
 
+        // Habbo's cap on different variables per holder (monitor error 6); a value it already holds still changes.
+        if (existingAssignment == null && !WiredVariableHolderLimit.hasRoomFor(assignments.size())) {
+            WiredVariableHolderLimit.noteRefused(
+                    this.room.getId(),
+                    holderKindName(userId),
+                    UserVariableHolders.idOf(userId),
+                    definitionInfo.getName(),
+                    definitionItemId);
+            return false;
+        }
+
         boolean overwritten = existingAssignment != null && overrideExisting;
-        boolean valueChanged =
-                existingAssignment == null || !Objects.equals(existingAssignment.getValue(), normalizedValue);
+        boolean valueChanged = existingAssignment == null
+                || !Objects.equals(this.effectiveValue(definitionItemId, existingAssignment), normalizedValue);
         boolean changed = overwritten || valueChanged;
 
         if (existingAssignment == null || overwritten) {
             int now = this.currentTimestamp.getAsInt();
-            assignments.put(definitionItemId, new VariableAssignment(normalizedValue, now, now));
+            assignments.put(definitionItemId, new RoomVariableAssignment(normalizedValue, now, now));
         } else if (valueChanged) {
             existingAssignment.setValue(normalizedValue, this.currentTimestamp.getAsInt());
         }
 
         WiredExtraUserVariable definition = (WiredExtraUserVariable) extra;
 
+        // A temporary variable has no saved row: rows go when a variable stops being permanent and
+        // stale ones on load, so no DELETE per assign.
         if (definition.isPermanentAvailability()) {
             this.upsertPersistentAssignment(userId, definitionItemId, assignments.get(definitionItemId));
-        } else {
-            this.deletePersistentAssignment(userId, definitionItemId);
         }
 
         if (changed) {
             if (definition.isSharedAvailability()) {
-                VariableAssignment assignment = assignments.get(definitionItemId);
+                RoomVariableAssignment assignment = assignments.get(definitionItemId);
                 if (assignment != null) {
                     WiredVariableReferenceSupport.cacheSharedUserAssignment(
                             this.room.getId(),
@@ -232,8 +396,20 @@ public class RoomUserVariableManager {
     }
 
     public boolean updateVariableValue(int userId, int definitionItemId, Integer value) {
-        if (userId <= 0 || definitionItemId <= 0) {
+        if (!UserVariableHolders.isValid(userId) || definitionItemId <= 0) {
             return false;
+        }
+
+        if (WiredPointerVariableSupport.isPointer(this.room, definitionItemId)) {
+            // A pointer holds nothing itself; boxes resolve it to the variable it stands for first.
+            return false;
+        }
+
+        WiredVariableLevelSystemSupport.DerivedDefinition derivedPart =
+                WiredVariableLevelSystemSupport.resolveDerivedDefinition(
+                        this.room, WiredVariableLevelSystemSupport.TARGET_USER, definitionItemId);
+        if (derivedPart != null) {
+            return this.writeDerivedPart(userId, derivedPart, value);
         }
 
         InteractionWiredExtra extra = this.getDefinitionExtra(definitionItemId);
@@ -283,22 +459,22 @@ public class RoomUserVariableManager {
             return changed;
         }
 
-        ConcurrentHashMap<Integer, VariableAssignment> assignments = this.activeAssignmentsByUserId.get(userId);
+        ConcurrentHashMap<Integer, RoomVariableAssignment> assignments = this.activeAssignmentsByUserId.get(userId);
 
         if (assignments == null) {
             return false;
         }
 
-        VariableAssignment assignment = assignments.get(definitionItemId);
+        RoomVariableAssignment assignment = assignments.get(definitionItemId);
 
         if (assignment == null) {
             return false;
         }
 
         Integer normalizedValue = value;
-        if (Objects.equals(assignment.getValue(), normalizedValue)) {
-            this.emitVariableChangedEvents(
-                    userId, extra, definitionInfo, true, previousValue, true, assignment.getValue());
+        Integer storedValue = this.effectiveValue(definitionItemId, assignment);
+        if (Objects.equals(storedValue, normalizedValue)) {
+            this.emitVariableChangedEvents(userId, extra, definitionInfo, true, previousValue, true, storedValue);
             return false;
         }
 
@@ -327,7 +503,7 @@ public class RoomUserVariableManager {
     }
 
     public int getCurrentValue(int userId, int definitionItemId) {
-        if (userId <= 0 || definitionItemId <= 0) {
+        if (!UserVariableHolders.isValid(userId) || definitionItemId <= 0) {
             return 0;
         }
 
@@ -335,9 +511,7 @@ public class RoomUserVariableManager {
                 WiredVariableLevelSystemSupport.resolveDerivedDefinition(
                         this.room, WiredVariableLevelSystemSupport.TARGET_USER, definitionItemId);
         if (derivedDefinition != null) {
-            Integer baseValue = this.getRawValue(userId, derivedDefinition.getBaseDefinitionItemId());
-            Integer derivedValue = WiredVariableLevelSystemSupport.getDerivedValue(
-                    derivedDefinition.getLevelSystem(), derivedDefinition.getSubvariableType(), baseValue);
+            Integer derivedValue = this.getDerivedValue(userId, derivedDefinition);
             return (derivedValue != null) ? derivedValue : 0;
         }
 
@@ -352,23 +526,18 @@ public class RoomUserVariableManager {
             return ((WiredExtraVariableEcho) extra).getCurrentValue(this.room, userId);
         }
 
-        ConcurrentHashMap<Integer, VariableAssignment> assignments = this.activeAssignmentsByUserId.get(userId);
+        ConcurrentHashMap<Integer, RoomVariableAssignment> assignments = this.activeAssignmentsByUserId.get(userId);
 
         if (assignments == null) {
             return 0;
         }
 
-        VariableAssignment assignment = assignments.get(definitionItemId);
-
-        if (assignment == null || assignment.getValue() == null) {
-            return 0;
-        }
-
-        return assignment.getValue();
+        Integer value = this.effectiveValue(definitionItemId, assignments.get(definitionItemId));
+        return (value != null) ? value : 0;
     }
 
     public int getCreatedAt(int userId, int definitionItemId) {
-        if (userId <= 0 || definitionItemId <= 0) {
+        if (!UserVariableHolders.isValid(userId) || definitionItemId <= 0) {
             return 0;
         }
 
@@ -376,7 +545,8 @@ public class RoomUserVariableManager {
                 WiredVariableLevelSystemSupport.resolveDerivedDefinition(
                         this.room, WiredVariableLevelSystemSupport.TARGET_USER, definitionItemId);
         if (derivedDefinition != null) {
-            VariableAssignment assignment = this.getRawAssignment(userId, derivedDefinition.getBaseDefinitionItemId());
+            RoomVariableAssignment assignment =
+                    this.getRawAssignment(userId, derivedDefinition.getBaseDefinitionItemId());
             return (assignment != null) ? assignment.getCreatedAt() : 0;
         }
 
@@ -391,18 +561,18 @@ public class RoomUserVariableManager {
             return ((WiredExtraVariableEcho) extra).getCreatedAt(this.room, userId);
         }
 
-        ConcurrentHashMap<Integer, VariableAssignment> assignments = this.activeAssignmentsByUserId.get(userId);
+        ConcurrentHashMap<Integer, RoomVariableAssignment> assignments = this.activeAssignmentsByUserId.get(userId);
 
         if (assignments == null) {
             return 0;
         }
 
-        VariableAssignment assignment = assignments.get(definitionItemId);
+        RoomVariableAssignment assignment = assignments.get(definitionItemId);
         return assignment != null ? assignment.getCreatedAt() : 0;
     }
 
     public int getUpdatedAt(int userId, int definitionItemId) {
-        if (userId <= 0 || definitionItemId <= 0) {
+        if (!UserVariableHolders.isValid(userId) || definitionItemId <= 0) {
             return 0;
         }
 
@@ -410,7 +580,8 @@ public class RoomUserVariableManager {
                 WiredVariableLevelSystemSupport.resolveDerivedDefinition(
                         this.room, WiredVariableLevelSystemSupport.TARGET_USER, definitionItemId);
         if (derivedDefinition != null) {
-            VariableAssignment assignment = this.getRawAssignment(userId, derivedDefinition.getBaseDefinitionItemId());
+            RoomVariableAssignment assignment =
+                    this.getRawAssignment(userId, derivedDefinition.getBaseDefinitionItemId());
             return (assignment != null) ? assignment.getUpdatedAt() : 0;
         }
 
@@ -425,18 +596,18 @@ public class RoomUserVariableManager {
             return ((WiredExtraVariableEcho) extra).getUpdatedAt(this.room, userId);
         }
 
-        ConcurrentHashMap<Integer, VariableAssignment> assignments = this.activeAssignmentsByUserId.get(userId);
+        ConcurrentHashMap<Integer, RoomVariableAssignment> assignments = this.activeAssignmentsByUserId.get(userId);
 
         if (assignments == null) {
             return 0;
         }
 
-        VariableAssignment assignment = assignments.get(definitionItemId);
+        RoomVariableAssignment assignment = assignments.get(definitionItemId);
         return assignment != null ? assignment.getUpdatedAt() : 0;
     }
 
     public boolean hasVariable(int userId, int definitionItemId) {
-        if (userId <= 0 || definitionItemId <= 0) {
+        if (!UserVariableHolders.isValid(userId) || definitionItemId <= 0) {
             return false;
         }
 
@@ -444,7 +615,9 @@ public class RoomUserVariableManager {
                 WiredVariableLevelSystemSupport.resolveDerivedDefinition(
                         this.room, WiredVariableLevelSystemSupport.TARGET_USER, definitionItemId);
         if (derivedDefinition != null) {
-            return this.getRawAssignment(userId, derivedDefinition.getBaseDefinitionItemId()) != null;
+            return this.getRawAssignment(userId, derivedDefinition.getBaseDefinitionItemId()) != null
+                    && (!WiredVariableLevelSystemSupport.isPresencePart(derivedDefinition)
+                            || this.getDerivedValue(userId, derivedDefinition) != null);
         }
 
         InteractionWiredExtra extra = this.getDefinitionExtra(definitionItemId);
@@ -457,18 +630,23 @@ public class RoomUserVariableManager {
             return ((WiredExtraVariableEcho) extra).hasVariable(this.room, userId);
         }
 
-        ConcurrentHashMap<Integer, VariableAssignment> assignments = this.activeAssignmentsByUserId.get(userId);
+        ConcurrentHashMap<Integer, RoomVariableAssignment> assignments = this.activeAssignmentsByUserId.get(userId);
 
         return assignments != null && assignments.containsKey(definitionItemId);
     }
 
     public boolean removeVariable(int userId, int definitionItemId) {
-        if (userId <= 0 || definitionItemId <= 0) {
+        if (!UserVariableHolders.isValid(userId) || definitionItemId <= 0) {
+            return false;
+        }
+
+        if (WiredPointerVariableSupport.isPointer(this.room, definitionItemId)) {
+            // A pointer holds nothing itself; boxes resolve it to the variable it stands for first.
             return false;
         }
 
         WiredVariableDefinitionInfo definitionInfo = this.getDefinitionInfo(definitionItemId);
-        if (definitionInfo == null || definitionInfo.isReadOnly()) {
+        if (definitionInfo == null || definitionInfo.isReadOnly() || this.isDerivedPart(definitionItemId)) {
             return false;
         }
 
@@ -510,7 +688,7 @@ public class RoomUserVariableManager {
             return changed;
         }
 
-        ConcurrentHashMap<Integer, VariableAssignment> assignments = this.activeAssignmentsByUserId.get(userId);
+        ConcurrentHashMap<Integer, RoomVariableAssignment> assignments = this.activeAssignmentsByUserId.get(userId);
 
         if (assignments == null) {
             return false;
@@ -524,9 +702,10 @@ public class RoomUserVariableManager {
             this.activeAssignmentsByUserId.remove(userId, assignments);
         }
 
-        this.deletePersistentAssignment(userId, definitionItemId);
-
         WiredExtraUserVariable definition = this.getDefinition(definitionItemId);
+        if (definition == null || definition.isPermanentAvailability()) {
+            this.deletePersistentAssignment(userId, definitionItemId);
+        }
         if (definition != null && definition.isSharedAvailability()) {
             WiredVariableReferenceSupport.clearSharedUserAssignment(this.room.getId(), definitionItemId, userId);
         }
@@ -538,21 +717,72 @@ public class RoomUserVariableManager {
     }
 
     public void clearAssignmentsForUser(int userId) {
-        if (userId <= 0) {
+        if (!UserVariableHolders.isValid(userId)) {
             return;
         }
 
+        this.residents.remove(userId);
+        this.room.getArrayVariableManager().clearAssignmentsForUser(userId);
         if (this.activeAssignmentsByUserId.remove(userId) != null) {
             this.broadcastSnapshot();
         }
     }
 
+    /**
+     * Takes the variable away from every user that holds it, in the room and in storage, and
+     * tells the wired about each loss. The definition itself stays: the box is still on the floor.
+     * Answers how many holders lost it.
+     */
+    public int clearAllAssignments(int definitionItemId) {
+        WiredVariableDefinitionInfo definitionInfo = this.getDefinitionInfo(definitionItemId);
+        if (definitionInfo == null || definitionInfo.isReadOnly()) return 0;
+
+        if (this.getDefinitionExtra(definitionItemId)
+                        instanceof com.eu.habbo.habbohotel.wired.arrays.WiredArrayVariableDefinition array
+                && array.isArray()) {
+            List<Integer> owners = this.room.getArrayVariableManager().clearAllAssignments(array);
+            for (Integer ownerId : owners)
+                this.emitVariableChangedEvent(ownerId, definitionItemId, false, true, null, false, null);
+            this.broadcastSnapshot();
+            return owners.size();
+        }
+
+        // Stored rows first, then the live values: a user loading meanwhile reads again (see restoreStored).
+        this.deletePersistentAssignmentsForDefinition(definitionItemId);
+        Map<Integer, Integer> previousValues = new LinkedHashMap<>();
+        for (Map.Entry<Integer, ConcurrentHashMap<Integer, RoomVariableAssignment>> entry :
+                this.activeAssignmentsByUserId.entrySet()) {
+            ConcurrentHashMap<Integer, RoomVariableAssignment> assignments = entry.getValue();
+            RoomVariableAssignment assignment = assignments.remove(definitionItemId);
+            if (assignment == null) continue;
+
+            previousValues.put(
+                    entry.getKey(),
+                    definitionInfo.hasValue() ? this.effectiveValue(definitionItemId, assignment) : null);
+            if (assignments.isEmpty()) this.activeAssignmentsByUserId.remove(entry.getKey(), assignments);
+        }
+
+        // Other rooms read a shared variable from the cache: it must not keep the values just taken away.
+        WiredExtraUserVariable definition = this.getDefinition(definitionItemId);
+        if (definition != null && definition.isSharedAvailability()) {
+            WiredVariableReferenceSupport.clearSharedUserDefinition(this.room.getId(), definitionItemId);
+        }
+
+        for (Map.Entry<Integer, Integer> entry : previousValues.entrySet()) {
+            this.emitVariableChangedEvent(
+                    entry.getKey(), definitionItemId, definitionInfo.hasValue(), true, entry.getValue(), false, null);
+        }
+        if (!previousValues.isEmpty()) this.broadcastSnapshot();
+        return previousValues.size();
+    }
+
     public void removeDefinition(int definitionItemId) {
+        this.deletePersistentAssignmentsForDefinition(definitionItemId);
         boolean changed = false;
 
-        for (Map.Entry<Integer, ConcurrentHashMap<Integer, VariableAssignment>> entry :
+        for (Map.Entry<Integer, ConcurrentHashMap<Integer, RoomVariableAssignment>> entry :
                 this.activeAssignmentsByUserId.entrySet()) {
-            ConcurrentHashMap<Integer, VariableAssignment> assignments = entry.getValue();
+            ConcurrentHashMap<Integer, RoomVariableAssignment> assignments = entry.getValue();
             if (assignments.remove(definitionItemId) != null) {
                 changed = true;
             }
@@ -562,7 +792,6 @@ public class RoomUserVariableManager {
             }
         }
 
-        this.deletePersistentAssignmentsForDefinition(definitionItemId);
         WiredExtraUserVariable definition = this.getDefinition(definitionItemId);
         if (definition != null && definition.isSharedAvailability()) {
             WiredVariableReferenceSupport.clearSharedUserDefinition(this.room.getId(), definitionItemId);
@@ -581,12 +810,17 @@ public class RoomUserVariableManager {
             return;
         }
 
+        if (definition.isArrayDeclared()) {
+            this.removeDefinition(definition.getId());
+            return;
+        }
+
         if (!definition.isPermanentAvailability()) {
             this.deletePersistentAssignmentsForDefinition(definition.getId());
         } else {
-            for (Map.Entry<Integer, ConcurrentHashMap<Integer, VariableAssignment>> entry :
+            for (Map.Entry<Integer, ConcurrentHashMap<Integer, RoomVariableAssignment>> entry :
                     this.activeAssignmentsByUserId.entrySet()) {
-                VariableAssignment assignment = entry.getValue().get(definition.getId());
+                RoomVariableAssignment assignment = entry.getValue().get(definition.getId());
 
                 if (assignment == null) continue;
 
@@ -595,9 +829,9 @@ public class RoomUserVariableManager {
         }
 
         if (definition.isSharedAvailability()) {
-            for (Map.Entry<Integer, ConcurrentHashMap<Integer, VariableAssignment>> entry :
+            for (Map.Entry<Integer, ConcurrentHashMap<Integer, RoomVariableAssignment>> entry :
                     this.activeAssignmentsByUserId.entrySet()) {
-                VariableAssignment assignment = entry.getValue().get(definition.getId());
+                RoomVariableAssignment assignment = entry.getValue().get(definition.getId());
 
                 if (assignment == null) {
                     continue;
@@ -618,6 +852,23 @@ public class RoomUserVariableManager {
         this.broadcastSnapshot();
     }
 
+    public boolean hasAssignmentsForDefinition(int definitionItemId) {
+        if (definitionItemId <= 0) return false;
+        for (ConcurrentHashMap<Integer, RoomVariableAssignment> assignments : this.activeAssignmentsByUserId.values()) {
+            if (assignments.containsKey(definitionItemId)) return true;
+        }
+        try {
+            return this.repository.hasDefinition(this.room.getId(), definitionItemId);
+        } catch (SQLException exception) {
+            LOGGER.error(
+                    "Failed to inspect wired user variable {} in room {}",
+                    definitionItemId,
+                    this.room.getId(),
+                    exception);
+            throw new IllegalArgumentException("Unable to verify whether this variable contains stored values.");
+        }
+    }
+
     public Snapshot createSnapshot() {
         List<DefinitionEntry> definitions = new ArrayList<>();
         Map<Integer, DefinitionEntry> definitionsById = new LinkedHashMap<>();
@@ -627,7 +878,7 @@ public class RoomUserVariableManager {
             DefinitionEntry entry = new DefinitionEntry(
                     definition.getItemId(),
                     definition.getName(),
-                    definition.hasValue(),
+                    definition.hasValue() && !definition.isArray(),
                     definition.getAvailability(),
                     definition.isTextConnected(),
                     definition.isReadOnly());
@@ -655,18 +906,18 @@ public class RoomUserVariableManager {
 
         for (Integer userId : userIds) {
             List<AssignmentEntry> assignments = new ArrayList<>();
-            ConcurrentHashMap<Integer, VariableAssignment> localAssignments =
+            ConcurrentHashMap<Integer, RoomVariableAssignment> localAssignments =
                     this.activeAssignmentsByUserId.get(userId);
 
             if (localAssignments != null) {
-                for (Map.Entry<Integer, VariableAssignment> assignmentEntry : localAssignments.entrySet()) {
+                for (Map.Entry<Integer, RoomVariableAssignment> assignmentEntry : localAssignments.entrySet()) {
                     if (!definitionsById.containsKey(assignmentEntry.getKey())) {
                         continue;
                     }
 
                     assignments.add(new AssignmentEntry(
                             assignmentEntry.getKey(),
-                            assignmentEntry.getValue().getValue(),
+                            this.effectiveValue(assignmentEntry.getKey(), assignmentEntry.getValue()),
                             assignmentEntry.getValue().getCreatedAt(),
                             assignmentEntry.getValue().getUpdatedAt()));
                 }
@@ -727,33 +978,27 @@ public class RoomUserVariableManager {
     }
 
     public void sendSnapshot(Habbo habbo) {
-        if (habbo == null || habbo.getClient() == null) {
+        if (habbo == null || habbo.getClient() == null || !this.room.canInspectWired(habbo)) {
             return;
         }
 
-        if (!this.room.canInspectWired(habbo)) {
-            return;
-        }
+        RoomVariableChanges.sendSnapshot(this.room, habbo);
+    }
 
-        habbo.getClient()
-                .sendResponse(new WiredUserVariablesDataComposer(
-                        this.createSnapshot(),
-                        this.room.getFurniVariableManager().createSnapshot(),
-                        this.room.getRoomVariableManager().createSnapshot()));
+    /** Grows on every change to the room's user variables, saved rows of absent users included. */
+    public long getChangeVersion() {
+        return this.changeVersion.get();
+    }
+
+    /** A saved row changed without the live store noticing (a write for a user who is not in the room). */
+    void noteSavedChange() {
+        this.changeVersion.incrementAndGet();
     }
 
     public void requestBroadcast() {
-        if (this.broadcastRequested.compareAndSet(false, true)) {
-            Emulator.getThreading()
-                    .run(
-                            () -> {
-                                this.broadcastRequested.set(false);
-                                if (this.room.isLoaded()) {
-                                    this.broadcastSnapshotRaw();
-                                }
-                            },
-                            50);
-        }
+        this.changeVersion.incrementAndGet();
+        RoomVariableChanges.scheduleBroadcast(
+                this.room, this.broadcastRequested, Emulator.getThreading(), this::broadcastSnapshotRaw);
     }
 
     public void broadcastSnapshot() {
@@ -761,24 +1006,7 @@ public class RoomUserVariableManager {
     }
 
     public void broadcastSnapshotRaw() {
-        Snapshot userSnapshot = this.createSnapshot();
-        RoomFurniVariableManager.Snapshot furniSnapshot =
-                this.room.getFurniVariableManager().createSnapshot();
-        RoomVariableManager.Snapshot roomSnapshot =
-                this.room.getRoomVariableManager().createSnapshot();
-
-        for (Habbo habbo : this.room.getCurrentHabbos().values()) {
-            if (habbo == null || habbo.getClient() == null) {
-                continue;
-            }
-
-            if (!this.room.canInspectWired(habbo)) {
-                continue;
-            }
-
-            habbo.getClient()
-                    .sendResponse(new WiredUserVariablesDataComposer(userSnapshot, furniSnapshot, roomSnapshot));
-        }
+        RoomVariableChanges.broadcastSnapshot(this.room);
     }
 
     public Collection<WiredExtraUserVariable> getDefinitions() {
@@ -818,7 +1046,8 @@ public class RoomUserVariableManager {
                     definition.hasValue(),
                     definition.getAvailability(),
                     WiredVariableTextConnectorSupport.isTextConnected(this.room, definition),
-                    false));
+                    false,
+                    definition.isArray()));
         }
 
         for (WiredExtraVariableReference reference : this.getUserReferences()) {
@@ -827,7 +1056,7 @@ public class RoomUserVariableManager {
                     reference.getVariableName(),
                     reference.hasValue(),
                     reference.getAvailability(),
-                    false,
+                    WiredVariableTextConnectorSupport.isTextConnected(this.room, reference),
                     reference.isReadOnly()));
         }
 
@@ -836,6 +1065,7 @@ public class RoomUserVariableManager {
         }
 
         result.addAll(baseDefinitions);
+        result.addAll(WiredPointerVariableSupport.definitionInfos(this.room, WiredVariableTargets.OFFICIAL_USER));
 
         for (WiredVariableDefinitionInfo definition : baseDefinitions) {
             result.addAll(WiredVariableLevelSystemSupport.getDerivedDefinitions(
@@ -867,10 +1097,11 @@ public class RoomUserVariableManager {
             return new WiredVariableDefinitionInfo(
                     definition.getId(),
                     definition.getVariableName(),
-                    definition.hasValue(),
+                    definition.hasValue() && !definition.isArray(),
                     definition.getAvailability(),
                     WiredVariableTextConnectorSupport.isTextConnected(this.room, definition),
-                    false);
+                    false,
+                    definition.isArray());
         }
 
         if (extra instanceof WiredExtraVariableReference && ((WiredExtraVariableReference) extra).isUserReference()) {
@@ -885,13 +1116,18 @@ public class RoomUserVariableManager {
                     reference.getVariableName(),
                     reference.hasValue(),
                     reference.getAvailability(),
-                    false,
+                    WiredVariableTextConnectorSupport.isTextConnected(this.room, reference),
                     reference.isReadOnly());
         }
 
         if (extra instanceof WiredExtraVariableEcho && ((WiredExtraVariableEcho) extra).isUserEcho()) {
             WiredVariableDefinitionInfo info = ((WiredExtraVariableEcho) extra).createDefinitionInfo(this.room);
             return (info != null && hasVisibleDefinitionName(info.getName())) ? info : null;
+        }
+
+        if (extra instanceof WiredExtraPointerVariable) {
+            return WiredPointerVariableSupport.definitionInfo(
+                    this.room, definitionItemId, WiredVariableTargets.OFFICIAL_USER);
         }
 
         return WiredVariableLevelSystemSupport.getDerivedDefinitionInfo(
@@ -969,8 +1205,8 @@ public class RoomUserVariableManager {
         return name != null && !name.trim().isEmpty();
     }
 
-    private VariableAssignment getRawAssignment(int userId, int definitionItemId) {
-        if (userId <= 0 || definitionItemId <= 0) {
+    private RoomVariableAssignment getRawAssignment(int userId, int definitionItemId) {
+        if (!UserVariableHolders.isValid(userId) || definitionItemId <= 0) {
             return null;
         }
 
@@ -979,7 +1215,7 @@ public class RoomUserVariableManager {
             WiredVariableReferenceSupport.SharedUserAssignment assignment =
                     WiredVariableReferenceSupport.getSharedUserAssignment((WiredExtraVariableReference) extra, userId);
             return (assignment != null)
-                    ? new VariableAssignment(
+                    ? new RoomVariableAssignment(
                             assignment.getValue(), assignment.getCreatedAt(), assignment.getUpdatedAt())
                     : null;
         }
@@ -990,19 +1226,64 @@ public class RoomUserVariableManager {
                 return null;
             }
 
-            return new VariableAssignment(
+            return new RoomVariableAssignment(
                     echo.getCurrentValue(this.room, userId),
                     echo.getCreatedAt(this.room, userId),
                     echo.getUpdatedAt(this.room, userId));
         }
 
-        ConcurrentHashMap<Integer, VariableAssignment> assignments = this.activeAssignmentsByUserId.get(userId);
+        ConcurrentHashMap<Integer, RoomVariableAssignment> assignments = this.activeAssignmentsByUserId.get(userId);
         return (assignments != null) ? assignments.get(definitionItemId) : null;
     }
 
-    private Integer getRawValue(int userId, int definitionItemId) {
-        VariableAssignment assignment = this.getRawAssignment(userId, definitionItemId);
-        return (assignment != null) ? assignment.getValue() : null;
+    private Integer getDerivedValue(int userId, WiredVariableLevelSystemSupport.DerivedDefinition derivedDefinition) {
+        RoomVariableAssignment base = this.getRawAssignment(userId, derivedDefinition.getBaseDefinitionItemId());
+        if (base == null) {
+            return null;
+        }
+
+        return WiredVariableLevelSystemSupport.getDerivedValue(
+                this.room,
+                derivedDefinition.getLevelSystem(),
+                derivedDefinition.getSubvariableType(),
+                this.effectiveValue(derivedDefinition.getBaseDefinitionItemId(), base),
+                base.getCreatedAt(),
+                base.getUpdatedAt());
+    }
+
+    private boolean isDerivedPart(int definitionItemId) {
+        return WiredVariableLevelSystemSupport.resolveDerivedDefinition(
+                        this.room, WiredVariableLevelSystemSupport.TARGET_USER, definitionItemId)
+                != null;
+    }
+
+    /**
+     * Writes a value-mode Time Utilities part: the parent moves by the part's difference, and the parent's
+     * own write fires Variable Changed for the parent and each part. A holder without the parent gets nothing.
+     */
+    private boolean writeDerivedPart(
+            int userId, WiredVariableLevelSystemSupport.DerivedDefinition derivedPart, Integer partValue) {
+        int baseId = derivedPart.getBaseDefinitionItemId();
+        if (partValue == null || !derivedPart.isWritable() || !this.hasVariable(userId, baseId)) {
+            return false;
+        }
+
+        Integer baseValue = WiredVariableLevelSystemSupport.writeDerivedValue(
+                this.room, derivedPart, this.getCurrentValue(userId, baseId), partValue);
+        return baseValue != null && this.updateVariableValue(userId, baseId, baseValue);
+    }
+
+    private Integer effectiveValue(int definitionItemId, RoomVariableAssignment assignment) {
+        if (assignment == null) {
+            return null;
+        }
+
+        return WiredDailyTaskSupport.effectiveValue(
+                this.room,
+                this.getDefinitionExtra(definitionItemId),
+                assignment.getValue(),
+                assignment.getUpdatedAt(),
+                this.currentTimestamp.getAsInt());
     }
 
     private void emitVariableChangedEvents(
@@ -1025,35 +1306,33 @@ public class RoomUserVariableManager {
                 previousValue,
                 existsAfter,
                 currentValue);
-
-        for (WiredVariableDefinitionInfo derivedDefinition : WiredVariableLevelSystemSupport.getDerivedDefinitions(
-                this.room, WiredVariableLevelSystemSupport.TARGET_USER, definitionExtra, definitionInfo)) {
-            WiredVariableLevelSystemSupport.DerivedDefinition resolvedDefinition =
-                    WiredVariableLevelSystemSupport.resolveDerivedDefinition(
-                            this.room, WiredVariableLevelSystemSupport.TARGET_USER, derivedDefinition.getItemId());
-
-            if (resolvedDefinition == null) {
-                continue;
-            }
-
-            Integer derivedPreviousValue = existedBefore
-                    ? WiredVariableLevelSystemSupport.getDerivedValue(
-                            resolvedDefinition.getLevelSystem(), resolvedDefinition.getSubvariableType(), previousValue)
-                    : null;
-            Integer derivedCurrentValue = existsAfter
-                    ? WiredVariableLevelSystemSupport.getDerivedValue(
-                            resolvedDefinition.getLevelSystem(), resolvedDefinition.getSubvariableType(), currentValue)
-                    : null;
-
-            this.emitVariableChangedEvent(
+        // A shared variable (or a reference to one) is heard in the other rooms too, as "another room".
+        if (!WiredVariableGiveScope.suppresses(existedBefore, previousValue, existsAfter, currentValue)) {
+            WiredSharedVariableChanges.userVariableChanged(
+                    this.room,
+                    definitionExtra,
                     userId,
-                    derivedDefinition.getItemId(),
-                    true,
-                    existedBefore,
-                    derivedPreviousValue,
-                    existsAfter,
-                    derivedCurrentValue);
+                    WiredVariableGiveScope.created(existedBefore, existsAfter),
+                    existedBefore && !existsAfter,
+                    RoomVariableChanges.changeKind(
+                            definitionInfo.hasValue(), existedBefore, previousValue, existsAfter, currentValue),
+                    previousValue == null ? 0L : previousValue,
+                    currentValue == null ? 0L : currentValue);
         }
+
+        RoomVariableChanges.emitDerivedChanges(
+                this.room,
+                WiredVariableLevelSystemSupport.TARGET_USER,
+                definitionExtra,
+                definitionInfo,
+                existedBefore,
+                previousValue,
+                existsAfter,
+                currentValue,
+                () -> this.getRawAssignment(userId, definitionInfo.getItemId()),
+                (partItemId, hasValue, partBefore, partPrevious, partAfter, partCurrent) ->
+                        this.emitVariableChangedEvent(
+                                userId, partItemId, hasValue, partBefore, partPrevious, partAfter, partCurrent));
     }
 
     private void emitVariableChangedEvent(
@@ -1064,37 +1343,29 @@ public class RoomUserVariableManager {
             Integer previousValue,
             boolean existsAfter,
             Integer currentValue) {
-        boolean created = !existedBefore && existsAfter;
+        if (WiredVariableGiveScope.suppresses(existedBefore, previousValue, existsAfter, currentValue)) return;
+
+        boolean created = WiredVariableGiveScope.created(existedBefore, existsAfter);
         boolean deleted = existedBefore && !existsAfter;
         WiredEvent.VariableChangeKind changeKind =
-                resolveVariableChangeKind(hasValue, existedBefore, previousValue, existsAfter, currentValue);
+                RoomVariableChanges.changeKind(hasValue, existedBefore, previousValue, existsAfter, currentValue);
 
         if (!created && !deleted && changeKind == WiredEvent.VariableChangeKind.NONE) {
             return;
         }
 
-        WiredManager.triggerUserVariableChanged(this.room, userId, definitionItemId, created, deleted, changeKind);
+        WiredManager.triggerUserVariableChanged(
+                this.room,
+                userId,
+                definitionItemId,
+                created,
+                deleted,
+                changeKind,
+                previousValue == null ? 0L : previousValue,
+                currentValue == null ? 0L : currentValue);
     }
 
-    private static WiredEvent.VariableChangeKind resolveVariableChangeKind(
-            boolean hasValue, boolean existedBefore, Integer previousValue, boolean existsAfter, Integer currentValue) {
-        if (!hasValue || !existedBefore || !existsAfter) {
-            return WiredEvent.VariableChangeKind.NONE;
-        }
-
-        if (Objects.equals(previousValue, currentValue)) {
-            return WiredEvent.VariableChangeKind.UNCHANGED;
-        }
-
-        int previousNumericValue = (previousValue != null) ? previousValue : 0;
-        int currentNumericValue = (currentValue != null) ? currentValue : 0;
-
-        return (currentNumericValue > previousNumericValue)
-                ? WiredEvent.VariableChangeKind.INCREASED
-                : WiredEvent.VariableChangeKind.DECREASED;
-    }
-
-    private void upsertPersistentAssignment(int userId, int definitionItemId, VariableAssignment assignment) {
+    private void upsertPersistentAssignment(int userId, int definitionItemId, RoomVariableAssignment assignment) {
         try {
             int now = this.currentTimestamp.getAsInt();
             this.repository.upsert(
@@ -1130,6 +1401,7 @@ public class RoomUserVariableManager {
     private void deletePersistentAssignmentsForDefinition(int definitionItemId) {
         try {
             this.repository.deleteDefinition(this.room.getId(), definitionItemId);
+            this.storedClears.incrementAndGet();
         } catch (SQLException e) {
             LOGGER.error(
                     "Failed to delete permanent wired user variables for room {} and item {}",
@@ -1247,35 +1519,6 @@ public class RoomUserVariableManager {
 
         public Integer getValue() {
             return value;
-        }
-
-        public int getCreatedAt() {
-            return createdAt;
-        }
-
-        public int getUpdatedAt() {
-            return updatedAt;
-        }
-    }
-
-    private static class VariableAssignment {
-        private Integer value;
-        private final int createdAt;
-        private int updatedAt;
-
-        public VariableAssignment(Integer value, int createdAt, int updatedAt) {
-            this.value = value;
-            this.createdAt = createdAt;
-            this.updatedAt = updatedAt;
-        }
-
-        public Integer getValue() {
-            return value;
-        }
-
-        public void setValue(Integer value, int updatedAt) {
-            this.value = value;
-            this.updatedAt = updatedAt;
         }
 
         public int getCreatedAt() {
